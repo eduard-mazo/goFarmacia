@@ -1,0 +1,40 @@
+# Wails build artifacts
+/build/
+/frontend/dist/
+/frontend/node_modules/
+/wails/
+/wails-build-log.txt
+/wails-dev-server.log
+/go.mod
+/go.sum
+
+# Go-specific files
+/vendor/
+/pkg/
+*.test
+*.prof
+
+# Environment variables and secrets
+.env
+.DS_Store
+.vscode/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Linux
+*~
+*.swp
+*.bak
+*.swo
