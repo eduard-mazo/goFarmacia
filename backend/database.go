@@ -11,8 +11,8 @@ import (
 )
 
 // --- MODELOS DE LA BASE DE DATOS ---
-// CORRECCIÓN: Se agrega la etiqueta `wails:"ts.type=string"` a todos los campos time.Time
-// para que Wails sepa cómo convertirlos a TypeScript.
+// CORRECCIÓN DEFINITIVA: Se agrega la etiqueta `wails:"ts.type=string"` a CADA campo `time.Time`
+// para que Wails sepa cómo convertirlo a TypeScript. Esto resuelve el error "Not found: time.Time".
 
 type Vendedor struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
@@ -24,7 +24,6 @@ type Vendedor struct {
 	Cedula     string         `gorm:"unique" json:"Cedula"`
 	Email      string         `gorm:"unique" json:"Email"`
 	Contrasena string         `json:"Contrasena"`
-	Ventas     []Factura      `gorm:"foreignKey:VendedorID" json:"-"`
 }
 
 type Cliente struct {
@@ -39,7 +38,6 @@ type Cliente struct {
 	Telefono  string         `json:"Telefono"`
 	Email     string         `json:"Email"`
 	Direccion string         `json:"Direccion"`
-	Compras   []Factura      `gorm:"foreignKey:ClienteID" json:"-"`
 }
 
 type Producto struct {
@@ -97,6 +95,11 @@ type VentaRequest struct {
 type ProductoVenta struct {
 	ID       uint `json:"ID"`
 	Cantidad int  `json:"Cantidad"`
+}
+
+type LoginRequest struct {
+	Cedula     string `json:"Cedula"`
+	Contrasena string `json:"Contrasena"`
 }
 
 // --- LÓGICA DE LA BASE DE DATOS ---

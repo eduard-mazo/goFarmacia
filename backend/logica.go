@@ -9,6 +9,27 @@ import (
 	"gorm.io/gorm"
 )
 
+// --- LÓGICA DE AUTENTICACIÓN ---
+
+func (d *Db) LoginVendedor(req LoginRequest) (Vendedor, error) {
+	var vendedor Vendedor
+	// Buscar vendedor por cédula
+	result := d.DB.Where("cedula = ?", req.Cedula).First(&vendedor)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return Vendedor{}, errors.New("vendedor no encontrado")
+		}
+		return Vendedor{}, result.Error
+	}
+
+	// Verificar contraseña (en un caso real, usarías hashes)
+	if vendedor.Contrasena != req.Contrasena {
+		return Vendedor{}, errors.New("contraseña incorrecta")
+	}
+
+	return vendedor, nil
+}
+
 // --- CRUD DE VENDEDORES ---
 
 func (d *Db) RegistrarVendedor(vendedor Vendedor) (string, error) {
@@ -107,7 +128,7 @@ func (d *Db) EliminarProducto(id uint) (string, error) {
 
 func (d *Db) BuscarProductos(query string) ([]Producto, error) {
 	var productos []Producto
-	result := d.DB.Where("nombre LIKE ? OR codigo LIKE ?", "%"+query+"%", "%"+query+"%").Find(&productos)
+	result := d.DB.Where("nombre LIKE ? OR codigo LIKE ?", "%"+query+"%", "%"+query+"%").Limit(20).Find(&productos)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -116,21 +137,21 @@ func (d *Db) BuscarProductos(query string) ([]Producto, error) {
 
 // --- LÓGICA DE VENTAS ---
 
-func (d *Db) RegistrarVenta(req VentaRequest) (string, error) {
+func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	tx := d.DB.Begin()
 	if tx.Error != nil {
-		return "", fmt.Errorf("error al iniciar la transacción: %w", tx.Error)
+		return Factura{}, fmt.Errorf("error al iniciar la transacción: %w", tx.Error)
 	}
 	defer tx.Rollback()
 
 	var vendedor Vendedor
 	if err := tx.First(&vendedor, req.VendedorID).Error; err != nil {
-		return "", errors.New("vendedor no encontrado")
+		return Factura{}, errors.New("vendedor no encontrado")
 	}
 
 	var cliente Cliente
 	if err := tx.First(&cliente, req.ClienteID).Error; err != nil {
-		return "", errors.New("cliente no encontrado")
+		return Factura{}, errors.New("cliente no encontrado")
 	}
 
 	factura := Factura{
@@ -147,11 +168,11 @@ func (d *Db) RegistrarVenta(req VentaRequest) (string, error) {
 	for _, p := range req.Productos {
 		var producto Producto
 		if err := tx.First(&producto, p.ID).Error; err != nil {
-			return "", fmt.Errorf("producto con ID %d no encontrado", p.ID)
+			return Factura{}, fmt.Errorf("producto con ID %d no encontrado", p.ID)
 		}
 
 		if producto.Stock < p.Cantidad {
-			return "", fmt.Errorf("stock insuficiente para %s. Disponible: %d, Solicitado: %d", producto.Nombre, producto.Stock, p.Cantidad)
+			return Factura{}, fmt.Errorf("stock insuficiente para %s. Disponible: %d, Solicitado: %d", producto.Nombre, producto.Stock, p.Cantidad)
 		}
 
 		precioTotalProducto := producto.PrecioVenta * float64(p.Cantidad)
@@ -165,11 +186,10 @@ func (d *Db) RegistrarVenta(req VentaRequest) (string, error) {
 		})
 
 		if err := tx.Model(&producto).Update("Stock", gorm.Expr("Stock - ?", p.Cantidad)).Error; err != nil {
-			return "", fmt.Errorf("error al actualizar el stock de %s: %w", producto.Nombre, err)
+			return Factura{}, fmt.Errorf("error al actualizar el stock de %s: %w", producto.Nombre, err)
 		}
 	}
 
-	// Calcular IVA sobre el subtotal (ej. 19% en Colombia)
 	iva = subtotal * 0.19
 
 	factura.Subtotal = subtotal
@@ -178,28 +198,29 @@ func (d *Db) RegistrarVenta(req VentaRequest) (string, error) {
 	factura.NumeroFactura = d.generarNumeroFactura()
 
 	if err := tx.Create(&factura).Error; err != nil {
-		return "", fmt.Errorf("error al crear la factura: %w", err)
+		return Factura{}, fmt.Errorf("error al crear la factura: %w", err)
 	}
 
 	for i := range detallesFactura {
 		detallesFactura[i].FacturaID = factura.ID
 	}
 	if err := tx.Create(&detallesFactura).Error; err != nil {
-		return "", fmt.Errorf("error al crear los detalles de la factura: %w", err)
+		return Factura{}, fmt.Errorf("error al crear los detalles de la factura: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		return "", fmt.Errorf("error al confirmar la transacción: %w", err)
+		return Factura{}, fmt.Errorf("error al confirmar la transacción: %w", err)
 	}
 
-	return fmt.Sprintf("Factura %s registrada con éxito", factura.NumeroFactura), nil
+	// Devolver la factura completa para el visor
+	return d.ObtenerDetalleFactura(factura.ID)
 }
 
 func (d *Db) generarNumeroFactura() string {
 	var ultimaFactura Factura
 	result := d.DB.Order("id DESC").Limit(1).Find(&ultimaFactura)
 
-	nuevoNumero := 1
+	nuevoNumero := 1000
 	if result.Error == nil && ultimaFactura.NumeroFactura != "" {
 		fmt.Sscanf(ultimaFactura.NumeroFactura, "FAC-%d", &nuevoNumero)
 		nuevoNumero++
@@ -211,7 +232,6 @@ func (d *Db) generarNumeroFactura() string {
 
 func (d *Db) ObtenerFacturas() ([]Factura, error) {
 	var facturas []Factura
-	// Usamos Preload para cargar también los datos del cliente y vendedor asociados
 	if err := d.DB.Preload("Cliente").Preload("Vendedor").Order("id desc").Find(&facturas).Error; err != nil {
 		return nil, err
 	}
@@ -220,7 +240,6 @@ func (d *Db) ObtenerFacturas() ([]Factura, error) {
 
 func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	var factura Factura
-	// Preload carga las relaciones para obtener todos los datos en una sola consulta
 	err := d.DB.Preload("Cliente").Preload("Vendedor").Preload("Detalles.Producto").First(&factura, facturaID).Error
 	if err != nil {
 		return Factura{}, err
