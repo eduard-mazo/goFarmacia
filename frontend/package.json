@@ -11,8 +11,10 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.1.12",
     "lodash": "^4.17.21",
+    "pinia": "^3.0.3",
     "tailwindcss": "^4.1.12",
-    "vue": "^3.2.37"
+    "vue": "^3.2.37",
+    "vue-router": "^4.5.1"
   },
   "devDependencies": {
     "@babel/types": "^7.18.10",

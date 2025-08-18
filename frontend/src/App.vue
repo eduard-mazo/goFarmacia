@@ -1,67 +1,48 @@
 <template>
-  <div class="sidebar">
-    <h1>goFarmacia</h1>
-    <nav>
-      <button @click="vistaActual = 'POS'">Punto de Venta</button>
-      <button @click="vistaActual = 'Productos'">Gestionar Productos</button>
-      <button @click="vistaActual = 'Clientes'">Gestionar Clientes</button>
-      <button @click="vistaActual = 'Vendedores'">Gestionar Vendedores</button>
-      <button @click="vistaActual = 'Facturas'">Historial de Facturas</button>
-    </nav>
+  <div class="flex flex-col h-screen">
+    <header v-if="authStore.isAuthenticated" class="bg-white shadow-md">
+      <nav
+        class="container mx-auto px-6 py-3 flex justify-between items-center"
+      >
+        <div class="text-xl font-bold text-gray-800">goFarmacia</div>
+        <div class="flex space-x-4">
+          <RouterLink to="/" class="text-gray-600 hover:text-blue-500 transition">POS</RouterLink>
+          <RouterLink to="/facturas" class="text-gray-600 hover:text-blue-500 transition">Facturas</RouterLink>
+          <RouterLink to="/productos" class="text-gray-600 hover:text-blue-500 transition">Productos</RouterLink>
+          <RouterLink to="/clientes" class="text-gray-600 hover:text-blue-500 transition">Clientes</RouterLink>
+          <RouterLink to="/vendedores" class="text-gray-600 hover:text-blue-500 transition">Vendedores</RouterLink>
+        </div>
+        <div class="flex items-center space-x-4">
+          <span class="text-gray-600"
+            >Hola, {{ authStore.vendedorNombre }}</span
+          >
+          <button
+            @click="authStore.logout()"
+            class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition"
+          >
+            Salir
+          </button>
+        </div>
+      </nav>
+    </header>
+
+    <main class="flex-grow p-6 overflow-auto">
+      <RouterView />
+    </main>
   </div>
-  <main>
-    <VentaPOS v-if="vistaActual === 'POS'" />
-    <ProductoManager v-if="vistaActual === 'Productos'" />
-    <ClienteManager v-if="vistaActual === 'Clientes'" />
-    <VendedorManager v-if="vistaActual === 'Vendedores'" />
-  </main>
 </template>
 
-<script lang="ts" setup>
-import { ref } from "vue";
-import VentaPOS from "./components/VentaPOS.vue";
-import ProductoManager from "./components/ProductoManager.vue";
-import ClienteManager from "./components/ClienteManager.vue";
-import VendedorManager from "./components/VendedorManager.vue";
-
-const vistaActual = ref("POS"); // Vista por defecto
+<script setup lang="ts">
+import { useAuthStore } from "./stores/auth";
+const authStore = useAuthStore();
 </script>
 
-<style scoped>
-.sidebar {
-  width: 250px;
-  background-color: #2c3e50;
-  color: white;
-  padding: 1.5rem;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
+<style>
+@reference "./style.css";
+.nav-link {
+  @apply text-gray-600 hover:text-blue-500 transition;
 }
-
-.sidebar h1 {
-  color: #42b983;
-  text-align: center;
-  margin-bottom: 2rem;
-}
-
-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-nav button {
-  background-color: #34495e;
-  color: white;
-  border: none;
-  text-align: left;
-  padding: 12px 15px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 1rem;
-}
-
-nav button:hover {
-  background-color: #42b983;
+.router-link-active {
+  @apply text-blue-600 font-semibold;
 }
 </style>
