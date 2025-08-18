@@ -2,6 +2,7 @@
 /build/
 /frontend/dist/
 /frontend/node_modules/
+/frontend/wailsjs
 /wails/
 /wails-build-log.txt
 /wails-dev-server.log
@@ -38,3 +39,9 @@ desktop.ini
 *.swp
 *.bak
 *.swo
+
+#db
+*.db
+
+# package
+package.json.md5
