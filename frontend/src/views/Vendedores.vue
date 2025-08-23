@@ -122,7 +122,6 @@ const guardarVendedor = async () => {
 };
 
 const editarVendedor = (v: backend.Vendedor) => {
-  // Clonamos el objeto para no modificar la lista directamente
   vendedor.value = backend.Vendedor.createFrom(v);
   editando.value = true;
 };

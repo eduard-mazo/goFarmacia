@@ -1,5 +1,5 @@
 <template>
-  <div class="w-[58mm] bg-white text-black font-mono text-[10px] leading-tight p-2 box-border" v-if="factura">
+  <div class="w-[116mm] bg-white text-black font-mono text-[20px] leading-tight p-2 box-border" v-if="factura">
     <div class="text-center">
       <p class="font-bold">goFarmacia</p>
       <p>NIT: 123.456.789-0</p>

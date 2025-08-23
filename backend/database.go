@@ -10,10 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// --- MODELOS DE LA BASE DE DATOS ---
-// CORRECCIÓN DEFINITIVA: Se agrega la etiqueta `wails:"ts.type=string"` a CADA campo `time.Time`
-// para que Wails sepa cómo convertirlo a TypeScript. Esto resuelve el error "Not found: time.Time".
-
+// --- ESTRUCTURAS DE LA BASE DE DATOS ---
 type Vendedor struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt  time.Time      `json:"created_at" wails:"ts.type=string"`

@@ -48,14 +48,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useAuthStore } from "../stores/auth";
 import { backend } from "../../wailsjs/go/models";
+import {
+  RegistrarVendedor,
+  ActualizarVendedor,
+} from "../../wailsjs/go/backend/Db";
 
+const vendedor = ref(new backend.Vendedor());
 const authStore = useAuthStore();
 const credenciales = ref(new backend.LoginRequest());
 const errorMsg = ref("");
-
+onMounted(() => {
+  async () => {
+    try {
+      let resultado: string;
+      resultado = await RegistrarVendedor(vendedor.value);
+      alert(resultado);
+    } catch (error) {
+      alert(`Error al guardar vendedor: ${error}`);
+    }
+  };
+});
 const handleLogin = async () => {
   errorMsg.value = "";
   try {
