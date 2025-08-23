@@ -15,6 +15,9 @@
 *.test
 *.prof
 
+# Custom files
+*.xlsx
+
 # Environment variables and secrets
 .env
 .DS_Store
