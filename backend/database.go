@@ -8,6 +8,9 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	// cambiar a modernc
+	_ "modernc.org/sqlite"
 )
 
 // --- ESTRUCTURAS DE LA BASE DE DATOS ---
@@ -118,7 +121,7 @@ func (d *Db) Startup(ctx context.Context) {
 
 func (d *Db) initDB() {
 	var err error
-	d.DB, err = gorm.Open(sqlite.Open("farmacia.db"), &gorm.Config{})
+	d.DB, err = gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: "file:farmacia.db"}, &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Fallo al conectar a la base de datos: %v", err)
 	}
