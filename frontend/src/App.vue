@@ -11,6 +11,7 @@
           <RouterLink to="/productos" class="text-gray-600 hover:text-blue-500 transition">Productos</RouterLink>
           <RouterLink to="/clientes" class="text-gray-600 hover:text-blue-500 transition">Clientes</RouterLink>
           <RouterLink to="/vendedores" class="text-gray-600 hover:text-blue-500 transition">Vendedores</RouterLink>
+          <RouterLink to="/inventario" class="text-gray-600 hover:text-blue-500 transition">Inventario</RouterLink>
         </div>
         <div class="flex items-center space-x-4">
           <span class="text-gray-600"

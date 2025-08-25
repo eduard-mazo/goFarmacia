@@ -8,6 +8,7 @@ import Productos from "../views/Productos.vue";
 import Clientes from "../views/Clientes.vue";
 import Vendedores from "../views/Vendedores.vue";
 import Facturas from "../views/Facturas.vue";
+import Inventario from "../views/Inventario.vue";
 
 const routes = [
   { path: "/login", name: "Login", component: Login, meta: { public: true } },
@@ -16,6 +17,7 @@ const routes = [
   { path: "/clientes", name: "Clientes", component: Clientes },
   { path: "/vendedores", name: "Vendedores", component: Vendedores },
   { path: "/facturas", name: "Facturas", component: Facturas },
+  { path: "/inventario", name: "Inventario", component: Inventario },
 ];
 
 const router = createRouter({

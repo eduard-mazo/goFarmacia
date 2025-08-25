@@ -13,7 +13,6 @@ import (
 
 func (d *Db) LoginVendedor(req LoginRequest) (Vendedor, error) {
 	var vendedor Vendedor
-	// Buscar vendedor por cédula
 	result := d.DB.Where("cedula = ?", req.Cedula).First(&vendedor)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -22,12 +21,79 @@ func (d *Db) LoginVendedor(req LoginRequest) (Vendedor, error) {
 		return Vendedor{}, result.Error
 	}
 
-	// Verificar contraseña (en un caso real, usarías hashes)
 	if vendedor.Contrasena != req.Contrasena {
 		return Vendedor{}, errors.New("contraseña incorrecta")
 	}
 
 	return vendedor, nil
+}
+
+// --- LÓGICA PAGINADA Y BÚSQUEDA ---
+
+func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+	var vendedores []Vendedor
+	var total int64
+
+	query := d.DB.Model(&Vendedor{})
+
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("Nombre LIKE ? OR Apellido LIKE ? OR Cedula LIKE ?", searchTerm, searchTerm, searchTerm)
+	}
+
+	query.Count(&total) // Contar el total de registros que coinciden con la búsqueda
+
+	offset := (page - 1) * pageSize
+	err := query.Limit(pageSize).Offset(offset).Find(&vendedores).Error
+	if err != nil {
+		return PaginatedResult{}, err
+	}
+
+	return PaginatedResult{Records: vendedores, TotalRecords: total}, nil
+}
+
+func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+	var clientes []Cliente
+	var total int64
+
+	query := d.DB.Model(&Cliente{})
+
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("Nombre LIKE ? OR Apellido LIKE ? OR NumeroID LIKE ?", searchTerm, searchTerm, searchTerm)
+	}
+
+	query.Count(&total)
+
+	offset := (page - 1) * pageSize
+	err := query.Limit(pageSize).Offset(offset).Find(&clientes).Error
+	if err != nil {
+		return PaginatedResult{}, err
+	}
+
+	return PaginatedResult{Records: clientes, TotalRecords: total}, nil
+}
+
+func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+	var productos []Producto
+	var total int64
+
+	query := d.DB.Model(&Producto{})
+
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("Nombre LIKE ? OR Codigo LIKE ?", searchTerm, searchTerm)
+	}
+
+	query.Count(&total)
+
+	offset := (page - 1) * pageSize
+	err := query.Limit(pageSize).Offset(offset).Find(&productos).Error
+	if err != nil {
+		return PaginatedResult{}, err
+	}
+
+	return PaginatedResult{Records: productos, TotalRecords: total}, nil
 }
 
 // --- CRUD DE VENDEDORES ---
@@ -126,6 +192,8 @@ func (d *Db) EliminarProducto(id uint) (string, error) {
 	return "Producto eliminado correctamente", nil
 }
 
+// --- LÓGICA DE BÚSQUEDA ---
+
 func (d *Db) BuscarProductos(query string) ([]Producto, error) {
 	var productos []Producto
 	result := d.DB.Where("nombre LIKE ? OR codigo LIKE ?", "%"+query+"%", "%"+query+"%").Limit(20).Find(&productos)
@@ -133,6 +201,32 @@ func (d *Db) BuscarProductos(query string) ([]Producto, error) {
 		return nil, result.Error
 	}
 	return productos, nil
+}
+
+func (d *Db) BuscarProductoPorCodigo(codigo string) (Producto, error) {
+	var producto Producto
+	result := d.DB.Where("codigo = ?", codigo).First(&producto)
+	if result.Error != nil {
+		return Producto{}, result.Error // Puede ser gorm.ErrRecordNotFound
+	}
+	return producto, nil
+}
+
+// --- CRUD PROVEEDORES ---
+
+func (d *Db) RegistrarProveedor(proveedor Proveedor) (string, error) {
+	if err := d.DB.Create(&proveedor).Error; err != nil {
+		return "", fmt.Errorf("error al registrar el proveedor: %w", err)
+	}
+	return "Proveedor registrado correctamente", nil
+}
+
+func (d *Db) ObtenerProveedores() ([]Proveedor, error) {
+	var proveedores []Proveedor
+	if err := d.DB.Find(&proveedores).Error; err != nil {
+		return nil, err
+	}
+	return proveedores, nil
 }
 
 // --- LÓGICA DE VENTAS ---
@@ -222,8 +316,9 @@ func (d *Db) generarNumeroFactura() string {
 
 	nuevoNumero := 1000
 	if result.Error == nil && ultimaFactura.NumeroFactura != "" {
-		fmt.Sscanf(ultimaFactura.NumeroFactura, "FAC-%d", &nuevoNumero)
-		nuevoNumero++
+		if _, err := fmt.Sscanf(ultimaFactura.NumeroFactura, "FAC-%d", &nuevoNumero); err == nil {
+			nuevoNumero++
+		}
 	}
 	return fmt.Sprintf("FAC-%d", nuevoNumero)
 }
@@ -245,4 +340,84 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 		return Factura{}, err
 	}
 	return factura, nil
+}
+
+func (d *Db) ObtenerFacturasPorVendedor(vendedorID uint, page, pageSize int) (PaginatedResult, error) {
+	var facturas []Factura
+	var total int64
+
+	query := d.DB.Model(&Factura{}).Where("vendedor_id = ?", vendedorID)
+
+	query.Count(&total)
+
+	offset := (page - 1) * pageSize
+	err := query.Preload("Cliente").Order("id desc").Limit(pageSize).Offset(offset).Find(&facturas).Error
+	if err != nil {
+		return PaginatedResult{}, err
+	}
+
+	return PaginatedResult{Records: facturas, TotalRecords: total}, nil
+}
+
+// --- LÓGICA DE INVENTARIO ---
+
+func (d *Db) RegistrarCompra(req CompraRequest) (string, error) {
+	tx := d.DB.Begin()
+	if tx.Error != nil {
+		return "", fmt.Errorf("error al iniciar la transacción: %w", tx.Error)
+	}
+	defer tx.Rollback()
+
+	// Validar que el proveedor exista
+	if err := tx.First(&Proveedor{}, req.ProveedorID).Error; err != nil {
+		return "", errors.New("proveedor no encontrado")
+	}
+
+	compra := Compra{
+		Fecha:         time.Now(),
+		ProveedorID:   req.ProveedorID,
+		FacturaNumero: req.FacturaNumero,
+	}
+
+	var totalCompra float64
+	var detallesCompra []DetalleCompra
+
+	for _, p := range req.Productos {
+		var producto Producto
+		if err := tx.First(&producto, p.ProductoID).Error; err != nil {
+			return "", fmt.Errorf("producto con ID %d no encontrado", p.ProductoID)
+		}
+
+		precioTotalProducto := p.PrecioCompraUnitario * float64(p.Cantidad)
+		totalCompra += precioTotalProducto
+
+		detallesCompra = append(detallesCompra, DetalleCompra{
+			ProductoID:           p.ProductoID,
+			Cantidad:             p.Cantidad,
+			PrecioCompraUnitario: p.PrecioCompraUnitario,
+		})
+
+		// Actualizar el stock del producto
+		if err := tx.Model(&producto).Update("Stock", gorm.Expr("Stock + ?", p.Cantidad)).Error; err != nil {
+			return "", fmt.Errorf("error al actualizar el stock de %s: %w", producto.Nombre, err)
+		}
+	}
+
+	compra.Total = totalCompra
+	if err := tx.Create(&compra).Error; err != nil {
+		return "", fmt.Errorf("error al crear la compra: %w", err)
+	}
+
+	for i := range detallesCompra {
+		detallesCompra[i].CompraID = compra.ID
+	}
+	if err := tx.Create(&detallesCompra).Error; err != nil {
+		return "", fmt.Errorf("error al crear los detalles de la compra: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return "", fmt.Errorf("error al confirmar la transacción: %w", err)
+	}
+
+	return "Compra registrada y stock actualizado correctamente.", nil
 }

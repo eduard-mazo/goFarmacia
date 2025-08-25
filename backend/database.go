@@ -8,12 +8,11 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-
-	// cambiar a modernc
 	_ "modernc.org/sqlite"
 )
 
 // --- ESTRUCTURAS DE LA BASE DE DATOS ---
+
 type Vendedor struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt  time.Time      `json:"created_at" wails:"ts.type=string"`
@@ -83,7 +82,40 @@ type DetalleFactura struct {
 	PrecioTotal    float64        `json:"PrecioTotal"`
 }
 
-// --- ESTRUCTURAS PARA REQUESTS DEL FRONTEND ---
+// NUEVAS ESTRUCTURAS PARA INVENTARIO
+type Proveedor struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at" wails:"ts.type=string"`
+	UpdatedAt time.Time      `json:"updated_at" wails:"ts.type=string"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	Nombre    string         `gorm:"unique" json:"Nombre"`
+	Telefono  string         `json:"Telefono"`
+	Email     string         `json:"Email"`
+}
+
+type Compra struct {
+	ID            uint            `gorm:"primaryKey" json:"id"`
+	CreatedAt     time.Time       `json:"created_at" wails:"ts.type=string"`
+	UpdatedAt     time.Time       `json:"updated_at" wails:"ts.type=string"`
+	DeletedAt     gorm.DeletedAt  `gorm:"index" json:"-"`
+	Fecha         time.Time       `json:"Fecha" wails:"ts.type=string"`
+	ProveedorID   uint            `json:"ProveedorID"`
+	Proveedor     Proveedor       `json:"Proveedor"`
+	FacturaNumero string          `json:"FacturaNumero"`
+	Total         float64         `json:"Total"`
+	Detalles      []DetalleCompra `gorm:"foreignKey:CompraID" json:"Detalles"`
+}
+
+type DetalleCompra struct {
+	ID                   uint     `gorm:"primaryKey" json:"id"`
+	CompraID             uint     `json:"CompraID"`
+	ProductoID           uint     `json:"ProductoID"`
+	Producto             Producto `json:"Producto"`
+	Cantidad             int      `json:"Cantidad"`
+	PrecioCompraUnitario float64  `json:"PrecioCompraUnitario"`
+}
+
+// --- ESTRUCTURAS PARA REQUESTS Y RESPONSES ---
 
 type VentaRequest struct {
 	ClienteID  uint            `json:"ClienteID"`
@@ -100,6 +132,23 @@ type ProductoVenta struct {
 type LoginRequest struct {
 	Cedula     string `json:"Cedula"`
 	Contrasena string `json:"Contrasena"`
+}
+
+type CompraRequest struct {
+	ProveedorID   uint                 `json:"ProveedorID"`
+	FacturaNumero string               `json:"FacturaNumero"`
+	Productos     []ProductoCompraInfo `json:"Productos"`
+}
+
+type ProductoCompraInfo struct {
+	ProductoID           uint    `json:"ProductoID"`
+	Cantidad             int     `json:"Cantidad"`
+	PrecioCompraUnitario float64 `json:"PrecioCompraUnitario"`
+}
+
+type PaginatedResult struct {
+	Records      interface{} `json:"Records"`
+	TotalRecords int64       `json:"TotalRecords"`
 }
 
 // --- LÓGICA DE LA BASE DE DATOS ---
@@ -126,7 +175,8 @@ func (d *Db) initDB() {
 		log.Fatalf("Fallo al conectar a la base de datos: %v", err)
 	}
 
-	err = d.DB.AutoMigrate(&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{})
+	// Se añaden los nuevos modelos a la migración
+	err = d.DB.AutoMigrate(&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{}, &Proveedor{}, &Compra{}, &DetalleCompra{})
 	if err != nil {
 		log.Fatalf("Fallo en la migración de la base de datos: %v", err)
 	}

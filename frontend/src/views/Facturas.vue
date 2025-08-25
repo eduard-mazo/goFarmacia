@@ -10,6 +10,7 @@
             <th class="th">Fecha</th>
             <th class="th">Cliente</th>
             <th class="th">Vendedor</th>
+            <th class="th">Meetodo de Pago</th>
             <th class="th">Total</th>
             <th class="th text-right">Acciones</th>
           </tr>
@@ -24,6 +25,7 @@
               {{ factura.Cliente.Nombre }} {{ factura.Cliente.Apellido }}
             </td>
             <td class="td">{{ factura.Vendedor.Nombre }}</td>
+            <td class="td font-semibold">{{ factura.MetodoPago }}</td>
             <td class="td font-semibold">${{ factura.Total.toFixed(2) }}</td>
             <td class="td text-right">
               <button
