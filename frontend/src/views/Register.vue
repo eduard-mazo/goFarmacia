@@ -13,19 +13,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/services/auth";
 
+const name = ref("");
 const email = ref("");
 const password = ref("");
 const error = ref<string | null>(null);
 const isLoading = ref(false);
 
 const router = useRouter();
-const { login } = useAuth();
+const { register } = useAuth();
 
-async function handleLogin() {
+async function handleRegister() {
   error.value = null;
   isLoading.value = true;
   try {
-    await login(email.value, password.value);
+    await register(name.value, email.value, password.value);
     router.push("/dashboard");
   } catch (err: any) {
     error.value = err.message || "Ocurrió un error inesperado.";
@@ -37,17 +38,28 @@ async function handleLogin() {
 
 <template>
   <div class="w-full lg:grid lg:min-h-screen lg:grid-cols-2">
+    <div class="hidden bg-muted lg:block"></div>
     <div class="flex items-center justify-center py-12">
       <div class="mx-auto grid w-[350px] gap-6">
         <Card>
           <CardHeader>
-            <CardTitle class="text-3xl"> Iniciar Sesión </CardTitle>
+            <CardTitle class="text-3xl"> Crear Cuenta </CardTitle>
             <CardDescription>
-              Ingresa tu correo electrónico para acceder a tu cuenta.
+              Ingresa tus datos para crear una nueva cuenta.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form @submit.prevent="handleLogin" class="grid gap-4">
+            <form @submit.prevent="handleRegister" class="grid gap-4">
+              <div class="grid gap-2">
+                <Label for="name">Nombre Completo</Label>
+                <Input
+                  id="name"
+                  v-model="name"
+                  type="text"
+                  placeholder="John Doe"
+                  required
+                />
+              </div>
               <div class="grid gap-2">
                 <Label for="email">Correo Electrónico</Label>
                 <Input
@@ -59,9 +71,7 @@ async function handleLogin() {
                 />
               </div>
               <div class="grid gap-2">
-                <div class="flex items-center">
-                  <Label for="password">Contraseña</Label>
-                </div>
+                <Label for="password">Contraseña</Label>
                 <Input
                   id="password"
                   v-model="password"
@@ -71,19 +81,18 @@ async function handleLogin() {
               </div>
               <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
               <Button type="submit" class="w-full" :disabled="isLoading">
-                {{ isLoading ? "Ingresando..." : "Iniciar Sesión" }}
+                {{ isLoading ? "Creando cuenta..." : "Crear Cuenta" }}
               </Button>
             </form>
             <div class="mt-4 text-center text-sm">
-              ¿No tienes una cuenta?
-              <router-link to="/register" class="underline">
-                Regístrate
+              ¿Ya tienes una cuenta?
+              <router-link to="/login" class="underline">
+                Inicia sesión
               </router-link>
             </div>
           </CardContent>
         </Card>
       </div>
     </div>
-    <div class="hidden bg-muted lg:block"></div>
   </div>
 </template>

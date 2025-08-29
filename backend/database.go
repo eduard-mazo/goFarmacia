@@ -4,14 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
+	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	_ "modernc.org/sqlite"
 )
 
-// --- ESTRUCTURAS DE LA BASE DE DATOS ---
+// --- DATABASE STRUCTS (remain the same) ---
 
 type Vendedor struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
@@ -82,7 +86,6 @@ type DetalleFactura struct {
 	PrecioTotal    float64        `json:"PrecioTotal"`
 }
 
-// NUEVAS ESTRUCTURAS PARA INVENTARIO
 type Proveedor struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time      `json:"created_at" wails:"ts.type=string"`
@@ -115,7 +118,7 @@ type DetalleCompra struct {
 	PrecioCompraUnitario float64  `json:"PrecioCompraUnitario"`
 }
 
-// --- ESTRUCTURAS PARA REQUESTS Y RESPONSES ---
+// --- REQUEST/RESPONSE STRUCTS (remain the same) ---
 
 type VentaRequest struct {
 	ClienteID  uint            `json:"ClienteID"`
@@ -151,11 +154,13 @@ type PaginatedResult struct {
 	TotalRecords int64       `json:"TotalRecords"`
 }
 
-// --- LÓGICA DE LA BASE DE DATOS ---
+// --- DATABASE LOGIC ---
 
+// Db struct now holds connections for both local and remote databases
 type Db struct {
-	ctx context.Context
-	DB  *gorm.DB
+	ctx      context.Context
+	LocalDB  *gorm.DB // For SQLite
+	RemoteDB *gorm.DB // For Supabase (PostgreSQL)
 }
 
 func NewDb() *Db {
@@ -164,22 +169,52 @@ func NewDb() *Db {
 
 func (d *Db) Startup(ctx context.Context) {
 	d.ctx = ctx
-	fmt.Println("DB backend inicializado")
+	fmt.Println("DB backend starting up...")
 	d.initDB()
+	d.RealizarSincronizacionInicial()
 }
 
 func (d *Db) initDB() {
 	var err error
-	d.DB, err = gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: "file:farmacia.db"}, &gorm.Config{})
+
+	// --- 1. Initialize Local SQLite Database ---
+	d.LocalDB, err = gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: "file:farmacia.db"}, &gorm.Config{})
 	if err != nil {
-		log.Fatalf("Fallo al conectar a la base de datos: %v", err)
+		log.Fatalf("FATAL: Failed to connect to local SQLite database: %v", err)
+	}
+	log.Println("✅ Local SQLite database connected successfully.")
+
+	// List of all models to migrate
+	models := []interface{}{&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{}, &Proveedor{}, &Compra{}, &DetalleCompra{}}
+
+	// Auto-migrate schema for the local database
+	err = d.LocalDB.AutoMigrate(models...)
+	if err != nil {
+		log.Fatalf("FATAL: Failed to migrate local database schema: %v", err)
+	}
+	log.Println("✅ Local database schema migrated successfully.")
+
+	// --- 2. Initialize Remote Supabase Database ---
+	// Carga las variables de entorno del archivo .env
+	// Esto debe ser lo primero que hagas en la función main
+	err = godotenv.Load()
+	if err != nil {
+		log.Fatalf("Error loading .env file: %v", err)
 	}
 
-	// Se añaden los nuevos modelos a la migración
-	err = d.DB.AutoMigrate(&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{}, &Proveedor{}, &Compra{}, &DetalleCompra{})
+	d.RemoteDB, err = gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info), // Use logger.Info for debugging sync issues
+	})
 	if err != nil {
-		log.Fatalf("Fallo en la migración de la base de datos: %v", err)
+		log.Printf("WARNING: Failed to connect to remote Supabase database. App will run in offline mode. Error: %v", err)
+		// We don't use log.Fatalf here, so the app can start in offline mode.
+		d.RemoteDB = nil // Ensure RemoteDB is nil if connection fails
+	} else {
+		log.Println("✅ Remote Supabase database connected successfully.")
 	}
+}
 
-	log.Println("Base de datos conectada y migrada exitosamente")
+// Check if the remote database is available
+func (d *Db) isRemoteDBAvailable() bool {
+	return d.RemoteDB != nil
 }

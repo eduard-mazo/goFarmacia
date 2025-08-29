@@ -1,37 +1,62 @@
-import { createRouter, createWebHashHistory } from "vue-router";
-import { useAuthStore } from "../stores/auth";
-
-// Importa las vistas
-import Login from "../views/Login.vue";
-import VentaPOS from "../views/VentaPOS.vue";
-import Productos from "../views/Productos.vue";
-import Clientes from "../views/Clientes.vue";
-import Vendedores from "../views/Vendedores.vue";
-import Facturas from "../views/Facturas.vue";
-import Inventario from "../views/Inventario.vue";
+import { createRouter, createWebHistory } from "vue-router";
+import { useAuth } from "@/services/auth";
 
 const routes = [
-  { path: "/login", name: "Login", component: Login, meta: { public: true } },
-  { path: "/", name: "POS", component: VentaPOS },
-  { path: "/productos", name: "Productos", component: Productos },
-  { path: "/clientes", name: "Clientes", component: Clientes },
-  { path: "/vendedores", name: "Vendedores", component: Vendedores },
-  { path: "/facturas", name: "Facturas", component: Facturas },
-  { path: "/inventario", name: "Inventario", component: Inventario },
+  {
+    path: "/login",
+    name: "Login",
+    component: () => import("@/views/Login.vue"),
+    meta: { public: true },
+  },
+  {
+    path: "/Register",
+    name: "Register",
+    component: () => import("@/views/Register.vue"),
+  },
+  {
+    path: "/dashboard",
+    component: () => import("@/layouts/DashboardLayout.vue"),
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: "",
+        name: "DashboardHome",
+        component: () => import("@/views/Dashboard/DashboardHome.vue"),
+      },
+      {
+        path: "pos",
+        name: "VentasPOS",
+        component: () => import("@/views/Dashboard/VentasPOS.vue"),
+      },
+      // ... aquí puedes agregar más rutas para el dashboard
+    ],
+  },
+  // Redirección por defecto
+  {
+    path: "/:pathMatch(.*)*",
+    redirect: "/dashboard",
+  },
 ];
 
 const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes,
 });
 
-// Guardia de navegación
-router.beforeEach((to, _, next) => {
-  const authStore = useAuthStore();
-  const isPublic = to.matched.some((record) => record.meta.public);
+// Guarda de navegación global
+router.beforeEach((to, from, next) => {
+  const { isAuthenticated } = useAuth();
+  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
 
-  if (!isPublic && !authStore.isAuthenticated) {
+  if (requiresAuth && !isAuthenticated.value) {
+    // Si la ruta requiere autenticación y el usuario no está logueado, redirige a login
     next({ name: "Login" });
+  } else if (
+    (to.name === "Login" || to.name === "Register") &&
+    isAuthenticated.value
+  ) {
+    // Si el usuario ya está logueado, no puede acceder a login/register
+    next({ name: "DashboardHome" });
   } else {
     next();
   }

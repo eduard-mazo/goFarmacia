@@ -1,418 +1,371 @@
-<template>
-  <div class="grid grid-cols-4 gap-6 h-[calc(100vh-100px)] font-sans">
-    <div
-      class="col-span-3 flex flex-col h-full bg-white rounded-lg shadow-lg p-6"
-    >
-      <div class="relative mb-4">
-        <label
-          for="scanner-input"
-          class="block text-lg font-medium text-gray-800 mb-2"
-        >
-          🔍 Buscar Producto por Nombre o Código
-        </label>
-        <input
-          ref="scannerInput"
-          id="scanner-input"
-          v-model="busqueda"
-          @input="buscarProductosCoincidentes"
-          @keydown.down.prevent="moverSeleccion(1)"
-          @keydown.up.prevent="moverSeleccion(-1)"
-          @keydown.enter.prevent="agregarProductoSeleccionado"
-          autocomplete="off"
-          placeholder="Escriba aquí para buscar..."
-          class="block w-full border-gray-300 rounded-md shadow-sm text-lg p-4 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-        />
-        <div
-          v-if="busqueda && mostrarResultados"
-          class="absolute z-10 w-full mt-1 bg-white rounded-md shadow-xl border max-h-60 overflow-y-auto"
-        >
-          <ul>
-            <li
-              v-if="resultadosBusqueda.length === 0"
-              class="px-4 py-3 text-gray-500"
-            >
-              No se encontraron productos.
-            </li>
-            <li
-              v-for="(producto, index) in resultadosBusqueda"
-              :key="producto.id"
-              @click="seleccionarYAgregar(producto)"
-              :class="{ 'bg-blue-500 text-white': index === seleccionIndex }"
-              class="px-4 py-3 cursor-pointer hover:bg-blue-100"
-            >
-              <div class="font-bold">{{ producto.Nombre }}</div>
-              <div
-                class="text-sm text-gray-600"
-                :class="{ 'text-white': index === seleccionIndex }"
-              >
-                Código: {{ producto.Codigo }} | Stock: {{ producto.Stock }} |
-                Precio: ${{ producto.PrecioVenta?.toFixed(2) }}
-              </div>
-            </li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="flex-grow overflow-y-auto border-t border-b border-gray-200">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-100 sticky top-0">
-            <tr>
-              <th
-                class="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
-              >
-                Producto
-              </th>
-              <th
-                class="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
-              >
-                Cantidad
-              </th>
-              <th
-                class="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
-              >
-                Precio
-              </th>
-              <th
-                class="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
-              >
-                Subtotal
-              </th>
-              <th
-                class="px-6 py-3 text-right text-xs font-bold text-gray-600 uppercase tracking-wider"
-              >
-                Acción
-              </th>
-            </tr>
-          </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
-            <tr v-if="carrito.length === 0">
-              <td colspan="5" class="text-center text-gray-500 py-12">
-                El carrito está vacío 🛒
-              </td>
-            </tr>
-            <tr
-              v-for="(item, index) in carrito"
-              :key="item.producto.id"
-              class="hover:bg-gray-50"
-            >
-              <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
-                {{ item.producto.Nombre }}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                <input
-                  type="number"
-                  v-model.number="item.cantidad"
-                  min="1"
-                  :max="item.producto.Stock"
-                  @change="actualizarTotal"
-                  class="w-24 text-center border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                />
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-gray-700">
-                ${{ item.producto.PrecioVenta?.toFixed(2) }}
-              </td>
-              <td
-                class="px-6 py-4 whitespace-nowrap font-semibold text-gray-800"
-              >
-                ${{ (item.producto.PrecioVenta! * item.cantidad).toFixed(2) }}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-right">
-                <button
-                  @click="quitarDelCarrito(index)"
-                  class="text-red-600 hover:text-red-800 font-medium transition"
-                >
-                  Eliminar
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="mt-auto pt-6 border-t">
-        <div class="text-right text-4xl font-extrabold text-gray-800">
-          Total:
-          <span class="text-blue-600">${{ totalVenta.toFixed(2) }}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-span-1 bg-white rounded-lg shadow-lg p-6 flex flex-col">
-      <h3 class="text-2xl font-bold mb-6 text-gray-800 border-b pb-3">
-        Finalizar Venta
-      </h3>
-      <div class="space-y-6">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1"
-            >Cliente</label
-          >
-          <select
-            v-model="venta.ClienteID"
-            class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-          >
-            <option v-for="c in clientes" :key="c.id" :value="c.id">
-              {{ c.Nombre }} {{ c.Apellido }}
-            </option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1"
-            >Método de Pago</label
-          >
-          <select
-            v-model="venta.MetodoPago"
-            class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-          >
-            <option>Efectivo</option>
-            <option>Tarjeta</option>
-            <option>Transferencia</option>
-          </select>
-        </div>
-      </div>
-      <div class="mt-auto">
-        <button
-          @click="realizarVenta"
-          :disabled="carrito.length === 0 || procesando"
-          class="w-full bg-blue-600 text-white font-bold py-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all text-lg shadow-md"
-        >
-          {{ procesando ? "Procesando..." : "Completar Venta 💳" }}
-        </button>
-      </div>
-    </div>
-
-    <div
-      v-if="facturaGenerada"
-      class="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50"
-    >
-      <div class="bg-white p-6 rounded-lg shadow-xl">
-        <ReciboPOS :factura="facturaGenerada" />
-        <div class="mt-6 text-center">
-          <button
-            @click="facturaGenerada = null"
-            class="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700 transition"
-          >
-            Cerrar
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <NotificationModal
-      :show="notification.show"
-      :message="notification.message"
-      :type="notification.type"
-      @close="notification.show = false"
-    />
-  </div>
-</template>
-
-<script lang="ts" setup>
-import { ref, onMounted, reactive } from "vue";
-import { useAuthStore } from "../stores/auth";
-import { backend } from "../../wailsjs/go/models";
+<script setup lang="ts">
+import { ref, computed, watch } from "vue";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
-  BuscarProductos,
-  ObtenerClientes,
-  RegistrarVenta,
-} from "../../wailsjs/go/backend/Db";
-import ReciboPOS from "../components/ReciboPOS.vue";
-import NotificationModal from "../components/NotificationModal.vue"; // Importa el nuevo componente
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardFooter,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Search, Trash2, UserSearch } from "lucide-vue-next";
+import { toast } from "vue-sonner";
 
-// --- INTERFACES ---
-interface CarritoItem {
-  producto: backend.Producto;
+// --- INTERFACES Y DATOS DE PRUEBA ---
+interface Producto {
+  id: number;
+  codigo: string;
+  nombre: string;
+  precio: number;
+  stock: number;
+}
+
+interface ItemCarrito extends Producto {
   cantidad: number;
 }
-type NotificationType = "success" | "error";
 
-// --- STATE MANAGEMENT ---
-const authStore = useAuthStore();
-const scannerInput = ref<HTMLInputElement | null>(null);
+// Mock de productos (simula una base de datos)
+const productos = ref<Producto[]>([
+  {
+    id: 1,
+    codigo: "P001",
+    nombre: "Paracetamol 500mg x20",
+    precio: 2500,
+    stock: 50,
+  },
+  {
+    id: 2,
+    codigo: "P002",
+    nombre: "Ibuprofeno 400mg x10",
+    precio: 3500,
+    stock: 30,
+  },
+  {
+    id: 3,
+    codigo: "P003",
+    nombre: "Vitamina C 1000mg Efervescente",
+    precio: 15000,
+    stock: 25,
+  },
+  {
+    id: 4,
+    codigo: "P004",
+    nombre: "Amoxicilina 500mg Cápsulas",
+    precio: 4500,
+    stock: 15,
+  },
+  {
+    id: 5,
+    codigo: "L001",
+    nombre: "Leche Deslactosada 1L",
+    precio: 4200,
+    stock: 100,
+  },
+  { id: 6, codigo: "A001", nombre: "Aspirina 100mg", precio: 8000, stock: 40 },
+]);
 
-const clientes = ref<backend.Cliente[]>([]);
+// --- ESTADO DEL COMPONENTE ---
 const busqueda = ref("");
-const resultadosBusqueda = ref<backend.Producto[]>([]);
-const mostrarResultados = ref(false);
-const seleccionIndex = ref(-1);
+const carrito = ref<ItemCarrito[]>([]);
+const metodoPago = ref("efectivo");
+const efectivoRecibido = ref<number | undefined>(undefined);
+const clienteSeleccionado = ref("Cliente General");
 
-const carrito = ref<CarritoItem[]>([]);
-const venta = ref(new backend.VentaRequest());
-const totalVenta = ref(0.0);
-const procesando = ref(false);
-const facturaGenerada = ref<backend.Factura | null>(null);
-
-const notification = reactive({
-  show: false,
-  message: "",
-  type: "success" as NotificationType,
-});
-
-// --- HOOKS ---
-onMounted(() => {
-  cargarDatosIniciales();
-  scannerInput.value?.focus();
-});
-
-// --- METHODS ---
-const showNotification = (
-  message: string,
-  type: NotificationType = "success",
-  duration: number = 3000
-) => {
-  notification.message = message;
-  notification.type = type;
-  notification.show = true;
-  setTimeout(() => {
-    notification.show = false;
-  }, duration);
-};
-
-const cargarDatosIniciales = async () => {
-  try {
-    clientes.value = await ObtenerClientes();
-    if (clientes.value.length > 0 && clientes.value[0]?.id !== undefined)
-      venta.value.ClienteID = clientes.value[0].id!;
-    venta.value.MetodoPago = "Efectivo";
-  } catch (error) {
-    showNotification(`Error cargando datos: ${error}`, "error");
-  }
-};
-
-const buscarProductosCoincidentes = async () => {
-  if (!busqueda.value) {
-    mostrarResultados.value = false;
-    resultadosBusqueda.value = [];
-    return;
-  }
-  try {
-    const productos = await BuscarProductos(busqueda.value);
-    resultadosBusqueda.value = productos;
-    mostrarResultados.value = true;
-    seleccionIndex.value = -1; // Reset selection index on new search
-  } catch (error) {
-    showNotification(`Error buscando producto: ${error}`, "error");
-  }
-};
-
-const moverSeleccion = (direccion: number) => {
-  if (resultadosBusqueda.value.length === 0) return;
-  seleccionIndex.value += direccion;
-  if (seleccionIndex.value < 0) {
-    seleccionIndex.value = resultadosBusqueda.value.length - 1;
-  } else if (seleccionIndex.value >= resultadosBusqueda.value.length) {
-    seleccionIndex.value = 0;
-  }
-};
-
-const agregarProductoSeleccionado = () => {
-  if (
-    seleccionIndex.value >= 0 &&
-    seleccionIndex.value < resultadosBusqueda.value.length
-  ) {
-    const producto = resultadosBusqueda.value[seleccionIndex.value];
-    if (producto) {
-      seleccionarYAgregar(producto);
-    }
-  } else if (resultadosBusqueda.value.length > 0) {
-    const primerProducto = resultadosBusqueda.value[0];
-    if (primerProducto) {
-      seleccionarYAgregar(primerProducto);
-    }
-  }
-};
-
-const seleccionarYAgregar = (producto: backend.Producto) => {
-  agregarAlCarrito(producto);
-  busqueda.value = "";
-  mostrarResultados.value = false;
-  resultadosBusqueda.value = [];
-  scannerInput.value?.focus();
-};
-
-const agregarAlCarrito = (producto: backend.Producto) => {
-  if (producto.Stock === 0) {
-    showNotification("Este producto no tiene stock.", "error");
-    return;
-  }
-  const itemExistente = carrito.value.find(
-    (item) => item.producto.id === producto.id
+// --- LÓGICA DE BÚSQUEDA Y AUTOCOMPLETADO ---
+const resultadosBusqueda = computed(() => {
+  if (busqueda.value.length < 2) return [];
+  return productos.value.filter(
+    (p) =>
+      p.nombre.toLowerCase().includes(busqueda.value.toLowerCase()) ||
+      p.codigo.toLowerCase().includes(busqueda.value.toLowerCase())
   );
+});
+
+// --- LÓGICA DEL CARRITO ---
+function agregarAlCarrito(producto: Producto) {
+  const itemExistente = carrito.value.find((item) => item.id === producto.id);
+
   if (itemExistente) {
-    if (itemExistente.cantidad < producto.Stock!) {
+    // Si el producto ya existe, aumenta la cantidad
+    if (itemExistente.cantidad < producto.stock) {
       itemExistente.cantidad++;
-      showNotification(`${producto.Nombre} cantidad aumentada.`, "success");
     } else {
-      showNotification(
-        "No hay más stock disponible para este producto.",
-        "error"
-      );
+      toast.warning("Stock máximo alcanzado", {
+        description: `No hay más stock disponible para ${producto.nombre}.`,
+      });
     }
   } else {
-    carrito.value.push({ producto: producto, cantidad: 1 });
-    showNotification(`${producto.Nombre} agregado al carrito.`, "success");
+    // Si es un producto nuevo, lo agrega al carrito
+    carrito.value.push({ ...producto, cantidad: 1 });
   }
-  actualizarTotal();
-};
+  // Limpia la búsqueda para una nueva interacción
+  busqueda.value = "";
+}
 
-const quitarDelCarrito = (index: number) => {
-  const item = carrito.value[index];
+function manejarBusquedaConEnter() {
+  if (resultadosBusqueda.value.length === 1 && resultadosBusqueda.value[0]) {
+    agregarAlCarrito(resultadosBusqueda.value[0]);
+  }
+}
+
+function eliminarDelCarrito(idProducto: number) {
+  carrito.value = carrito.value.filter((p) => p.id !== idProducto);
+}
+
+function actualizarCantidad(idProducto: number, nuevaCantidad: number) {
+  const item = carrito.value.find((p) => p.id === idProducto);
   if (item) {
-    const nombreProducto = item.producto.Nombre;
-    carrito.value.splice(index, 1);
-    actualizarTotal();
-    showNotification(`${nombreProducto} eliminado del carrito.`, "success");
+    // Valida que la cantidad no sea menor a 1 o mayor al stock
+    if (nuevaCantidad > 0 && nuevaCantidad <= item.stock) {
+      item.cantidad = nuevaCantidad;
+    } else if (nuevaCantidad > item.stock) {
+      item.cantidad = item.stock;
+      toast.warning("Stock máximo alcanzado", {
+        description: `El stock disponible es de ${item.stock} unidades.`,
+      });
+    }
   }
-};
+}
 
-const actualizarTotal = () => {
-  totalVenta.value = carrito.value.reduce((acc, item) => {
-    return acc + (item.producto.PrecioVenta || 0) * item.cantidad;
-  }, 0);
-};
+// --- LÓGICA DE LA VENTA ---
+const total = computed(() =>
+  carrito.value.reduce((acc, item) => acc + item.precio * item.cantidad, 0)
+);
 
-const realizarVenta = async () => {
-  if (procesando.value) return;
-  if (!venta.value.ClienteID || carrito.value.length === 0) {
-    showNotification(
-      "Selecciona un cliente y agrega productos al carrito.",
-      "error"
-    );
+const cambio = computed(() => {
+  if (
+    metodoPago.value === "efectivo" &&
+    efectivoRecibido.value &&
+    efectivoRecibido.value > 0
+  ) {
+    const valor = efectivoRecibido.value - total.value;
+    return valor >= 0 ? valor : 0;
+  }
+  return 0;
+});
+
+// Limpiar efectivo recibido si el método de pago cambia
+watch(metodoPago, (nuevoMetodo) => {
+  if (nuevoMetodo !== "efectivo") {
+    efectivoRecibido.value = undefined;
+  }
+});
+
+function finalizarVenta() {
+  if (carrito.value.length === 0) {
+    toast.error("El carrito está vacío", {
+      description: "Agrega productos antes de finalizar la venta.",
+    });
     return;
   }
-
-  const vendedorId = authStore.vendedorId;
-  if (!vendedorId) {
-    showNotification(
-      "Error de sesión: Vendedor no identificado. Inicie sesión de nuevo.",
-      "error"
-    );
-    return;
-  }
-
-  procesando.value = true;
-  venta.value.VendedorID = vendedorId;
-  venta.value.Productos = carrito.value.map((item) => {
-    const p = new backend.ProductoVenta();
-    p.ID = item.producto.id!;
-    p.Cantidad = item.cantidad;
-    return p;
+  // Lógica para procesar la venta (ej. enviar a un backend)
+  console.log("Venta finalizada:", {
+    cliente: clienteSeleccionado.value,
+    metodoPago: metodoPago.value,
+    total: total.value,
+    efectivoRecibido: efectivoRecibido.value,
+    cambio: cambio.value,
+    items: carrito.value,
   });
 
-  try {
-    const factura = await RegistrarVenta(venta.value);
-    facturaGenerada.value = factura;
-    // Reset state after successful sale
-    carrito.value = [];
-    totalVenta.value = 0;
-    busqueda.value = "";
-  } catch (error) {
-    showNotification(`Error al registrar la venta: ${error}`, "error");
-  } finally {
-    procesando.value = false;
-  }
-};
+  toast.success("Venta realizada con éxito!", {
+    description: `Total: $${total.value.toLocaleString()}`,
+  });
+
+  // Resetear estado
+  carrito.value = [];
+  efectivoRecibido.value = undefined;
+  busqueda.value = "";
+}
 </script>
 
-<style scoped>
-/* Scoped styles for fine-tuning if needed */
-</style>
+<template>
+  <div
+    class="grid grid-cols-10 gap-6 p-4 h-screen bg-background text-foreground"
+  >
+    <div class="col-span-10 lg:col-span-7 flex flex-col gap-6">
+      <Card class="flex-1 shadow-lg py-1">
+        <CardContent class="p-4 h-full">
+          <div class="relative">
+            <Search
+              class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground"
+            />
+            <Input
+              v-model="busqueda"
+              placeholder="Buscar producto por código o nombre..."
+              @keyup.enter="manejarBusquedaConEnter"
+              class="pl-10 text-lg"
+            />
+            <div
+              v-if="resultadosBusqueda.length > 0"
+              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl max-h-60 overflow-y-auto"
+            >
+              <ul>
+                <li
+                  v-for="producto in resultadosBusqueda"
+                  :key="producto.id"
+                  class="p-3 hover:bg-muted cursor-pointer flex justify-between items-center"
+                  @click="agregarAlCarrito(producto)"
+                >
+                  <div>
+                    <p class="font-semibold">{{ producto.nombre }}</p>
+                    <p class="text-sm text-muted-foreground">
+                      Código: {{ producto.codigo }} | Stock:
+                      {{ producto.stock }}
+                    </p>
+                  </div>
+                  <span class="font-mono text-lg"
+                    >${{ producto.precio.toLocaleString() }}</span
+                  >
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div class="h-full overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead class="w-[100px]">Código</TableHead>
+                  <TableHead>Producto</TableHead>
+                  <TableHead class="text-center">Cantidad</TableHead>
+                  <TableHead class="text-right">Precio Unit.</TableHead>
+                  <TableHead class="text-right">Subtotal</TableHead>
+                  <TableHead class="text-center">Acción</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <template v-if="carrito.length > 0">
+                  <TableRow v-for="item in carrito" :key="item.id">
+                    <TableCell class="font-mono">{{ item.codigo }}</TableCell>
+                    <TableCell class="font-medium">{{ item.nombre }}</TableCell>
+                    <TableCell class="text-center">
+                      <Input
+                        type="number"
+                        class="w-20 text-center mx-auto"
+                        :model-value="item.cantidad"
+                        @update:model-value="
+                          actualizarCantidad(item.id, Number($event))
+                        "
+                        min="1"
+                        :max="item.stock"
+                      />
+                    </TableCell>
+                    <TableCell class="text-right font-mono"
+                      >${{ item.precio.toLocaleString() }}</TableCell
+                    >
+                    <TableCell class="text-right font-mono"
+                      >${{
+                        (item.precio * item.cantidad).toLocaleString()
+                      }}</TableCell
+                    >
+                    <TableCell class="text-center">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        @click="eliminarDelCarrito(item.id)"
+                      >
+                        <Trash2 class="w-5 h-5 text-destructive" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                </template>
+                <TableRow v-else>
+                  <TableCell
+                    colspan="6"
+                    class="text-center h-24 text-muted-foreground"
+                  >
+                    El carrito está vacío
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+
+    <div class="col-span-10 lg:col-span-3">
+      <Card class="shadow-lg sticky top-4">
+        <CardHeader>
+          <CardTitle>Gestión de Venta</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-6">
+          <div class="space-y-2">
+            <Label for="cliente">Cliente</Label>
+            <div class="flex gap-2">
+              <Input id="cliente" :value="clienteSeleccionado" readonly />
+              <Button variant="outline" size="icon">
+                <UserSearch class="w-5 h-5" />
+              </Button>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <Label>Método de Pago</Label>
+            <Select v-model="metodoPago">
+              <SelectTrigger>
+                <SelectValue placeholder="Seleccione un método" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="efectivo">Efectivo</SelectItem>
+                <SelectItem value="tarjeta">Tarjeta</SelectItem>
+                <SelectItem value="transferencia">Transferencia</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div v-if="metodoPago === 'efectivo'" class="space-y-2">
+            <Label for="efectivo">Efectivo Recibido</Label>
+            <Input
+              id="efectivo"
+              type="number"
+              v-model="efectivoRecibido"
+              placeholder="$ 0"
+              class="text-right h-12 text-lg font-mono"
+            />
+          </div>
+
+          <div class="space-y-3 pt-4 border-t">
+            <div class="flex justify-between items-center text-lg">
+              <span class="text-muted-foreground">Total</span>
+              <span class="font-bold font-mono text-2xl"
+                >${{ total.toLocaleString() }}</span
+              >
+            </div>
+            <div
+              v-if="metodoPago === 'efectivo' && cambio > 0"
+              class="flex justify-between items-center text-lg"
+            >
+              <span class="text-muted-foreground">Cambio</span>
+              <span class="font-bold font-mono text-green-400 text-2xl"
+                >${{ cambio.toLocaleString() }}</span
+              >
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button @click="finalizarVenta" class="w-full h-12 text-lg">
+            Finalizar Venta
+          </Button>
+        </CardFooter>
+      </Card>
+    </div>
+  </div>
+</template>

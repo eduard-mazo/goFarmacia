@@ -1,101 +1,81 @@
 <template>
-  <div>
-    <h1 class="text-2xl font-bold mb-6">Historial de Facturas</h1>
-
-    <div class="bg-white shadow overflow-hidden sm:rounded-lg">
-      <table class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
-          <tr>
-            <th class="th">N° Factura</th>
-            <th class="th">Fecha</th>
-            <th class="th">Cliente</th>
-            <th class="th">Vendedor</th>
-            <th class="th">Meetodo de Pago</th>
-            <th class="th">Total</th>
-            <th class="th text-right">Acciones</th>
-          </tr>
-        </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
-          <tr v-for="factura in facturas" :key="factura.id">
-            <td class="td">{{ factura.NumeroFactura }}</td>
-            <td class="td">
-              {{ new Date(factura.fecha_emision).toLocaleString() }}
-            </td>
-            <td class="td">
-              {{ factura.Cliente.Nombre }} {{ factura.Cliente.Apellido }}
-            </td>
-            <td class="td">{{ factura.Vendedor.Nombre }}</td>
-            <td class="td font-semibold">{{ factura.MetodoPago }}</td>
-            <td class="td font-semibold">${{ factura.Total.toFixed(2) }}</td>
-            <td class="td text-right">
-              <button
-                @click="verDetalle(factura.id!)"
-                class="text-indigo-600 hover:text-indigo-900"
-              >
-                Ver Recibo
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div
-      v-if="facturaSeleccionada"
-      class="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center"
-    >
-      <div class="bg-white p-4 rounded-lg shadow-xl">
-        <ReciboPOS :factura="facturaSeleccionada" />
-        <div class="mt-4 text-center">
-          <button
-            @click="facturaSeleccionada = null"
-            class="bg-gray-500 text-white px-4 py-2 rounded"
+  <div class="min-h-screen flex items-center justify-center bg-gray-100">
+    <div class="max-w-md w-full bg-white p-8 rounded-lg shadow-lg">
+      <h2 class="text-2xl font-bold text-center text-gray-800 mb-6">
+        Iniciar Sesión
+      </h2>
+      <form @submit.prevent="handleLogin">
+        <div class="mb-4">
+          <label for="cedula" class="block text-gray-700 text-sm font-bold mb-2"
+            >Cédula</label
           >
-            Cerrar
+          <input
+            v-model="credenciales.Cedula"
+            type="text"
+            id="cedula"
+            class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            required
+          />
+        </div>
+        <div class="mb-6">
+          <label
+            for="password"
+            class="block text-gray-700 text-sm font-bold mb-2"
+            >Contraseña</label
+          >
+          <input
+            v-model="credenciales.Contrasena"
+            type="password"
+            id="password"
+            class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline"
+            required
+          />
+        </div>
+        <p v-if="errorMsg" class="text-red-500 text-xs italic mb-4">
+          {{ errorMsg }}
+        </p>
+        <div class="flex items-center justify-between">
+          <button
+            type="submit"
+            class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full"
+          >
+            Ingresar
           </button>
         </div>
-      </div>
+      </form>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { onMounted, ref } from "vue";
+import { useAuthStore } from "../stores/auth";
 import { backend } from "../../wailsjs/go/models";
 import {
-  ObtenerFacturas,
-  ObtenerDetalleFactura,
+  RegistrarVendedor,
 } from "../../wailsjs/go/backend/Db";
-import ReciboPOS from "../components/ReciboPOS.vue";
 
-const facturas = ref<backend.Factura[]>([]);
-const facturaSeleccionada = ref<backend.Factura | null>(null);
-
-const cargarFacturas = async () => {
+const vendedor = ref(new backend.Vendedor());
+const authStore = useAuthStore();
+const credenciales = ref(new backend.LoginRequest());
+const errorMsg = ref("");
+onMounted(() => {
+  async () => {
+    try {
+      let resultado: string;
+      resultado = await RegistrarVendedor(vendedor.value);
+      alert(resultado);
+    } catch (error) {
+      alert(`Error al guardar vendedor: ${error}`);
+    }
+  };
+});
+const handleLogin = async () => {
+  errorMsg.value = "";
   try {
-    facturas.value = await ObtenerFacturas();
+    await authStore.login(credenciales.value);
   } catch (error) {
-    alert(`Error al cargar facturas: ${error}`);
+    errorMsg.value = String(error) || "Credenciales inválidas.";
   }
 };
-
-const verDetalle = async (id: number) => {
-  try {
-    facturaSeleccionada.value = await ObtenerDetalleFactura(id);
-  } catch (error) {
-    alert(`Error al obtener detalle: ${error}`);
-  }
-};
-
-onMounted(cargarFacturas);
 </script>
-
-<style scoped>
-@reference "../style.css";
-.th {
-  @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider;
-}
-.td {
-  @apply px-6 py-4 whitespace-nowrap text-sm text-gray-700;
-}
-</style>

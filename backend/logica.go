@@ -7,13 +7,25 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
-
-// --- LÓGICA DE AUTENTICACIÓN ---
 
 func (d *Db) LoginVendedor(req LoginRequest) (Vendedor, error) {
 	var vendedor Vendedor
-	result := d.DB.Where("cedula = ?", req.Cedula).First(&vendedor)
+
+	if d.isRemoteDBAvailable() {
+		result := d.RemoteDB.Where("cedula = ?", req.Cedula).First(&vendedor)
+		if result.Error == nil {
+			if vendedor.Contrasena != req.Contrasena {
+				return Vendedor{}, errors.New("contraseña incorrecta")
+			}
+			go d.syncVendedorToLocal(vendedor)
+			return vendedor, nil
+		}
+	}
+
+	log.Println("Login: Falling back to local database check.")
+	result := d.LocalDB.Where("cedula = ?", req.Cedula).First(&vendedor)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return Vendedor{}, errors.New("vendedor no encontrado")
@@ -28,213 +40,158 @@ func (d *Db) LoginVendedor(req LoginRequest) (Vendedor, error) {
 	return vendedor, nil
 }
 
-// --- LÓGICA PAGINADA Y BÚSQUEDA ---
-
 func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var vendedores []Vendedor
 	var total int64
+	db := d.LocalDB
 
-	query := d.DB.Model(&Vendedor{})
+	if d.isRemoteDBAvailable() {
+		db = d.RemoteDB
+	}
 
+	query := db.Model(&Vendedor{})
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Where("Nombre LIKE ? OR Apellido LIKE ? OR Cedula LIKE ?", searchTerm, searchTerm, searchTerm)
 	}
 
-	query.Count(&total) // Contar el total de registros que coinciden con la búsqueda
-
+	query.Count(&total)
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&vendedores).Error
-	if err != nil {
-		return PaginatedResult{}, err
-	}
 
-	return PaginatedResult{Records: vendedores, TotalRecords: total}, nil
+	return PaginatedResult{Records: vendedores, TotalRecords: total}, err
 }
 
 func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var clientes []Cliente
 	var total int64
-
-	query := d.DB.Model(&Cliente{})
-
+	db := d.LocalDB
+	if d.isRemoteDBAvailable() {
+		db = d.RemoteDB
+	}
+	query := db.Model(&Cliente{})
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Where("Nombre LIKE ? OR Apellido LIKE ? OR NumeroID LIKE ?", searchTerm, searchTerm, searchTerm)
 	}
-
 	query.Count(&total)
-
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&clientes).Error
-	if err != nil {
-		return PaginatedResult{}, err
-	}
-
-	return PaginatedResult{Records: clientes, TotalRecords: total}, nil
+	return PaginatedResult{Records: clientes, TotalRecords: total}, err
 }
 
 func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var productos []Producto
 	var total int64
-
-	query := d.DB.Model(&Producto{})
-
+	db := d.LocalDB
+	if d.isRemoteDBAvailable() {
+		db = d.RemoteDB
+	}
+	query := db.Model(&Producto{})
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Where("Nombre LIKE ? OR Codigo LIKE ?", searchTerm, searchTerm)
 	}
-
 	query.Count(&total)
-
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&productos).Error
-	if err != nil {
-		return PaginatedResult{}, err
-	}
-
-	return PaginatedResult{Records: productos, TotalRecords: total}, nil
+	return PaginatedResult{Records: productos, TotalRecords: total}, err
 }
-
-// --- CRUD DE VENDEDORES ---
 
 func (d *Db) RegistrarVendedor(vendedor Vendedor) (string, error) {
-	if err := d.DB.Create(&vendedor).Error; err != nil {
-		log.Printf("Error al registrar el vendedor: %v", err)
-		return "", fmt.Errorf("error al registrar el vendedor: %w", err)
+	if err := d.LocalDB.Create(&vendedor).Error; err != nil {
+		return "", fmt.Errorf("error al registrar localmente: %w", err)
 	}
-	return fmt.Sprintf("Vendedor '%s' registrado con ID %d", vendedor.Nombre, vendedor.ID), nil
-}
-
-func (d *Db) ObtenerVendedores() ([]Vendedor, error) {
-	var vendedores []Vendedor
-	if err := d.DB.Find(&vendedores).Error; err != nil {
-		return nil, err
-	}
-	return vendedores, nil
+	go d.syncVendedorToRemote(vendedor.ID)
+	return "Vendedor registrado localmente. Sincronizando...", nil
 }
 
 func (d *Db) ActualizarVendedor(vendedor Vendedor) (string, error) {
-	if err := d.DB.Save(&vendedor).Error; err != nil {
+	if err := d.LocalDB.Save(&vendedor).Error; err != nil {
 		return "", err
 	}
-	return "Vendedor actualizado correctamente", nil
+	go d.syncVendedorToRemote(vendedor.ID)
+	return "Vendedor actualizado localmente. Sincronizando...", nil
 }
 
 func (d *Db) EliminarVendedor(id uint) (string, error) {
-	if err := d.DB.Delete(&Vendedor{}, id).Error; err != nil {
+	if err := d.LocalDB.Delete(&Vendedor{}, id).Error; err != nil {
 		return "", err
 	}
-	return "Vendedor eliminado correctamente", nil
+	go func() {
+		if d.isRemoteDBAvailable() {
+			if err := d.RemoteDB.Delete(&Vendedor{}, id).Error; err != nil {
+				log.Printf("Failed to sync delete for Vendedor ID %d: %v", id, err)
+			}
+		}
+	}()
+	return "Vendedor eliminado localmente. Sincronizando...", nil
 }
-
-// --- CRUD DE CLIENTES ---
 
 func (d *Db) RegistrarCliente(cliente Cliente) (string, error) {
-	if err := d.DB.Create(&cliente).Error; err != nil {
-		log.Printf("Error al registrar el cliente: %v", err)
-		return "", fmt.Errorf("error al registrar el cliente: %w", err)
+	if err := d.LocalDB.Create(&cliente).Error; err != nil {
+		return "", fmt.Errorf("error al registrar localmente: %w", err)
 	}
-	return fmt.Sprintf("Cliente '%s' registrado con ID %d", cliente.Nombre, cliente.ID), nil
-}
-
-func (d *Db) ObtenerClientes() ([]Cliente, error) {
-	var clientes []Cliente
-	if err := d.DB.Find(&clientes).Error; err != nil {
-		return nil, err
-	}
-	return clientes, nil
+	go d.syncClienteToRemote(cliente.ID)
+	return "Cliente registrado localmente. Sincronizando...", nil
 }
 
 func (d *Db) ActualizarCliente(cliente Cliente) (string, error) {
-	if err := d.DB.Save(&cliente).Error; err != nil {
+	if err := d.LocalDB.Save(&cliente).Error; err != nil {
 		return "", err
 	}
-	return "Cliente actualizado correctamente", nil
+	go d.syncClienteToRemote(cliente.ID)
+	return "Cliente actualizado localmente. Sincronizando...", nil
 }
 
 func (d *Db) EliminarCliente(id uint) (string, error) {
-	if err := d.DB.Delete(&Cliente{}, id).Error; err != nil {
+	if err := d.LocalDB.Delete(&Cliente{}, id).Error; err != nil {
 		return "", err
 	}
-	return "Cliente eliminado correctamente", nil
+	go func() {
+		if d.isRemoteDBAvailable() {
+			if err := d.RemoteDB.Delete(&Cliente{}, id).Error; err != nil {
+				log.Printf("Failed to sync delete for Cliente ID %d: %v", id, err)
+			}
+		}
+	}()
+	return "Cliente eliminado localmente. Sincronizando...", nil
 }
-
-// --- CRUD DE PRODUCTOS ---
 
 func (d *Db) RegistrarProducto(producto Producto) (string, error) {
-	if err := d.DB.Create(&producto).Error; err != nil {
-		log.Printf("Error al registrar el producto: %v", err)
-		return "", fmt.Errorf("error al registrar el producto: %w", err)
+	if err := d.LocalDB.Create(&producto).Error; err != nil {
+		return "", fmt.Errorf("error al registrar localmente: %w", err)
 	}
-	return fmt.Sprintf("Producto '%s' registrado con ID %d", producto.Nombre, producto.ID), nil
-}
-
-func (d *Db) ObtenerProductos() ([]Producto, error) {
-	var productos []Producto
-	if err := d.DB.Find(&productos).Error; err != nil {
-		return nil, err
-	}
-	return productos, nil
+	go d.syncProductoToRemote(producto.ID)
+	return "Producto registrado localmente. Sincronizando...", nil
 }
 
 func (d *Db) ActualizarProducto(producto Producto) (string, error) {
-	if err := d.DB.Save(&producto).Error; err != nil {
+	if err := d.LocalDB.Save(&producto).Error; err != nil {
 		return "", err
 	}
-	return "Producto actualizado correctamente", nil
+	go d.syncProductoToRemote(producto.ID)
+	return "Producto actualizado localmente. Sincronizando...", nil
 }
 
 func (d *Db) EliminarProducto(id uint) (string, error) {
-	if err := d.DB.Delete(&Producto{}, id).Error; err != nil {
+	if err := d.LocalDB.Delete(&Producto{}, id).Error; err != nil {
 		return "", err
 	}
-	return "Producto eliminado correctamente", nil
+	go func() {
+		if d.isRemoteDBAvailable() {
+			if err := d.RemoteDB.Delete(&Producto{}, id).Error; err != nil {
+				log.Printf("Failed to sync delete for Producto ID %d: %v", id, err)
+			}
+		}
+	}()
+	return "Producto eliminado localmente. Sincronizando...", nil
 }
-
-// --- LÓGICA DE BÚSQUEDA ---
-
-func (d *Db) BuscarProductos(query string) ([]Producto, error) {
-	var productos []Producto
-	result := d.DB.Where("nombre LIKE ? OR codigo LIKE ?", "%"+query+"%", "%"+query+"%").Limit(20).Find(&productos)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return productos, nil
-}
-
-func (d *Db) BuscarProductoPorCodigo(codigo string) (Producto, error) {
-	var producto Producto
-	result := d.DB.Where("codigo = ?", codigo).First(&producto)
-	if result.Error != nil {
-		return Producto{}, result.Error // Puede ser gorm.ErrRecordNotFound
-	}
-	return producto, nil
-}
-
-// --- CRUD PROVEEDORES ---
-
-func (d *Db) RegistrarProveedor(proveedor Proveedor) (string, error) {
-	if err := d.DB.Create(&proveedor).Error; err != nil {
-		return "", fmt.Errorf("error al registrar el proveedor: %w", err)
-	}
-	return "Proveedor registrado correctamente", nil
-}
-
-func (d *Db) ObtenerProveedores() ([]Proveedor, error) {
-	var proveedores []Proveedor
-	if err := d.DB.Find(&proveedores).Error; err != nil {
-		return nil, err
-	}
-	return proveedores, nil
-}
-
-// --- LÓGICA DE VENTAS ---
 
 func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
-	tx := d.DB.Begin()
+	tx := d.LocalDB.Begin()
 	if tx.Error != nil {
-		return Factura{}, fmt.Errorf("error al iniciar la transacción: %w", tx.Error)
+		return Factura{}, fmt.Errorf("error al iniciar transacción local: %w", tx.Error)
 	}
 	defer tx.Rollback()
 
@@ -303,16 +260,15 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		return Factura{}, fmt.Errorf("error al confirmar la transacción: %w", err)
+		return Factura{}, fmt.Errorf("error al confirmar transacción local: %w", err)
 	}
 
-	// Devolver la factura completa para el visor
 	return d.ObtenerDetalleFactura(factura.ID)
 }
 
 func (d *Db) generarNumeroFactura() string {
 	var ultimaFactura Factura
-	result := d.DB.Order("id DESC").Limit(1).Find(&ultimaFactura)
+	result := d.LocalDB.Order("id DESC").Limit(1).Find(&ultimaFactura)
 
 	nuevoNumero := 1000
 	if result.Error == nil && ultimaFactura.NumeroFactura != "" {
@@ -323,101 +279,95 @@ func (d *Db) generarNumeroFactura() string {
 	return fmt.Sprintf("FAC-%d", nuevoNumero)
 }
 
-// --- CONSULTAS DE FACTURAS ---
-
 func (d *Db) ObtenerFacturas() ([]Factura, error) {
-	var facturas []Factura
-	if err := d.DB.Preload("Cliente").Preload("Vendedor").Order("id desc").Find(&facturas).Error; err != nil {
-		return nil, err
+	db := d.LocalDB
+	if d.isRemoteDBAvailable() {
+		db = d.RemoteDB
 	}
-	return facturas, nil
+	var facturas []Factura
+	err := db.Preload("Cliente").Preload("Vendedor").Order("id desc").Find(&facturas).Error
+	return facturas, err
 }
 
 func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	var factura Factura
-	err := d.DB.Preload("Cliente").Preload("Vendedor").Preload("Detalles.Producto").First(&factura, facturaID).Error
-	if err != nil {
-		return Factura{}, err
-	}
-	return factura, nil
+	err := d.LocalDB.Preload("Cliente").Preload("Vendedor").Preload("Detalles.Producto").First(&factura, facturaID).Error
+	return factura, err
 }
 
-func (d *Db) ObtenerFacturasPorVendedor(vendedorID uint, page, pageSize int) (PaginatedResult, error) {
-	var facturas []Factura
-	var total int64
-
-	query := d.DB.Model(&Factura{}).Where("vendedor_id = ?", vendedorID)
-
-	query.Count(&total)
-
-	offset := (page - 1) * pageSize
-	err := query.Preload("Cliente").Order("id desc").Limit(pageSize).Offset(offset).Find(&facturas).Error
-	if err != nil {
-		return PaginatedResult{}, err
+func (d *Db) syncVendedorToRemote(id uint) {
+	if !d.isRemoteDBAvailable() {
+		return
+	}
+	var record Vendedor
+	if err := d.LocalDB.First(&record, id).Error; err != nil {
+		log.Printf("SYNC ERROR: Could not find Vendedor ID %d in local DB to sync. %v", id, err)
+		return
 	}
 
-	return PaginatedResult{Records: facturas, TotalRecords: total}, nil
+	err := d.RemoteDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "cedula"}},
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "email", "contrasena", "updated_at"}),
+	}).Create(&record).Error
+
+	if err != nil {
+		log.Printf("SYNC FAILED for Vendedor ID %d: %v", id, err)
+	} else {
+		log.Printf("SYNC SUCCESS for Vendedor ID %d.", id)
+	}
 }
 
-// --- LÓGICA DE INVENTARIO ---
+func (d *Db) syncVendedorToLocal(vendedor Vendedor) {
+	err := d.LocalDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "cedula"}},
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "email", "contrasena", "updated_at"}),
+	}).Create(&vendedor).Error
 
-func (d *Db) RegistrarCompra(req CompraRequest) (string, error) {
-	tx := d.DB.Begin()
-	if tx.Error != nil {
-		return "", fmt.Errorf("error al iniciar la transacción: %w", tx.Error)
+	if err != nil {
+		log.Printf("LOCAL CACHE FAILED for Vendedor ID %d: %v", vendedor.ID, err)
 	}
-	defer tx.Rollback()
+}
 
-	// Validar que el proveedor exista
-	if err := tx.First(&Proveedor{}, req.ProveedorID).Error; err != nil {
-		return "", errors.New("proveedor no encontrado")
+func (d *Db) syncClienteToRemote(id uint) {
+	if !d.isRemoteDBAvailable() {
+		return
 	}
-
-	compra := Compra{
-		Fecha:         time.Now(),
-		ProveedorID:   req.ProveedorID,
-		FacturaNumero: req.FacturaNumero,
-	}
-
-	var totalCompra float64
-	var detallesCompra []DetalleCompra
-
-	for _, p := range req.Productos {
-		var producto Producto
-		if err := tx.First(&producto, p.ProductoID).Error; err != nil {
-			return "", fmt.Errorf("producto con ID %d no encontrado", p.ProductoID)
-		}
-
-		precioTotalProducto := p.PrecioCompraUnitario * float64(p.Cantidad)
-		totalCompra += precioTotalProducto
-
-		detallesCompra = append(detallesCompra, DetalleCompra{
-			ProductoID:           p.ProductoID,
-			Cantidad:             p.Cantidad,
-			PrecioCompraUnitario: p.PrecioCompraUnitario,
-		})
-
-		// Actualizar el stock del producto
-		if err := tx.Model(&producto).Update("Stock", gorm.Expr("Stock + ?", p.Cantidad)).Error; err != nil {
-			return "", fmt.Errorf("error al actualizar el stock de %s: %w", producto.Nombre, err)
-		}
+	var record Cliente
+	if err := d.LocalDB.First(&record, id).Error; err != nil {
+		log.Printf("SYNC ERROR: Could not find Cliente ID %d in local DB to sync. %v", id, err)
+		return
 	}
 
-	compra.Total = totalCompra
-	if err := tx.Create(&compra).Error; err != nil {
-		return "", fmt.Errorf("error al crear la compra: %w", err)
+	err := d.RemoteDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "numero_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "tipo_id", "telefono", "email", "direccion", "updated_at"}),
+	}).Create(&record).Error
+
+	if err != nil {
+		log.Printf("SYNC FAILED for Cliente ID %d: %v", id, err)
+	} else {
+		log.Printf("SYNC SUCCESS for Cliente ID %d.", id)
+	}
+}
+
+func (d *Db) syncProductoToRemote(id uint) {
+	if !d.isRemoteDBAvailable() {
+		return
+	}
+	var record Producto
+	if err := d.LocalDB.First(&record, id).Error; err != nil {
+		log.Printf("SYNC ERROR: Could not find Producto ID %d in local DB to sync. %v", id, err)
+		return
 	}
 
-	for i := range detallesCompra {
-		detallesCompra[i].CompraID = compra.ID
-	}
-	if err := tx.Create(&detallesCompra).Error; err != nil {
-		return "", fmt.Errorf("error al crear los detalles de la compra: %w", err)
-	}
+	err := d.RemoteDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "codigo"}},
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "precio_venta", "stock", "updated_at"}),
+	}).Create(&record).Error
 
-	if err := tx.Commit().Error; err != nil {
-		return "", fmt.Errorf("error al confirmar la transacción: %w", err)
+	if err != nil {
+		log.Printf("SYNC FAILED for Producto ID %d: %v", id, err)
+	} else {
+		log.Printf("SYNC SUCCESS for Producto ID %d.", id)
 	}
-
-	return "Compra registrada y stock actualizado correctamente.", nil
 }
