@@ -27,8 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Search, Trash2, UserSearch } from "lucide-vue-next";
-import { toast } from "vue-sonner";
-
+import { toast } from 'vue-sonner'
 import { ImportaCSV, SelectFile } from "../../../wailsjs/go/backend/Db";
 
 // --- INTERFACES Y DATOS DE PRUEBA ---
@@ -195,17 +194,16 @@ async function handleImportProductos() {
     console.log(filePath);
 
     if (filePath) {
-      // Llama a la función del backend.
-      // No necesita 'await' porque la función en Go retorna de inmediato.
+      toast.warning("Inicio importación", {
+        description: `El archivo CSV está siendo procesado.`,
+      });
       ImportaCSV(filePath, "Productos");
-
-      // Aquí puedes mostrar una notificación al usuario tipo "Importación iniciada..."
-      alert(
-        "La importación de productos ha comenzado. Revisa la consola del backend para ver el progreso."
-      );
     }
   } catch (error) {
     console.error("Error al seleccionar archivo:", error);
+    toast.error("Error carga CSV", {
+      description: `Error al seleccionar archivo: ${error}.`,
+    });
   }
 }
 </script>
@@ -219,26 +217,15 @@ async function handleImportProductos() {
       <Card class="flex-1 shadow-lg overflow-hidden">
         <CardContent class="p-4 h-full">
           <div class="relative">
-            <Search
-              class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground"
-            />
-            <Input
-              v-model="busqueda"
-              placeholder="Buscar producto por código o nombre..."
-              @keyup.enter="manejarBusquedaConEnter"
-              class="pl-10 text-lg"
-            />
-            <div
-              v-if="resultadosBusqueda.length > 0"
-              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl max-h-60 overflow-y-auto"
-            >
+            <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+            <Input v-model="busqueda" placeholder="Buscar producto por código o nombre..."
+              @keyup.enter="manejarBusquedaConEnter" class="pl-10 text-lg" />
+            <div v-if="resultadosBusqueda.length > 0"
+              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl max-h-60 overflow-y-auto">
               <ul>
-                <li
-                  v-for="producto in resultadosBusqueda"
-                  :key="producto.id"
+                <li v-for="producto in resultadosBusqueda" :key="producto.id"
                   class="p-3 hover:bg-muted cursor-pointer flex justify-between items-center"
-                  @click="agregarAlCarrito(producto)"
-                >
+                  @click="agregarAlCarrito(producto)">
                   <div>
                     <p class="font-semibold">{{ producto.nombre }}</p>
                     <p class="text-sm text-muted-foreground">
@@ -246,9 +233,7 @@ async function handleImportProductos() {
                       {{ producto.stock }}
                     </p>
                   </div>
-                  <span class="font-mono text-lg"
-                    >${{ producto.precio.toLocaleString() }}</span
-                  >
+                  <span class="font-mono text-lg">${{ producto.precio.toLocaleString() }}</span>
                 </li>
               </ul>
             </div>
@@ -271,41 +256,24 @@ async function handleImportProductos() {
                     <TableCell class="font-mono">{{ item.codigo }}</TableCell>
                     <TableCell class="font-medium">{{ item.nombre }}</TableCell>
                     <TableCell class="text-center">
-                      <Input
-                        type="number"
-                        class="w-20 text-center mx-auto"
-                        :model-value="item.cantidad"
+                      <Input type="number" class="w-20 text-center mx-auto" :model-value="item.cantidad"
                         @update:model-value="
                           actualizarCantidad(item.id, Number($event))
-                        "
-                        min="1"
-                        :max="item.stock"
-                      />
+                          " min="1" :max="item.stock" />
                     </TableCell>
-                    <TableCell class="text-right font-mono"
-                      >${{ item.precio.toLocaleString() }}</TableCell
-                    >
-                    <TableCell class="text-right font-mono"
-                      >${{
-                        (item.precio * item.cantidad).toLocaleString()
-                      }}</TableCell
-                    >
+                    <TableCell class="text-right font-mono">${{ item.precio.toLocaleString() }}</TableCell>
+                    <TableCell class="text-right font-mono">${{
+                      (item.precio * item.cantidad).toLocaleString()
+                    }}</TableCell>
                     <TableCell class="text-center">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        @click="eliminarDelCarrito(item.id)"
-                      >
+                      <Button size="icon" variant="ghost" @click="eliminarDelCarrito(item.id)">
                         <Trash2 class="w-5 h-5 text-destructive" />
                       </Button>
                     </TableCell>
                   </TableRow>
                 </template>
                 <TableRow v-else>
-                  <TableCell
-                    colspan="6"
-                    class="text-center h-24 text-muted-foreground"
-                  >
+                  <TableCell colspan="6" class="text-center h-24 text-muted-foreground">
                     El carrito está vacío
                   </TableCell>
                 </TableRow>
@@ -346,29 +314,17 @@ async function handleImportProductos() {
           </div>
           <div v-if="metodoPago === 'efectivo'" class="space-y-2">
             <Label for="efectivo">Efectivo Recibido</Label>
-            <Input
-              id="efectivo"
-              type="number"
-              v-model="efectivoRecibido"
-              placeholder="$ 0"
-              class="text-right h-12 text-lg font-mono"
-            />
+            <Input id="efectivo" type="number" v-model="efectivoRecibido" placeholder="$ 0"
+              class="text-right h-12 text-lg font-mono" />
           </div>
           <div class="space-y-3 pt-4 border-t">
             <div class="flex justify-between items-center text-lg">
               <span class="text-muted-foreground">Total</span>
-              <span class="font-bold font-mono text-2xl"
-                >${{ total.toLocaleString() }}</span
-              >
+              <span class="font-bold font-mono text-2xl">${{ total.toLocaleString() }}</span>
             </div>
-            <div
-              v-if="metodoPago === 'efectivo' && cambio > 0"
-              class="flex justify-between items-center text-lg"
-            >
+            <div v-if="metodoPago === 'efectivo' && cambio > 0" class="flex justify-between items-center text-lg">
               <span class="text-muted-foreground">Cambio</span>
-              <span class="font-bold font-mono text-green-400 text-2xl"
-                >${{ cambio.toLocaleString() }}</span
-              >
+              <span class="font-bold font-mono text-green-400 text-2xl">${{ cambio.toLocaleString() }}</span>
             </div>
           </div>
         </CardContent>

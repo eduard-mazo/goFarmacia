@@ -1,12 +1,20 @@
+<script setup lang="ts">
+import { toast } from 'vue-sonner'
+import { Button } from '@/components/ui/button'
+</script>
+
 <template>
-  <div
-    class="flex flex-1 items-center justify-center rounded-lg border border-dashed shadow-sm"
+  <Button
+    variant="outline" @click="() => {
+      toast('Event has been created', {
+        description: 'Sunday, December 03, 2023 at 9:00 AM',
+        action: {
+          label: 'Undo',
+          onClick: () => console.log('Undo'),
+        },
+      })
+    }"
   >
-    <div class="flex flex-col items-center gap-1 text-center">
-      <h3 class="text-2xl font-bold tracking-tight">Bienvenido al Dashboard</h3>
-      <p class="text-sm text-muted-foreground">
-        Selecciona una opción en el menú lateral para comenzar.
-      </p>
-    </div>
-  </div>
+    Add to calendar
+  </Button>
 </template>

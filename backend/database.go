@@ -12,6 +12,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	_ "modernc.org/sqlite"
 )
 
@@ -188,7 +189,8 @@ func (d *Db) initDB() {
 	var err error
 
 	// --- 1. Initialize Local SQLite Database ---
-	d.LocalDB, err = gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: "file:farmacia.db"}, &gorm.Config{})
+	// Silenciar los logs de GORM para la base de datos local
+	d.LocalDB, err = gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: "file:farmacia.db"}, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		log.Fatalf("FATAL: Failed to connect to local SQLite database: %v", err)
 	}
