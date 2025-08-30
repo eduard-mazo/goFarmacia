@@ -16,8 +16,8 @@ func (d *Db) RealizarSincronizacionInicial() {
 
 	var localCount, remoteCount int64
 	// Usamos la tabla de Vendedores como referencia para ver si hay datos.
-	d.LocalDB.Model(&Vendedor{}).Count(&localCount)
-	d.RemoteDB.Model(&Vendedor{}).Count(&remoteCount)
+	d.LocalDB.Model(&Producto{}).Count(&localCount)
+	d.RemoteDB.Model(&Producto{}).Count(&remoteCount)
 
 	if localCount > 0 && remoteCount == 0 {
 		// Caso 1: La base de datos local tiene datos y la remota está vacía.

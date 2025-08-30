@@ -399,3 +399,14 @@ func (d *Db) syncProductoToRemote(id uint) {
 		log.Printf("SYNC SUCCESS for Producto ID %d.", id)
 	}
 }
+
+// ResetearTodaLaData expone la funcionalidad de reseteo profundo al frontend.
+// Devuelve un mensaje de éxito o un error.
+func (d *Db) ResetearTodaLaData() (string, error) {
+	err := d.DeepResetDatabases()
+	if err != nil {
+		// Devuelve el error al frontend para que pueda ser mostrado.
+		return "", err
+	}
+	return "¡Reseteo completado! Todas las bases de datos han sido limpiadas y reiniciadas.", nil
+}

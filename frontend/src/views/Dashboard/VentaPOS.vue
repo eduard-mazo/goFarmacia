@@ -28,7 +28,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Search, Trash2, UserSearch } from "lucide-vue-next";
 import { toast } from 'vue-sonner'
-import { ImportaCSV, SelectFile } from "../../../wailsjs/go/backend/Db";
+import { ImportaCSV, SelectFile, RealizarSincronizacionInicial } from "../../../wailsjs/go/backend/Db";
 
 // --- INTERFACES Y DATOS DE PRUEBA ---
 interface Producto {
@@ -197,7 +197,9 @@ async function handleImportProductos() {
       toast.warning("Inicio importación", {
         description: `El archivo CSV está siendo procesado.`,
       });
-      ImportaCSV(filePath, "Productos");
+      await ImportaCSV(filePath, "Productos");
+      await RealizarSincronizacionInicial()
+
     }
   } catch (error) {
     console.error("Error al seleccionar archivo:", error);

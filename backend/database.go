@@ -228,3 +228,60 @@ func (d *Db) initDB() {
 func (d *Db) isRemoteDBAvailable() bool {
 	return d.RemoteDB != nil
 }
+
+// DeepResetDatabases realiza un reseteo completo y destructivo de ambas bases de datos.
+// ¡ADVERTENCIA! ESTA ACCIÓN BORRARÁ TODOS LOS DATOS PERMANENTEMENTE.
+func (d *Db) DeepResetDatabases() error {
+	d.Log.Warn("¡INICIANDO DEEP RESET! Todos los datos serán eliminados.")
+
+	// Lista de modelos en orden inverso de dependencia para un borrado seguro.
+	// Los detalles se borran antes que las tablas maestras (Factura, Compra).
+	modelsToReset := []interface{}{
+		&DetalleFactura{}, &DetalleCompra{}, &Factura{}, &Compra{},
+		&Vendedor{}, &Cliente{}, &Producto{}, &Proveedor{},
+	}
+
+	// --- 1. Resetear Base de Datos Local (SQLite) ---
+	d.Log.Info("Reseteando la base de datos local...")
+	// Eliminar todas las tablas.
+	err := d.LocalDB.Migrator().DropTable(modelsToReset...)
+	if err != nil {
+		d.Log.Errorf("Error al eliminar las tablas locales: %v", err)
+		return fmt.Errorf("error al eliminar las tablas locales: %w", err)
+	}
+	d.Log.Info("Tablas locales eliminadas con éxito.")
+
+	// Volver a crear el esquema.
+	err = d.LocalDB.AutoMigrate(modelsToReset...)
+	if err != nil {
+		d.Log.Errorf("Error al recrear el esquema local: %v", err)
+		return fmt.Errorf("error al recrear el esquema local: %w", err)
+	}
+	d.Log.Info("✅ Esquema local recreado con éxito.")
+
+	// --- 2. Resetear Base de Datos Remota (Supabase/PostgreSQL) ---
+	if !d.isRemoteDBAvailable() {
+		d.Log.Warn("La base de datos remota no está disponible. Omitiendo reseteo remoto.")
+		return nil
+	}
+
+	d.Log.Info("Reseteando la base de datos remota...")
+	// Eliminar todas las tablas.
+	err = d.RemoteDB.Migrator().DropTable(modelsToReset...)
+	if err != nil {
+		d.Log.Errorf("Error al eliminar las tablas remotas: %v", err)
+		return fmt.Errorf("error al eliminar las tablas remotas: %w", err)
+	}
+	d.Log.Info("Tablas remotas eliminadas con éxito.")
+
+	// Volver a crear el esquema.
+	err = d.RemoteDB.AutoMigrate(modelsToReset...)
+	if err != nil {
+		d.Log.Errorf("Error al recrear el esquema remoto: %v", err)
+		return fmt.Errorf("error al recrear el esquema remoto: %w", err)
+	}
+	d.Log.Info("✅ Esquema remoto recreado con éxito.")
+
+	d.Log.Warn("DEEP RESET completado en ambas bases de datos.")
+	return nil
+}
