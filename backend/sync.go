@@ -118,14 +118,17 @@ func (d *Db) syncModelHaciaRemoto(modelo interface{}, nombreModelo string) error
 
 // syncModelHaciaLocal es una función genérica para descargar datos de un modelo específico.
 func (d *Db) syncModelHaciaLocal(modelo interface{}, nombreModelo string) error {
+	// 1. Obtiene todos los registros del remoto (esto está bien)
 	if err := d.RemoteDB.Find(modelo).Error; err != nil {
 		return err
 	}
 
+	// 2. Inserta los registros en la base de datos local en lotes de 500.
+	// Esta es la corrección clave para evitar el error en SQLite.
 	return d.LocalDB.Clauses(clause.OnConflict{
 		Columns:   getUniqueColumns(nombreModelo),
 		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(nombreModelo)),
-	}).Create(modelo).Error
+	}).CreateInBatches(modelo, 500).Error
 }
 
 // getUniqueColumns devuelve las columnas con restricción UNIQUE para cada modelo.

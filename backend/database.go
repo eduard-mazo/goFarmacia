@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	_ "modernc.org/sqlite"
 )
 
@@ -161,10 +161,20 @@ type Db struct {
 	ctx      context.Context
 	LocalDB  *gorm.DB // For SQLite
 	RemoteDB *gorm.DB // For Supabase (PostgreSQL)
+	Log      *logrus.Logger
 }
 
 func NewDb() *Db {
-	return &Db{}
+	// Configura el logger aquí
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+		ForceColors:   true,
+	})
+	logger.SetLevel(logrus.DebugLevel) // Muestra todo durante el desarrollo
+
+	// Retorna la instancia de Db con el logger ya inicializado
+	return &Db{Log: logger}
 }
 
 func (d *Db) Startup(ctx context.Context) {
@@ -202,9 +212,7 @@ func (d *Db) initDB() {
 		log.Fatalf("Error loading .env file: %v", err)
 	}
 
-	d.RemoteDB, err = gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info), // Use logger.Info for debugging sync issues
-	})
+	d.RemoteDB, err = gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{})
 	if err != nil {
 		log.Printf("WARNING: Failed to connect to remote Supabase database. App will run in offline mode. Error: %v", err)
 		// We don't use log.Fatalf here, so the app can start in offline mode.

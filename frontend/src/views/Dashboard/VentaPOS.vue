@@ -29,6 +29,8 @@ import { Label } from "@/components/ui/label";
 import { Search, Trash2, UserSearch } from "lucide-vue-next";
 import { toast } from "vue-sonner";
 
+import { ImportaCSV, SelectFile } from "../../../wailsjs/go/backend/Db";
+
 // --- INTERFACES Y DATOS DE PRUEBA ---
 interface Producto {
   id: number;
@@ -186,11 +188,34 @@ function finalizarVenta() {
   efectivoRecibido.value = undefined;
   busqueda.value = "";
 }
+
+async function handleImportProductos() {
+  try {
+    const filePath = await SelectFile();
+    console.log(filePath);
+
+    if (filePath) {
+      // Llama a la función del backend.
+      // No necesita 'await' porque la función en Go retorna de inmediato.
+      ImportaCSV(filePath, "Productos");
+
+      // Aquí puedes mostrar una notificación al usuario tipo "Importación iniciada..."
+      alert(
+        "La importación de productos ha comenzado. Revisa la consola del backend para ver el progreso."
+      );
+    }
+  } catch (error) {
+    console.error("Error al seleccionar archivo:", error);
+  }
+}
 </script>
 
 <template>
   <div class="grid grid-cols-10 gap-6 h-[calc(100vh-8rem)]">
     <div class="col-span-10 lg:col-span-7 flex flex-col gap-6">
+      <Button @click="handleImportProductos" class="w-full h-12 text-lg">
+        Cargar
+      </Button>
       <Card class="flex-1 shadow-lg overflow-hidden">
         <CardContent class="p-4 h-full">
           <div class="relative">

@@ -62,6 +62,34 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (Pagin
 	return PaginatedResult{Records: vendedores, TotalRecords: total}, err
 }
 
+// ImportaCSV inicia el proceso de carga masiva desde un archivo CSV.
+func (d *Db) ImportaCSV(filePath string, modelName string) {
+	d.Log.Infof("Iniciando importación para el modelo '%s' desde el archivo: %s", modelName, filePath)
+
+	progressChan, errorChan := d.CargarDesdeCSV(filePath, modelName)
+
+	// Goroutine para escuchar el progreso y no bloquear
+	go func() {
+		for msg := range progressChan {
+			d.Log.Info(msg) // Imprime el progreso en el log del backend
+			// Opcional: Podrías emitir un evento al frontend aquí
+			// runtime.EventsEmit(d.ctx, "csvProgress", msg)
+		}
+	}()
+
+	// Esperar el resultado final
+	err := <-errorChan
+	if err != nil {
+		d.Log.Errorf("La importación del CSV falló: %v", err)
+		// Opcional: Emitir un evento de error al frontend
+		// runtime.EventsEmit(d.ctx, "csvError", err.Error())
+	} else {
+		d.Log.Info("Importación de CSV finalizada con éxito.")
+		// Opcional: Emitir un evento de éxito
+		// runtime.EventsEmit(d.ctx, "csvSuccess", "Importación completada")
+	}
+}
+
 func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var clientes []Cliente
 	var total int64
@@ -121,7 +149,7 @@ func (d *Db) EliminarVendedor(id uint) (string, error) {
 	go func() {
 		if d.isRemoteDBAvailable() {
 			if err := d.RemoteDB.Delete(&Vendedor{}, id).Error; err != nil {
-				log.Printf("Failed to sync delete for Vendedor ID %d: %v", id, err)
+				d.Log.Fatalf("Failed to sync delete for Vendedor ID %d: %v", id, err)
 			}
 		}
 	}()
@@ -151,7 +179,7 @@ func (d *Db) EliminarCliente(id uint) (string, error) {
 	go func() {
 		if d.isRemoteDBAvailable() {
 			if err := d.RemoteDB.Delete(&Cliente{}, id).Error; err != nil {
-				log.Printf("Failed to sync delete for Cliente ID %d: %v", id, err)
+				d.Log.Fatalf("Failed to sync delete for Cliente ID %d: %v", id, err)
 			}
 		}
 	}()
