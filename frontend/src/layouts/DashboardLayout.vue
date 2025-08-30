@@ -1,12 +1,12 @@
+// src/layouts/DashboardLayout.vue
+
 <script setup lang="ts">
 import {
-  Bell,
   CircleUser,
   Home,
   Menu,
   Package,
   ShoppingCart,
-  Users,
 } from "lucide-vue-next";
 
 import { Button } from "@/components/ui/button";
@@ -19,18 +19,23 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useAuth } from "@/services/auth";
+import { Toaster, toast } from "vue-sonner"; // Importamos Toaster y toast
 
 const { user, logout } = useAuth();
+
+// Función de ejemplo para notificaciones
+function showComingSoonToast() {
+  toast.info("Función no implementada", {
+    description:
+      "Esta característica estará disponible en futuras actualizaciones.",
+  });
+}
 </script>
 
 <template>
+  <Toaster richColors position="top-right" />
+
   <div
     class="grid min-h-screen w-full md:grid-cols-[220px_1fr] lg:grid-cols-[280px_1fr]"
   >
@@ -120,8 +125,12 @@ const { user, logout } = useAuth();
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>{{ user?.name }}</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Configuración</DropdownMenuItem>
-            <DropdownMenuItem>Soporte</DropdownMenuItem>
+            <DropdownMenuItem @click="showComingSoonToast">
+              Configuración
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="showComingSoonToast">
+              Soporte
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem @click="logout"> Cerrar Sesión </DropdownMenuItem>
           </DropdownMenuContent>

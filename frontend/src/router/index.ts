@@ -26,7 +26,7 @@ const routes = [
       {
         path: "pos",
         name: "VentasPOS",
-        component: () => import("@/views/Dashboard/VentasPOS.vue"),
+        component: () => import("../views/Dashboard/VentaPOS.vue"),
       },
       // ... aquí puedes agregar más rutas para el dashboard
     ],
