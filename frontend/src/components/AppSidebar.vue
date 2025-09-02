@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import HeaderLog from '@/components/HeaderLog.vue';
+// import HeaderLog from '@/components/HeaderLog.vue';
+import NavUser from '@/components/NavUser.vue';
 import {
     Sidebar,
     SidebarContent,
@@ -44,7 +45,7 @@ const data = {
 <template>
     <Sidebar v-bind="props">
         <SidebarHeader>
-            <HeaderLog />
+            <NavUser/>
         </SidebarHeader>
         <SidebarContent>
             <SidebarGroup>

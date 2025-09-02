@@ -17,7 +17,7 @@ async function resetDB() {
 </script>
 
 <template>
-  <Button variant="outline" @click="resetDB">
-    Add to calendar
+  <Button @click="resetDB">
+    Limpiar base de datos
   </Button>
 </template>

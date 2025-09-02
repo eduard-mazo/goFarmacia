@@ -4,40 +4,91 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func (d *Db) LoginVendedor(req LoginRequest) (Vendedor, error) {
-	var vendedor Vendedor
+// LoginResponse es la estructura que se devuelve al frontend tras un login exitoso.
+type LoginResponse struct {
+	Token    string   `json:"token"`
+	Vendedor Vendedor `json:"vendedor"`
+}
 
-	if d.isRemoteDBAvailable() {
-		result := d.RemoteDB.Where("cedula = ?", req.Cedula).First(&vendedor)
-		if result.Error == nil {
-			if vendedor.Contrasena != req.Contrasena {
-				return Vendedor{}, errors.New("contraseña incorrecta")
-			}
-			go d.syncVendedorToLocal(vendedor)
-			return vendedor, nil
+// NUEVO: RegistrarVendedor crea un nuevo vendedor con una contraseña encriptada.
+func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
+	// 1. Hashear la contraseña antes de guardarla.
+	d.Log.Info(vendedor)
+	hashedPassword, err := HashPassword(vendedor.Contrasena)
+	if err != nil {
+		return Vendedor{}, fmt.Errorf("error al encriptar la contraseña: %w", err)
+	}
+	vendedor.Contrasena = hashedPassword
+
+	// 2. Crear el registro en la base de datos local.
+	if err := d.LocalDB.Create(&vendedor).Error; err != nil {
+		// Manejar error de duplicado de cédula o email.
+		d.Log.Error(err)
+		if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return Vendedor{}, errors.New("la cédula o el email ya están registrados")
 		}
+		return Vendedor{}, fmt.Errorf("error al registrar localmente: %w", err)
 	}
 
-	log.Println("Login: Falling back to local database check.")
-	result := d.LocalDB.Where("cedula = ?", req.Cedula).First(&vendedor)
+	// 3. Sincronizar en segundo plano con la base de datos remota.
+	go d.syncVendedorToRemote(vendedor.ID)
+
+	// 4. Limpiar la contraseña antes de devolver el objeto.
+	vendedor.Contrasena = ""
+	return vendedor, nil
+}
+
+// ACTUALIZADO: LoginVendedor ahora usa hashes y devuelve un token JWT.
+func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
+	var vendedor Vendedor
+	var response LoginResponse
+
+	// La autenticación siempre debe intentar contra la fuente de verdad (DB remota si es posible).
+	db := d.LocalDB // Fallback a local
+	if d.isRemoteDBAvailable() {
+		db = d.RemoteDB
+	}
+
+	result := db.Where("email = ?", req.Email).First(&vendedor)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return Vendedor{}, errors.New("vendedor no encontrado")
+			return response, errors.New("vendedor no encontrado")
 		}
-		return Vendedor{}, result.Error
+		return response, result.Error
 	}
 
-	if vendedor.Contrasena != req.Contrasena {
-		return Vendedor{}, errors.New("contraseña incorrecta")
+	// 2. Comparar la contraseña enviada con el hash almacenado.
+	if !CheckPasswordHash(req.Contrasena, vendedor.Contrasena) {
+		return response, errors.New("contraseña incorrecta")
 	}
 
-	return vendedor, nil
+	// 3. Si es correcta, generar el token JWT.
+	tokenString, err := d.GenerateJWT(vendedor)
+	if err != nil {
+		return response, fmt.Errorf("no se pudo generar el token: %w", err)
+	}
+
+	// Limpiar la contraseña antes de enviarla al frontend.
+	vendedor.Contrasena = ""
+
+	response = LoginResponse{
+		Token:    tokenString,
+		Vendedor: vendedor,
+	}
+
+	// Opcional: Actualizar el caché local del vendedor si el login fue contra la DB remota.
+	if d.isRemoteDBAvailable() {
+		go d.syncVendedorToLocal(vendedor)
+	}
+
+	return response, nil
 }
 
 func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (PaginatedResult, error) {
@@ -124,14 +175,6 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (Pagina
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&productos).Error
 	return PaginatedResult{Records: productos, TotalRecords: total}, err
-}
-
-func (d *Db) RegistrarVendedor(vendedor Vendedor) (string, error) {
-	if err := d.LocalDB.Create(&vendedor).Error; err != nil {
-		return "", fmt.Errorf("error al registrar localmente: %w", err)
-	}
-	go d.syncVendedorToRemote(vendedor.ID)
-	return "Vendedor registrado localmente. Sincronizando...", nil
 }
 
 func (d *Db) ActualizarVendedor(vendedor Vendedor) (string, error) {
@@ -254,13 +297,14 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 			return Factura{}, fmt.Errorf("stock insuficiente para %s. Disponible: %d, Solicitado: %d", producto.Nombre, producto.Stock, p.Cantidad)
 		}
 
-		precioTotalProducto := producto.PrecioVenta * float64(p.Cantidad)
+		// AJUSTE: Usar el PrecioUnitario de la request para los cálculos
+		precioTotalProducto := p.PrecioUnitario * float64(p.Cantidad)
 		subtotal += precioTotalProducto
 
 		detallesFactura = append(detallesFactura, DetalleFactura{
 			ProductoID:     producto.ID,
 			Cantidad:       p.Cantidad,
-			PrecioUnitario: producto.PrecioVenta,
+			PrecioUnitario: p.PrecioUnitario, // Guardar el precio de venta real
 			PrecioTotal:    precioTotalProducto,
 		})
 
@@ -290,6 +334,9 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	if err := tx.Commit().Error; err != nil {
 		return Factura{}, fmt.Errorf("error al confirmar transacción local: %w", err)
 	}
+
+	// Sincronizar la venta con la base de datos remota en segundo plano
+	// go d.syncVentaToRemote(factura.ID)
 
 	return d.ObtenerDetalleFactura(factura.ID)
 }

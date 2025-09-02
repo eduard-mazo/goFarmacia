@@ -3,7 +3,6 @@ package backend
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
@@ -16,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// --- DATABASE STRUCTS (remain the same) ---
+// --- DATABASE STRUCTS (sin cambios) ---
 
 type Vendedor struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
@@ -119,7 +118,7 @@ type DetalleCompra struct {
 	PrecioCompraUnitario float64  `json:"PrecioCompraUnitario"`
 }
 
-// --- REQUEST/RESPONSE STRUCTS (remain the same) ---
+// --- REQUEST/RESPONSE STRUCTS ---
 
 type VentaRequest struct {
 	ClienteID  uint            `json:"ClienteID"`
@@ -128,13 +127,15 @@ type VentaRequest struct {
 	MetodoPago string          `json:"MetodoPago"`
 }
 
+// AJUSTE: Se añade PrecioUnitario para capturarlo desde el frontend
 type ProductoVenta struct {
-	ID       uint `json:"ID"`
-	Cantidad int  `json:"Cantidad"`
+	ID             uint    `json:"ID"`
+	Cantidad       int     `json:"Cantidad"`
+	PrecioUnitario float64 `json:"PrecioUnitario"`
 }
 
 type LoginRequest struct {
-	Cedula     string `json:"Cedula"`
+	Email      string `json:"Email"`
 	Contrasena string `json:"Contrasena"`
 }
 
@@ -155,7 +156,7 @@ type PaginatedResult struct {
 	TotalRecords int64       `json:"TotalRecords"`
 }
 
-// --- DATABASE LOGIC ---
+// --- DATABASE LOGIC (sin cambios) ---
 
 // Db struct now holds connections for both local and remote databases
 type Db struct {
@@ -163,6 +164,7 @@ type Db struct {
 	LocalDB  *gorm.DB // For SQLite
 	RemoteDB *gorm.DB // For Supabase (PostgreSQL)
 	Log      *logrus.Logger
+	jwtKey   []byte
 }
 
 func NewDb() *Db {
@@ -192,9 +194,9 @@ func (d *Db) initDB() {
 	// Silenciar los logs de GORM para la base de datos local
 	d.LocalDB, err = gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: "file:farmacia.db"}, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
-		log.Fatalf("FATAL: Failed to connect to local SQLite database: %v", err)
+		d.Log.Fatalf("FATAL: Failed to connect to local SQLite database: %v", err)
 	}
-	log.Println("✅ Local SQLite database connected successfully.")
+	d.Log.Info("✅ Local SQLite database connected successfully.")
 
 	// List of all models to migrate
 	models := []interface{}{&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{}, &Proveedor{}, &Compra{}, &DetalleCompra{}}
@@ -202,25 +204,33 @@ func (d *Db) initDB() {
 	// Auto-migrate schema for the local database
 	err = d.LocalDB.AutoMigrate(models...)
 	if err != nil {
-		log.Fatalf("FATAL: Failed to migrate local database schema: %v", err)
+		d.Log.Fatalf("FATAL: Failed to migrate local database schema: %v", err)
 	}
-	log.Println("✅ Local database schema migrated successfully.")
+	d.Log.Info("✅ Local database schema migrated successfully.")
 
 	// --- 2. Initialize Remote Supabase Database ---
 	// Carga las variables de entorno del archivo .env
 	// Esto debe ser lo primero que hagas en la función main
 	err = godotenv.Load()
 	if err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
+		d.Log.Fatalf("Error loading .env file: %v", err)
 	}
+
+	secret := os.Getenv("JWT_SECRET_KEY")
+	if secret == "" {
+		// Si la clave no está, la aplicación no debe continuar.
+		d.Log.Fatalf("FATAL: La variable de entorno JWT_SECRET_KEY no está configurada.")
+	}
+	d.jwtKey = []byte(secret)
+	d.Log.Info("✅ Clave secreta JWT cargada exitosamente.")
 
 	d.RemoteDB, err = gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{})
 	if err != nil {
-		log.Printf("WARNING: Failed to connect to remote Supabase database. App will run in offline mode. Error: %v", err)
+		d.Log.Warnf("WARNING: Failed to connect to remote Supabase database. App will run in offline mode. Error: %v", err)
 		// We don't use log.Fatalf here, so the app can start in offline mode.
 		d.RemoteDB = nil // Ensure RemoteDB is nil if connection fails
 	} else {
-		log.Println("✅ Remote Supabase database connected successfully.")
+		d.Log.Info("✅ Remote Supabase database connected successfully.")
 	}
 }
 

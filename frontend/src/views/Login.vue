@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRouter, useRoute } from "vue-router";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,28 +11,38 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAuth } from "@/services/auth";
+import { useAuthStore } from '@/stores/auth';
 
-const email = ref("");
-const password = ref("");
-const error = ref<string | null>(null);
-const isLoading = ref(false);
+const email = ref('');
+const password = ref('');
 
+const authStore = useAuthStore();
 const router = useRouter();
-const { login } = useAuth();
+const route = useRoute();
 
-async function handleLogin() {
-  error.value = null;
+const isLoading = ref(false);
+const error = ref('');
+const registrationSuccess = ref(false);
+
+onMounted(() => {
+  // Mostrar mensaje de éxito si venimos del registro.
+  if (route.query.registered === 'true') {
+    registrationSuccess.value = true;
+  }
+});
+
+const handleLogin = async () => {
   isLoading.value = true;
+  error.value = '';
   try {
-    await login(email.value, password.value);
-    router.push("/dashboard");
+    await authStore.login(email.value, password.value);
+    router.push('/'); 
   } catch (err: any) {
-    error.value = err.message || "Ocurrió un error inesperado.";
+    error.value = err.message || 'Ocurrió un error al iniciar sesión.';
   } finally {
     isLoading.value = false;
   }
-}
+};
 </script>
 
 <template>

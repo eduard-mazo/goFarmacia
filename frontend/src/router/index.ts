@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
-import { useAuth } from "@/services/auth";
+import { useAuthStore } from "../stores/auth";
 
 const routes = [
   {
@@ -28,10 +28,8 @@ const routes = [
         name: "VentasPOS",
         component: () => import("../views/Dashboard/VentaPOS.vue"),
       },
-      // ... aquí puedes agregar más rutas para el dashboard
     ],
   },
-  // Redirección por defecto
   {
     path: "/:pathMatch(.*)*",
     redirect: "/dashboard",
@@ -43,21 +41,28 @@ const router = createRouter({
   routes,
 });
 
-// Guarda de navegación global
-router.beforeEach((to, from, next) => {
-  const { isAuthenticated } = useAuth();
+// Guardia de Navegación (Auth Guard)
+router.beforeEach((to, _, next) => {
+  const authStore = useAuthStore();
+
+  // Intentar cargar la sesión desde localStorage en cada navegación
+  // Esto asegura que el estado se mantenga al recargar la página
+  if (!authStore.isAuthenticated) {
+    authStore.tryAutoLogin();
+  }
+
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
 
-  if (requiresAuth && !isAuthenticated.value) {
-    // Si la ruta requiere autenticación y el usuario no está logueado, redirige a login
+  if (requiresAuth && !authStore.isAuthenticated) {
+    // Si la ruta requiere autenticación y el usuario no está logueado,
+    // redirigir a la página de login.
     next({ name: "Login" });
-  } else if (
-    (to.name === "Login" || to.name === "Register") &&
-    isAuthenticated.value
-  ) {
-    // Si el usuario ya está logueado, no puede acceder a login/register
+  } else if ((to.name === "Login" || to.name === "Register") && authStore.isAuthenticated) {
+    // Si el usuario ya está logueado, no debería poder ver las páginas de login/registro.
+    // Redirigirlo a la página de inicio.
     next({ name: "DashboardHome" });
   } else {
+    // En cualquier otro caso, permitir la navegación.
     next();
   }
 });

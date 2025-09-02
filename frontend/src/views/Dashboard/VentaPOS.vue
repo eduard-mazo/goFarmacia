@@ -1,6 +1,9 @@
 <script setup lang="ts">
-// ... todo el <script setup> del componente de ventas que te proporcioné antes ...
 import { ref, computed, watch } from "vue";
+import { storeToRefs } from "pinia";
+import { useAuthStore } from "@/stores/auth";
+
+// Componentes de UI
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,100 +30,97 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Search, Trash2, UserSearch } from "lucide-vue-next";
-import { toast } from 'vue-sonner'
-import { ImportaCSV, SelectFile, RealizarSincronizacionInicial } from "../../../wailsjs/go/backend/Db";
+import { toast } from "vue-sonner";
 
-// --- INTERFACES Y DATOS DE PRUEBA ---
-interface Producto {
-  id: number;
-  codigo: string;
-  nombre: string;
-  precio: number;
-  stock: number;
-}
+// Funciones e interfaces del Backend (generadas por Wails)
+import {
+  ImportaCSV,
+  SelectFile,
+  RealizarSincronizacionInicial,
+  ObtenerProductosPaginado,
+  RegistrarVenta,
+} from "../../../wailsjs/go/backend/Db";
+import { backend } from "../../../wailsjs/go/models";
 
-interface ItemCarrito extends Producto {
+// --- Interfaces del Frontend ---
+// Usaremos la interfaz de Producto del backend pero extendida con 'cantidad' para el carrito
+interface ItemCarrito extends backend.Producto {
   cantidad: number;
+  // El campo PrecioVenta en backend.Producto servirá como nuestro precio unitario editable
 }
 
-// Mock de productos (simula una base de datos)
-const productos = ref<Producto[]>([
-  {
-    id: 1,
-    codigo: "P001",
-    nombre: "Paracetamol 500mg x20",
-    precio: 2500,
-    stock: 50,
-  },
-  {
-    id: 2,
-    codigo: "P002",
-    nombre: "Ibuprofeno 400mg x10",
-    precio: 3500,
-    stock: 30,
-  },
-  {
-    id: 3,
-    codigo: "P003",
-    nombre: "Vitamina C 1000mg Efervescente",
-    precio: 15000,
-    stock: 25,
-  },
-  {
-    id: 4,
-    codigo: "P004",
-    nombre: "Amoxicilina 500mg Cápsulas",
-    precio: 4500,
-    stock: 15,
-  },
-  {
-    id: 5,
-    codigo: "L001",
-    nombre: "Leche Deslactosada 1L",
-    precio: 4200,
-    stock: 100,
-  },
-  { id: 6, codigo: "A001", nombre: "Aspirina 100mg", precio: 8000, stock: 40 },
-]);
+// --- STORE DE AUTENTICACIÓN ---
+// Para obtener el ID del vendedor que realiza la venta
+const authStore = useAuthStore();
+const { user: authenticatedUser } = storeToRefs(authStore);
 
 // --- ESTADO DEL COMPONENTE ---
 const busqueda = ref("");
+const productosEncontrados = ref<backend.Producto[]>([]);
 const carrito = ref<ItemCarrito[]>([]);
 const metodoPago = ref("efectivo");
 const efectivoRecibido = ref<number | undefined>(undefined);
 const clienteSeleccionado = ref("Cliente General");
+const clienteID = ref(1); // Asumimos ID 1 para "Cliente General"
+const debounceTimer = ref<number | undefined>(undefined);
+const isLoading = ref(false);
 
-// --- LÓGICA DE BÚSQUEDA Y AUTOCOMPLETADO ---
-const resultadosBusqueda = computed(() => {
-  if (busqueda.value.length < 2) return [];
-  return productos.value.filter(
-    (p) =>
-      p.nombre.toLowerCase().includes(busqueda.value.toLowerCase()) ||
-      p.codigo.toLowerCase().includes(busqueda.value.toLowerCase())
-  );
+// --- LÓGICA DE BÚSQUEDA ---
+watch(busqueda, (nuevoValor) => {
+  clearTimeout(debounceTimer.value);
+  if (nuevoValor.length < 2) {
+    productosEncontrados.value = [];
+    return;
+  }
+  isLoading.value = true;
+  debounceTimer.value = setTimeout(async () => {
+    try {
+      // Llama a la función del backend para buscar productos
+      const resultado = await ObtenerProductosPaginado(1, 10, nuevoValor); // Pag 1, 10 resultados
+      productosEncontrados.value =
+        (resultado.Records as backend.Producto[]) || [];
+    } catch (error) {
+      console.error("Error al buscar productos:", error);
+      toast.error("Error de búsqueda", {
+        description: "No se pudieron obtener los productos.",
+      });
+    } finally {
+      isLoading.value = false;
+    }
+  }, 300); // Espera 300ms antes de buscar
 });
 
 // --- LÓGICA DEL CARRITO ---
-function agregarAlCarrito(producto: Producto) {
+function agregarAlCarrito(producto: backend.Producto) {
   const itemExistente = carrito.value.find((item) => item.id === producto.id);
 
   if (itemExistente) {
-    if (itemExistente.cantidad < producto.stock) {
+    if (itemExistente.cantidad < itemExistente.Stock) {
       itemExistente.cantidad++;
     } else {
       toast.warning("Stock máximo alcanzado", {
-        description: `No hay más stock disponible para ${producto.nombre}.`,
+        description: `No hay más stock disponible para ${producto.Nombre}.`,
       });
     }
   } else {
-    carrito.value.push({ ...producto, cantidad: 1 });
+    // ✅ Crear nueva instancia usando el modelo de Wails
+    const nuevoProducto = {
+      ...new backend.Producto(producto),
+      cantidad: 1, // forzamos la cantidad inicial
+    } as ItemCarrito;
+    carrito.value.push(nuevoProducto);
   }
+
   busqueda.value = "";
+  productosEncontrados.value = [];
 }
 
 function manejarBusquedaConEnter() {
-  if (resultadosBusqueda.value.length === 1 && resultadosBusqueda.value[0]) {
-    agregarAlCarrito(resultadosBusqueda.value[0]);
+  if (
+    productosEncontrados.value.length === 1 &&
+    productosEncontrados.value[0]
+  ) {
+    agregarAlCarrito(productosEncontrados.value[0]);
   }
 }
 
@@ -131,12 +131,12 @@ function eliminarDelCarrito(idProducto: number) {
 function actualizarCantidad(idProducto: number, nuevaCantidad: number) {
   const item = carrito.value.find((p) => p.id === idProducto);
   if (item) {
-    if (nuevaCantidad > 0 && nuevaCantidad <= item.stock) {
+    if (nuevaCantidad > 0 && nuevaCantidad <= item.Stock) {
       item.cantidad = nuevaCantidad;
-    } else if (nuevaCantidad > item.stock) {
-      item.cantidad = item.stock;
+    } else if (nuevaCantidad > item.Stock) {
+      item.cantidad = item.Stock;
       toast.warning("Stock máximo alcanzado", {
-        description: `El stock disponible es de ${item.stock} unidades.`,
+        description: `El stock disponible es de ${item.Stock} unidades.`,
       });
     }
   }
@@ -144,7 +144,8 @@ function actualizarCantidad(idProducto: number, nuevaCantidad: number) {
 
 // --- LÓGICA DE LA VENTA ---
 const total = computed(() =>
-  carrito.value.reduce((acc, item) => acc + item.precio * item.cantidad, 0)
+  // El precio unitario es `item.PrecioVenta` que ahora es editable
+  carrito.value.reduce((acc, item) => acc + item.PrecioVenta * item.cantidad, 0)
 );
 
 const cambio = computed(() => {
@@ -165,46 +166,72 @@ watch(metodoPago, (nuevoMetodo) => {
   }
 });
 
-function finalizarVenta() {
+async function finalizarVenta() {
   if (carrito.value.length === 0) {
     toast.error("El carrito está vacío", {
       description: "Agrega productos antes de finalizar la venta.",
     });
     return;
   }
-  console.log("Venta finalizada:", {
-    cliente: clienteSeleccionado.value,
-    metodoPago: metodoPago.value,
-    total: total.value,
-    efectivoRecibido: efectivoRecibido.value,
-    cambio: cambio.value,
-    items: carrito.value,
+  if (!authenticatedUser.value?.id) {
+    toast.error("Vendedor no identificado", {
+      description:
+        "No se ha podido identificar al vendedor. Por favor, inicie sesión de nuevo.",
+    });
+    return;
+  }
+
+  // Construir el payload para el backend
+  const ventaRequest = new backend.VentaRequest({
+    ClienteID: clienteID.value,
+    VendedorID: authenticatedUser.value.id,
+    MetodoPago: metodoPago.value,
+    Productos: carrito.value.map((item) => ({
+      ID: item.id,
+      Cantidad: item.cantidad,
+      PrecioUnitario: item.PrecioVenta,
+    })),
   });
-  toast.success("Venta realizada con éxito!", {
-    description: `Total: $${total.value.toLocaleString()}`,
-  });
-  carrito.value = [];
-  efectivoRecibido.value = undefined;
-  busqueda.value = "";
+
+  try {
+    const facturaCreada = await RegistrarVenta(ventaRequest);
+    toast.success("¡Venta registrada con éxito!", {
+      description: `Factura N° ${
+        facturaCreada.NumeroFactura
+      } por un total de $${facturaCreada.Total.toLocaleString()}`,
+    });
+
+    // Limpiar estado
+    carrito.value = [];
+    efectivoRecibido.value = undefined;
+    busqueda.value = "";
+    clienteID.value = 1;
+    clienteSeleccionado.value = "Cliente General";
+  } catch (error) {
+    console.error("Error al registrar la venta:", error);
+    toast.error("Error al registrar la venta", {
+      description: `Hubo un problema: ${error}`,
+    });
+  }
 }
 
 async function handleImportProductos() {
   try {
     const filePath = await SelectFile();
-    console.log(filePath);
-
     if (filePath) {
-      toast.warning("Inicio importación", {
-        description: `El archivo CSV está siendo procesado.`,
+      toast.info("Iniciando importación...", {
+        description: `El archivo CSV está siendo procesado. Esto puede tardar.`,
       });
       await ImportaCSV(filePath, "Productos");
-      await RealizarSincronizacionInicial()
-
+      await RealizarSincronizacionInicial();
+      toast.success("Importación completada", {
+        description: "Los productos se han cargado y sincronizado.",
+      });
     }
   } catch (error) {
     console.error("Error al seleccionar archivo:", error);
-    toast.error("Error carga CSV", {
-      description: `Error al seleccionar archivo: ${error}.`,
+    toast.error("Error en carga CSV", {
+      description: `No se pudo procesar el archivo: ${error}.`,
     });
   }
 }
@@ -213,69 +240,106 @@ async function handleImportProductos() {
 <template>
   <div class="grid grid-cols-10 gap-6 h-[calc(100vh-8rem)]">
     <div class="col-span-10 lg:col-span-7 flex flex-col gap-6">
-      <Button @click="handleImportProductos" class="w-full h-12 text-lg">
-        Cargar
-      </Button>
       <Card class="flex-1 shadow-lg overflow-hidden">
-        <CardContent class="p-4 h-full">
+        <CardContent class="p-4 h-full flex flex-col">
           <div class="relative">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-            <Input v-model="busqueda" placeholder="Buscar producto por código o nombre..."
-              @keyup.enter="manejarBusquedaConEnter" class="pl-10 text-lg" />
-            <div v-if="resultadosBusqueda.length > 0"
-              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl max-h-60 overflow-y-auto">
+            <Search
+              class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground"
+            />
+            <Input
+              v-model="busqueda"
+              placeholder="Buscar producto por código o nombre..."
+              @keyup.enter="manejarBusquedaConEnter"
+              class="pl-10 text-lg"
+            />
+            <div
+              v-if="productosEncontrados.length > 0"
+              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl max-h-60 overflow-y-auto"
+            >
               <ul>
-                <li v-for="producto in resultadosBusqueda" :key="producto.id"
+                <li
+                  v-for="producto in productosEncontrados"
+                  :key="producto.id"
                   class="p-3 hover:bg-muted cursor-pointer flex justify-between items-center"
-                  @click="agregarAlCarrito(producto)">
+                  @click="agregarAlCarrito(producto)"
+                >
                   <div>
-                    <p class="font-semibold">{{ producto.nombre }}</p>
+                    <p class="font-semibold">{{ producto.Nombre }}</p>
                     <p class="text-sm text-muted-foreground">
-                      Código: {{ producto.codigo }} | Stock:
-                      {{ producto.stock }}
+                      Código: {{ producto.Codigo }} | Stock:
+                      {{ producto.Stock }}
                     </p>
                   </div>
-                  <span class="font-mono text-lg">${{ producto.precio.toLocaleString() }}</span>
+                  <span class="font-mono text-lg"
+                    >${{ producto.PrecioVenta.toLocaleString() }}</span
+                  >
                 </li>
               </ul>
             </div>
+            <div
+              v-else-if="busqueda.length >= 2 && !isLoading"
+              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl p-4 text-center text-muted-foreground"
+            >
+              <p>No se encontraron productos.</p>
+            </div>
           </div>
-          <div class="h-full overflow-y-auto">
+          <div class="flex-1 overflow-y-auto mt-4">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead class="w-[100px]">Código</TableHead>
                   <TableHead>Producto</TableHead>
-                  <TableHead class="text-center">Cantidad</TableHead>
-                  <TableHead class="text-right">Precio Unit.</TableHead>
-                  <TableHead class="text-right">Subtotal</TableHead>
-                  <TableHead class="text-center">Acción</TableHead>
+                  <TableHead class="text-center w-32">Cantidad</TableHead>
+                  <TableHead class="text-right w-40">Precio Unit.</TableHead>
+                  <TableHead class="text-right w-40">Subtotal</TableHead>
+                  <TableHead class="text-center w-20">Acción</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 <template v-if="carrito.length > 0">
                   <TableRow v-for="item in carrito" :key="item.id">
-                    <TableCell class="font-mono">{{ item.codigo }}</TableCell>
-                    <TableCell class="font-medium">{{ item.nombre }}</TableCell>
+                    <TableCell class="font-mono">{{ item.Codigo }}</TableCell>
+                    <TableCell class="font-medium">{{ item.Nombre }}</TableCell>
                     <TableCell class="text-center">
-                      <Input type="number" class="w-20 text-center mx-auto" :model-value="item.cantidad"
+                      <Input
+                        type="number"
+                        class="w-20 text-center mx-auto"
+                        :model-value="item.cantidad"
                         @update:model-value="
                           actualizarCantidad(item.id, Number($event))
-                          " min="1" :max="item.stock" />
+                        "
+                        min="1"
+                        :max="item.Stock"
+                      />
                     </TableCell>
-                    <TableCell class="text-right font-mono">${{ item.precio.toLocaleString() }}</TableCell>
-                    <TableCell class="text-right font-mono">${{
-                      (item.precio * item.cantidad).toLocaleString()
-                    }}</TableCell>
+                    <TableCell class="text-right font-mono">
+                      <Input
+                        type="number"
+                        class="w-32 text-right mx-auto"
+                        v-model="item.PrecioVenta"
+                      />
+                    </TableCell>
+                    <TableCell class="text-right font-mono"
+                      >${{
+                        (item.PrecioVenta * item.cantidad).toLocaleString()
+                      }}</TableCell
+                    >
                     <TableCell class="text-center">
-                      <Button size="icon" variant="ghost" @click="eliminarDelCarrito(item.id)">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        @click="eliminarDelCarrito(item.id)"
+                      >
                         <Trash2 class="w-5 h-5 text-destructive" />
                       </Button>
                     </TableCell>
                   </TableRow>
                 </template>
                 <TableRow v-else>
-                  <TableCell colspan="6" class="text-center h-24 text-muted-foreground">
+                  <TableCell
+                    colspan="6"
+                    class="text-center h-24 text-muted-foreground"
+                  >
                     El carrito está vacío
                   </TableCell>
                 </TableRow>
@@ -284,6 +348,13 @@ async function handleImportProductos() {
           </div>
         </CardContent>
       </Card>
+      <Button
+        @click="handleImportProductos"
+        variant="outline"
+        class="w-full h-12 text-md"
+      >
+        Importar Productos desde CSV
+      </Button>
     </div>
 
     <div class="col-span-10 lg:col-span-3">
@@ -316,17 +387,29 @@ async function handleImportProductos() {
           </div>
           <div v-if="metodoPago === 'efectivo'" class="space-y-2">
             <Label for="efectivo">Efectivo Recibido</Label>
-            <Input id="efectivo" type="number" v-model="efectivoRecibido" placeholder="$ 0"
-              class="text-right h-12 text-lg font-mono" />
+            <Input
+              id="efectivo"
+              type="number"
+              v-model="efectivoRecibido"
+              placeholder="$ 0"
+              class="text-right h-12 text-lg font-mono"
+            />
           </div>
           <div class="space-y-3 pt-4 border-t">
             <div class="flex justify-between items-center text-lg">
               <span class="text-muted-foreground">Total</span>
-              <span class="font-bold font-mono text-2xl">${{ total.toLocaleString() }}</span>
+              <span class="font-bold font-mono text-2xl"
+                >${{ total.toLocaleString() }}</span
+              >
             </div>
-            <div v-if="metodoPago === 'efectivo' && cambio > 0" class="flex justify-between items-center text-lg">
+            <div
+              v-if="metodoPago === 'efectivo' && efectivoRecibido && cambio > 0"
+              class="flex justify-between items-center text-lg"
+            >
               <span class="text-muted-foreground">Cambio</span>
-              <span class="font-bold font-mono text-green-400 text-2xl">${{ cambio.toLocaleString() }}</span>
+              <span class="font-bold font-mono text-green-400 text-2xl"
+                >${{ cambio.toLocaleString() }}</span
+              >
             </div>
           </div>
         </CardContent>
