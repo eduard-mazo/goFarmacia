@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AlertCircle } from "lucide-vue-next"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 import { useAuthStore } from "@/stores/auth";
 
@@ -79,7 +81,13 @@ const handleLogin = async () => {
                 required
               />
             </div>
-            <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
+            <Alert v-if="error" variant="destructive">
+              <AlertCircle class="w-4 h-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>
+                {{ error }}
+              </AlertDescription>
+            </Alert>
             <Button type="submit" class="w-full" :disabled="isLoading">
               {{ isLoading ? "Ingresando..." : "Iniciar Sesión" }}
             </Button>
