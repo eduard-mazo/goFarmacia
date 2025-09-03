@@ -7,7 +7,7 @@
   "frontend:dev:watcher": "pnpm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "",
+    "name": "EDUARD ALFONSO MAZO QUINTERO",
     "email": "eduard.mazo@gmail.com"
   }
 }
