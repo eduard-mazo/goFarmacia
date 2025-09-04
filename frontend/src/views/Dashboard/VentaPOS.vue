@@ -222,7 +222,7 @@ async function handleImportProductos() {
       toast.info("Iniciando importación...", {
         description: `El archivo CSV está siendo procesado. Esto puede tardar.`,
       });
-      await ImportaCSV(filePath, "Productos");
+      await ImportaCSV(filePath, "Clientes");
       await RealizarSincronizacionInicial();
       toast.success("Importación completada", {
         description: "Los productos se han cargado y sincronizado.",
@@ -367,7 +367,7 @@ async function handleImportProductos() {
             <Label for="cliente">Cliente</Label>
             <div class="flex gap-2">
               <Input id="cliente" :value="clienteSeleccionado" readonly />
-              <Button variant="outline" size="icon">
+              <Button @click="finalizarVenta" variant="outline" size="icon">
                 <UserSearch class="w-5 h-5" />
               </Button>
             </div>

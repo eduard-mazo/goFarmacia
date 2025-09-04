@@ -288,7 +288,7 @@ func mapRowToStruct(rowMap map[string]string, modelName string) (interface{}, er
 		}, nil
 
 	case "Clientes":
-		if rowMap["nombre"] == "" || rowMap["numeroid"] == "" {
+		if rowMap["nombre"] == "" || rowMap["numero_id"] == "" {
 			return nil, fmt.Errorf("los campos 'nombre' y 'numeroid' no pueden estar vacíos")
 		}
 
@@ -296,8 +296,8 @@ func mapRowToStruct(rowMap map[string]string, modelName string) (interface{}, er
 		return Cliente{
 			Nombre:    rowMap["nombre"],
 			Apellido:  rowMap["apellido"],
-			TipoID:    rowMap["tipoid"],
-			NumeroID:  rowMap["numeroid"],
+			TipoID:    rowMap["tipo_id"],
+			NumeroID:  rowMap["numero_id"],
 			Telefono:  rowMap["telefono"],
 			Email:     rowMap["email"],
 			Direccion: rowMap["direccion"],
@@ -315,7 +315,7 @@ func validateHeaders(modelName string, headerMap map[string]int) error {
 	case "Productos":
 		requiredHeaders = []string{"nombre", "codigo", "precio_venta", "stock"}
 	case "Clientes":
-		requiredHeaders = []string{"nombre", "apellido", "tipoid", "numeroid", "telefono", "email", "direccion"}
+		requiredHeaders = []string{"nombre", "apellido", "tipo_id", "numero_id", "telefono", "email", "direccion"}
 	default:
 		return fmt.Errorf("modelo desconocido '%s' para validación de headers", modelName)
 	}

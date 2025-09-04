@@ -28,11 +28,11 @@ const data = {
       items: [
         {
           title: "Punto de venta POS",
-          url: "/dashboard",
+          url: "/dashboard/pos",
         },
         {
           title: "Productos",
-          url: "/dashboard/pos",
+          url: "/dashboard/productos",
         },
         {
           title: "Vendedores",
