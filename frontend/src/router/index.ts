@@ -28,6 +28,11 @@ const routes = [
         name: "VentasPOS",
         component: () => import("../views/Dashboard/VentaPOS.vue"),
       },
+      {
+        path: "vendedores",
+        name: "Vendedores",
+        component: () => import("../views/Dashboard/Vendedores.vue"),
+      },
     ],
   },
   {
@@ -57,7 +62,10 @@ router.beforeEach((to, _, next) => {
     // Si la ruta requiere autenticación y el usuario no está logueado,
     // redirigir a la página de login.
     next({ name: "Login" });
-  } else if ((to.name === "Login" || to.name === "Register") && authStore.isAuthenticated) {
+  } else if (
+    (to.name === "Login" || to.name === "Register") &&
+    authStore.isAuthenticated
+  ) {
     // Si el usuario ya está logueado, no debería poder ver las páginas de login/registro.
     // Redirigirlo a la página de inicio.
     next({ name: "DashboardHome" });
