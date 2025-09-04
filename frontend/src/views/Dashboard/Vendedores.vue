@@ -17,8 +17,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { ArrowUpDown, ChevronDown  } from "lucide-vue-next";
+import { ArrowUpDown, ChevronDown } from "lucide-vue-next";
 import { h, ref, watch, onMounted } from "vue";
+import { valueUpdater } from "../../utils";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -185,13 +186,7 @@ const table = useVueTable({
       pagination.value = updater;
     }
   },
-  onSortingChange: (updaterOrValue) => {
-    if (typeof updaterOrValue === "function") {
-      sorting.value = updaterOrValue(sorting.value);
-    } else {
-      sorting.value = updaterOrValue;
-    }
-  },
+  onSortingChange: (updaterOrValue) => valueUpdater(updaterOrValue, sorting),
 });
 
 // --- Action Handlers ---
