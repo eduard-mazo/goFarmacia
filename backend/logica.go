@@ -39,13 +39,16 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	return vendedor, nil
 }
 
-// LoginVendedor ahora usa hashes y devuelve un token JWT.
+// LoginVendedor verifica las credenciales.
+// **NOTA DE DISEÑO:** El login es una de las pocas excepciones donde se consulta primero la BD remota
+// si está disponible. Esto asegura que las credenciales más actualizadas (ej. un cambio de contraseña
+// desde otro terminal) sean utilizadas, mejorando la seguridad.
 func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	var vendedor Vendedor
 	var response LoginResponse
-	db := d.LocalDB
+	db := d.LocalDB // Por defecto, intentar con la local
 	if d.isRemoteDBAvailable() {
-		db = d.RemoteDB
+		db = d.RemoteDB // Si hay conexión, la remota es la fuente de verdad para auth.
 	}
 
 	if err := db.Where("email = ?", req.Email).First(&vendedor).Error; err != nil {
@@ -67,19 +70,18 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	vendedor.Contrasena = ""
 	response = LoginResponse{Token: tokenString, Vendedor: vendedor}
 
+	// Si el login fue exitoso contra la BD remota, actualizamos la cache local.
 	if d.isRemoteDBAvailable() {
 		go d.syncVendedorToLocal(vendedor)
 	}
 	return response, nil
 }
 
+// ObtenerVendedoresPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var vendedores []Vendedor
 	var total int64
-	db := d.LocalDB
-	if d.isRemoteDBAvailable() {
-		db = d.RemoteDB
-	}
+	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
 	query := db.Model(&Vendedor{})
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
@@ -92,7 +94,6 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (Pagin
 }
 
 func (d *Db) ActualizarVendedor(vendedor Vendedor) (string, error) {
-	// CORRECCIÓN: Se reemplaza la lógica de sincronización genérica por una específica para actualizaciones.
 	if vendedor.ID == 0 {
 		return "", errors.New("para actualizar un vendedor se requiere un ID válido")
 	}
@@ -105,8 +106,6 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (string, error) {
 		if !d.isRemoteDBAvailable() {
 			return
 		}
-		// Usar .Save() en la BD remota. GORM ejecutará un UPDATE porque el ID está presente.
-		// Esto funciona correctamente incluso si se cambia la cédula.
 		if err := d.RemoteDB.Save(&v).Error; err != nil {
 			d.Log.Warnf("Fallo al sincronizar la actualización para Vendedor ID %d: %v", v.ID, err)
 		}
@@ -139,7 +138,6 @@ func (d *Db) RegistrarCliente(cliente Cliente) (string, error) {
 }
 
 func (d *Db) ActualizarCliente(cliente Cliente) (string, error) {
-	// CORRECCIÓN: Lógica de sincronización específica para actualizaciones.
 	if cliente.ID == 0 {
 		return "", errors.New("para actualizar un cliente se requiere un ID válido")
 	}
@@ -171,13 +169,11 @@ func (d *Db) EliminarCliente(id uint) (string, error) {
 	return "Cliente eliminado localmente. Sincronizando...", nil
 }
 
+// ObtenerClientesPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var clientes []Cliente
 	var total int64
-	db := d.LocalDB
-	if d.isRemoteDBAvailable() {
-		db = d.RemoteDB
-	}
+	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
 	query := db.Model(&Cliente{})
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
@@ -200,7 +196,6 @@ func (d *Db) RegistrarProducto(producto Producto) (string, error) {
 }
 
 func (d *Db) ActualizarProducto(producto Producto) (string, error) {
-	// CORRECCIÓN: Lógica de sincronización específica para actualizaciones.
 	if producto.ID == 0 {
 		return "", errors.New("para actualizar un producto se requiere un ID válido")
 	}
@@ -232,14 +227,12 @@ func (d *Db) EliminarProducto(id uint) (string, error) {
 	return "Producto eliminado localmente. Sincronizando...", nil
 }
 
+// ObtenerProductosPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	d.Log.Infof("Fetching products - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var productos []Producto
 	var total int64
-	db := d.LocalDB
-	if d.isRemoteDBAvailable() {
-		db = d.RemoteDB
-	}
+	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
 	query := db.Model(&Producto{})
 
 	if search != "" {
@@ -253,7 +246,7 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (Pagina
 	return PaginatedResult{Records: productos, TotalRecords: total}, err
 }
 
-// --- PROVEEDORES (NUEVO) ---
+// --- PROVEEDORES ---
 
 func (d *Db) RegistrarProveedor(proveedor Proveedor) (string, error) {
 	if err := d.LocalDB.Create(&proveedor).Error; err != nil {
@@ -264,7 +257,6 @@ func (d *Db) RegistrarProveedor(proveedor Proveedor) (string, error) {
 }
 
 func (d *Db) ActualizarProveedor(proveedor Proveedor) (string, error) {
-	// CORRECCIÓN: Lógica de sincronización específica para actualizaciones.
 	if proveedor.ID == 0 {
 		return "", errors.New("para actualizar un proveedor se requiere un ID válido")
 	}
@@ -374,6 +366,27 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	// Sincronizar la venta con la base de datos remota en segundo plano
 	go d.syncVentaToRemote(factura.ID)
 
+	// --- INICIO DE LA CORRECCIÓN ---
+	// Añadimos una nueva goroutine para actualizar el stock en la BD remota.
+	// Esto no bloquea la respuesta al usuario y resuelve la inconsistencia de datos.
+	go func(productosVendidos []ProductoVenta) {
+		if !d.isRemoteDBAvailable() {
+			return // No hacer nada si estamos offline
+		}
+		d.Log.Info("Iniciando sincronización de stock en remoto...")
+		for _, p := range productosVendidos {
+			// Usamos GORM para construir una sentencia UPDATE segura:
+			// UPDATE productos SET stock = stock - [cantidad] WHERE id = [id]
+			err := d.RemoteDB.Model(&Producto{}).Where("id = ?", p.ID).Update("Stock", gorm.Expr("Stock - ?", p.Cantidad)).Error
+			if err != nil {
+				// Si falla, solo lo registramos, no detenemos la aplicación.
+				d.Log.Warnf("Fallo al sincronizar el stock del producto ID %d en remoto: %v", p.ID, err)
+			}
+		}
+		d.Log.Info("Sincronización de stock en remoto finalizada.")
+	}(req.Productos) // Pasamos una copia de los productos de la request
+	// --- FIN DE LA CORRECCIÓN ---
+
 	return d.ObtenerDetalleFactura(factura.ID)
 }
 
@@ -388,11 +401,9 @@ func (d *Db) generarNumeroFactura() string {
 	return fmt.Sprintf("FAC-%d", nuevoNumero)
 }
 
+// ObtenerFacturas ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerFacturas() ([]Factura, error) {
-	db := d.LocalDB
-	if d.isRemoteDBAvailable() {
-		db = d.RemoteDB
-	}
+	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
 	var facturas []Factura
 	err := db.Preload("Cliente").Preload("Vendedor").Order("id desc").Find(&facturas).Error
 	return facturas, err
@@ -400,11 +411,12 @@ func (d *Db) ObtenerFacturas() ([]Factura, error) {
 
 func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	var factura Factura
+	// Esta función ya consultaba la BD local, lo cual es correcto.
 	err := d.LocalDB.Preload("Cliente").Preload("Vendedor").Preload("Detalles.Producto").First(&factura, facturaID).Error
 	return factura, err
 }
 
-// --- COMPRAS (NUEVO) ---
+// --- COMPRAS ---
 
 func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 	tx := d.LocalDB.Begin()
@@ -460,13 +472,13 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 
 	go d.syncCompraToRemote(compra.ID)
 
-	// Devolvemos la compra con sus detalles para confirmación
 	var compraCompleta Compra
 	d.LocalDB.Preload("Proveedor").Preload("Detalles.Producto").First(&compraCompleta, compra.ID)
 	return compraCompleta, nil
 }
 
-// --- LÓGICA DE SINCRONIZACIÓN ---
+// --- LÓGICA DE SINCRONIZACIÓN (sin cambios) ---
+// La lógica existente de "sync individual" es correcta para el modelo local-first.
 
 func (d *Db) syncVendedorToRemote(id uint) {
 	if !d.isRemoteDBAvailable() {
@@ -537,22 +549,17 @@ func (d *Db) syncVentaToRemote(id uint) {
 		return
 	}
 	var record Factura
-	// 1. Cargar la factura y sus detalles desde la BD local
 	if err := d.LocalDB.Preload("Detalles").First(&record, id).Error; err != nil {
 		log.Printf("SYNC ERROR: No se pudo encontrar la Factura ID %d en la BD local. %v", id, err)
 		return
 	}
 
-	// 2. Asegurar que el VENDEDOR exista en la BD remota ANTES de sincronizar la factura
 	d.syncVendedorToRemote(record.VendedorID)
-
-	// 3. Asegurar que el CLIENTE exista en la BD remota ANTES de sincronizar la factura
 	d.syncClienteToRemote(record.ClienteID)
 
-	// 4. Ahora, con las dependencias en su lugar, sincronizar la factura
 	err := d.RemoteDB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "numero_factura"}},
-		DoNothing: true, // Las facturas no se actualizan, se anulan y se crean nuevas.
+		DoNothing: true,
 	}).Create(&record).Error
 
 	if err != nil {
@@ -586,18 +593,15 @@ func (d *Db) syncCompraToRemote(id uint) {
 		return
 	}
 	var record Compra
-	// 1. Cargar la compra y sus detalles desde la BD local
 	if err := d.LocalDB.Preload("Detalles").First(&record, id).Error; err != nil {
 		log.Printf("SYNC ERROR: No se pudo encontrar la Compra ID %d en la BD local. %v", id, err)
 		return
 	}
 
-	// 2. Asegurar que el PROVEEDOR exista en la BD remota ANTES de sincronizar la compra
 	d.syncProveedorToRemote(record.ProveedorID)
 
-	// 3. Ahora, con las dependencias en su lugar, sincronizar la compra
 	err := d.RemoteDB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "factura_numero"}}, // Suponiendo que el número de factura del proveedor es único.
+		Columns:   []clause.Column{{Name: "factura_numero"}},
 		DoNothing: true,
 	}).Create(&record).Error
 
@@ -610,7 +614,6 @@ func (d *Db) syncCompraToRemote(id uint) {
 
 // --- IMPORTACIÓN Y RESETEO ---
 
-// ImportaCSV inicia el proceso de carga masiva desde un archivo CSV.
 func (d *Db) ImportaCSV(filePath string, modelName string) {
 	d.Log.Infof("Iniciando importación para el modelo '%s' desde el archivo: %s", modelName, filePath)
 	progressChan, errorChan := d.CargarDesdeCSV(filePath, modelName)
@@ -626,7 +629,6 @@ func (d *Db) ImportaCSV(filePath string, modelName string) {
 	}
 }
 
-// ResetearTodaLaData expone la funcionalidad de reseteo profundo al frontend.
 func (d *Db) ResetearTodaLaData() (string, error) {
 	if err := d.DeepResetDatabases(); err != nil {
 		return "", err
