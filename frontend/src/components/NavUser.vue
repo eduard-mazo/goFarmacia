@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { storeToRefs } from "pinia";
 import {
   BadgeCheck,
   Bell,
@@ -8,6 +7,7 @@ import {
   LogOut,
   Sparkles,
 } from "lucide-vue-next";
+
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -24,16 +24,18 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 const authStore = useAuthStore();
 const userAvatar = "https://avatar.iran.liara.run/public/boy";
-const { user: authenticatedUser } = storeToRefs(authStore);
+const { user: authenticatedUser, userInitials } = storeToRefs(authStore);
 const { isMobile } = useSidebar();
 
 function handleLogOut() {
   authStore.logout();
 }
 </script>
+
 <template>
   <SidebarMenu>
     <SidebarMenuItem>
@@ -45,7 +47,7 @@ function handleLogOut() {
           >
             <Avatar class="h-8 w-8 rounded-lg">
               <AvatarImage :src="userAvatar" :alt="authenticatedUser?.Nombre" />
-              <AvatarFallback class="rounded-lg"> CN </AvatarFallback>
+              <AvatarFallback class="rounded-lg"> {{ userInitials }} </AvatarFallback>
             </Avatar>
             <div class="grid flex-1 text-left text-sm leading-tight">
               <span class="truncate font-semibold">{{
@@ -71,7 +73,9 @@ function handleLogOut() {
                   :src="userAvatar"
                   :alt="authenticatedUser?.Nombre"
                 />
-                <AvatarFallback class="rounded-lg"> CN </AvatarFallback>
+                <AvatarFallback class="rounded-lg">
+                  {{ userInitials }}
+                </AvatarFallback>
               </Avatar>
               <div class="grid flex-1 text-left text-sm leading-tight">
                 <span class="truncate font-semibold">{{
@@ -98,7 +102,7 @@ function handleLogOut() {
             </DropdownMenuItem>
             <DropdownMenuItem>
               <CreditCard />
-              Billing
+              Billing {{ userInitials }}
             </DropdownMenuItem>
             <DropdownMenuItem>
               <Bell />

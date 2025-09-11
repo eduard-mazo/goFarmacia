@@ -248,7 +248,7 @@ watch(busqueda, () => {
     <div class="flex items-center py-4">
       <Input
         class="max-w-sm"
-        placeholder="Buscar por nombre, apellido, cédula..."
+        placeholder="Buscar por nombre o código..."
         :model-value="busqueda"
         @update:model-value="busqueda = String($event)"
       />

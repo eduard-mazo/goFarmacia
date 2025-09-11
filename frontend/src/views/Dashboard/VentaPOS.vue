@@ -248,7 +248,7 @@ async function handleImportProductos() {
             />
             <Input
               v-model="busqueda"
-              placeholder="Buscar producto por código o nombre..."
+              placeholder="Buscar por nombre o código..."
               @keyup.enter="manejarBusquedaConEnter"
               class="pl-10 text-lg"
             />

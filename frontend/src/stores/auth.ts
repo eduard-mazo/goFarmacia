@@ -15,6 +15,15 @@ export const useAuthStore = defineStore("auth", () => {
   const isAuthenticated = computed(() => !!token.value && !!user.value);
   const currentUser = computed(() => user.value);
 
+  const userInitials = computed(() => {
+    if (!user.value) return "";
+    const nombre = user.value.Nombre?.trim() || "";
+    const apellido = user.value.Apellido?.trim() || "";
+    const inicialNombre = nombre.charAt(0).toUpperCase();
+    const inicialApellido = apellido.charAt(0).toUpperCase();
+    return `${inicialNombre}${inicialApellido}`.trim();
+  });
+
   // --- ACTIONS ---
 
   // Función para establecer el estado de autenticación
@@ -49,7 +58,10 @@ export const useAuthStore = defineStore("auth", () => {
   // Acción para iniciar sesión
   async function login(email: string, contrasena: string) {
     try {
-      const loginRequest: backend.LoginRequest = { Email: email, Contrasena: contrasena };
+      const loginRequest: backend.LoginRequest = {
+        Email: email,
+        Contrasena: contrasena,
+      };
       const response = await LoginVendedor(loginRequest);
       if (response.token && response.vendedor) {
         setAuth(response);
@@ -85,6 +97,7 @@ export const useAuthStore = defineStore("auth", () => {
     token,
     isAuthenticated,
     currentUser,
+    userInitials,
     register,
     login,
     logout,
