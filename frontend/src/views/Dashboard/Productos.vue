@@ -16,13 +16,22 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+// --- Componentes de paginación de shadcn-vue ---
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 import { ArrowUpDown, ChevronDown } from "lucide-vue-next";
-import { h, ref, watch, onMounted } from "vue";
+import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "../../utils";
 
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+//import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -32,11 +41,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import DropdownAction from "../../components/DataTableProductDropDown.vue"; // Adjusted path if needed
+import DropdownAction from "../../components/DataTableProductDropDown.vue";
 import { backend } from "../../../wailsjs/go/models";
 import {
   ObtenerProductosPaginado,
-  EliminarVendedor,
+  EliminarProducto,
+  ActualizarProducto,
 } from "../../../wailsjs/go/backend/Db";
 
 interface ObtenerProductosPaginadoResponse {
@@ -51,18 +61,18 @@ const busqueda = ref("");
 const sorting = ref<SortingState>([]);
 
 const pagination = ref<PaginationState>({
-  pageIndex: 0, // Corresponds to `paginaActual = 1`
-  pageSize: 10,
+  pageIndex: 0, // 0-based index for TanStack Table
+  pageSize: 15,
 });
 
 // --- Data Fetching from Go Backend ---
 const cargarProductos = async () => {
   try {
-    // The backend expects page number starting from 1, TanStack uses 0-based index.
-    const currentPage: number = pagination.value.pageIndex + 1;
+    // El backend espera una página basada en 1, así que sumamos 1
+    const currentPageBackend: number = pagination.value.pageIndex + 1;
     const response: ObtenerProductosPaginadoResponse =
       await ObtenerProductosPaginado(
-        currentPage,
+        currentPageBackend,
         pagination.value.pageSize,
         busqueda.value
       );
@@ -70,13 +80,12 @@ const cargarProductos = async () => {
     totalProductos.value = response.TotalRecords || 0;
   } catch (error) {
     console.error(`Error al cargar Productos: ${error}`);
-    // Here you can add a user-facing notification
   }
 };
 
 // --- Column Definitions for Producto ---
 const columns: ColumnDef<backend.Producto>[] = [
-  {
+  /*  {
     id: "select",
     header: ({ table }) =>
       h(Checkbox, {
@@ -93,7 +102,7 @@ const columns: ColumnDef<backend.Producto>[] = [
       }),
     enableSorting: false,
     enableHiding: false,
-  },
+  },*/
   {
     accessorKey: "Nombre",
     header: ({ column }) => {
@@ -119,7 +128,7 @@ const columns: ColumnDef<backend.Producto>[] = [
           variant: "ghost",
           onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
         },
-        () => ["Codigo", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
+        () => ["Código", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       );
     },
     cell: ({ row }) => h("div", row.getValue("Codigo")),
@@ -133,10 +142,17 @@ const columns: ColumnDef<backend.Producto>[] = [
           variant: "ghost",
           onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
         },
-        () => ["PrecioVenta", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
+        () => ["Precio Venta", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       );
     },
-    cell: ({ row }) => h("div", row.getValue("PrecioVenta")),
+    cell: ({ row }) => {
+      const amount = parseFloat(row.getValue("PrecioVenta"));
+      const formatted = new Intl.NumberFormat("es-CO", {
+        style: "currency",
+        currency: "COP",
+      }).format(amount);
+      return h("div", { class: "text-left font-medium" }, formatted);
+    },
   },
   {
     accessorKey: "Stock",
@@ -160,8 +176,8 @@ const columns: ColumnDef<backend.Producto>[] = [
       return h("div", { class: "relative" }, [
         h(DropdownAction, {
           producto,
-          onEdit: (v: backend.Producto) => handleEdit(v),
-          onDelete: (v: backend.Producto) => handleDelete(v),
+          onEdit: (p: backend.Producto) => handleEdit(p),
+          onDelete: (p: backend.Producto) => handleDelete(p),
         }),
       ]);
     },
@@ -198,48 +214,51 @@ const table = useVueTable({
   onSortingChange: (updaterOrValue) => valueUpdater(updaterOrValue, sorting),
 });
 
+// --- Computed properties for Pagination ---
+const pageCount = computed(() => table.getPageCount());
+
+// 🌉 Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
+const currentPage = computed({
+  get: () => pagination.value.pageIndex + 1,
+  set: (newPage) => {
+    table.setPageIndex(newPage - 1);
+  },
+});
+
 // --- Action Handlers ---
-function handleEdit(vendedor: backend.Producto) {
-  console.log("Edit:", vendedor);
-  alert(`Editing Vendedor ID: ${vendedor.id}`);
+async function handleEdit(producto: backend.Producto) {
+  try {
+    await ActualizarProducto(producto);
+    await cargarProductos();
+  } catch (error) {
+    console.error(`Error al actualizar el producto: ${error}`);
+  }
 }
 
-async function handleDelete(vendedor: backend.Producto) {
-  console.log("Delete:", vendedor);
-  if (confirm(`Are you sure you want to delete ${vendedor.Nombre}?`)) {
-    try {
-      await EliminarVendedor(vendedor.id);
-      await cargarProductos();
-      alert("Vendedor eliminado con éxito.");
-    } catch (error) {
-      console.error(`Error al eliminar vendedor: ${error}`);
-      alert(`Failed to delete vendedor: ${error}`);
-    }
+async function handleDelete(producto: backend.Producto) {
+  try {
+    await EliminarProducto(producto.id);
+    await cargarProductos();
+  } catch (error) {
+    console.error(`Error al eliminar el producto: ${error}`);
   }
 }
 
 // --- Lifecycle and Watchers ---
 onMounted(cargarProductos);
 
-// Watch for pagination changes and fetch data immediately
 watch(pagination, cargarProductos, { deep: true });
 
-// Debounce search input to avoid excessive API calls
 let debounceTimer: number;
 watch(busqueda, () => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
-    // When a new search is performed, go back to the first page.
-    // The pagination watcher will be triggered automatically to fetch the data.
     if (pagination.value.pageIndex !== 0) {
-      pagination.value.pageIndex = 0;
-    }
-    // If we are already on the first page, the pagination watcher won't fire,
-    // so we need to trigger the fetch manually.
-    else {
+      table.setPageIndex(0);
+    } else {
       cargarProductos();
     }
-  }, 300); // Wait for 300ms of inactivity before searching
+  }, 300);
 });
 </script>
 
@@ -255,7 +274,7 @@ watch(busqueda, () => {
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <Button variant="outline" class="ml-auto">
-            Columns <ChevronDown class="ml-2 h-4 w-4" />
+            Columnas <ChevronDown class="ml-2 h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -296,11 +315,7 @@ watch(busqueda, () => {
         </TableHeader>
         <TableBody>
           <template v-if="table.getRowModel().rows?.length">
-            <TableRow
-              v-for="row in table.getRowModel().rows"
-              :key="row.id"
-              :data-state="row.getIsSelected() && 'selected'"
-            >
+            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
               <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
                 <FlexRender
                   :render="cell.column.columnDef.cell"
@@ -317,29 +332,39 @@ watch(busqueda, () => {
         </TableBody>
       </Table>
     </div>
-    <div class="flex items-center justify-end space-x-2 py-4">
-      <div class="flex-1 text-sm text-muted-foreground">
-        {{ table.getFilteredSelectedRowModel().rows.length }} of
-        {{ table.getCoreRowModel().rows.length }} row(s) selected.
-      </div>
-      <div class="space-x-2">
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="!table.getCanPreviousPage()"
-          @click="table.previousPage()"
-        >
-          Anterior
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="!table.getCanNextPage()"
-          @click="table.nextPage()"
-        >
-          Siguiente
-        </Button>
-      </div>
+
+    <div class="flex items-center justify-between space-x-2 py-4">
+      <Pagination
+        v-if="pageCount > 1"
+        v-model:page="currentPage"
+        :total="totalProductos"
+        :items-per-page="pagination.pageSize"
+        :sibling-count="1"
+        show-edges
+      >
+        <PaginationContent v-slot="{ items }">
+          <PaginationPrevious />
+
+          <template v-for="(item, index) in items">
+            <PaginationItem
+              v-if="item.type === 'page'"
+              :key="index"
+              :value="item.value"
+              as-child
+            >
+              <Button
+                class="w-10 h-10 p-0"
+                :variant="item.value === currentPage ? 'default' : 'outline'"
+              >
+                {{ item.value }}
+              </Button>
+            </PaginationItem>
+            <PaginationEllipsis v-else :key="item.type" :index="index" />
+          </template>
+
+          <PaginationNext />
+        </PaginationContent>
+      </Pagination>
     </div>
   </div>
 </template>
