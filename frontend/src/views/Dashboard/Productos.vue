@@ -16,7 +16,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-// --- Componentes de paginación de shadcn-vue ---
+
 import {
   Pagination,
   PaginationContent,
@@ -332,7 +332,6 @@ watch(busqueda, () => {
         </TableBody>
       </Table>
     </div>
-
     <div class="flex items-center justify-between space-x-2 py-4">
       <Pagination
         v-if="pageCount > 1"

@@ -222,7 +222,7 @@ async function handleImportProductos() {
       toast.info("Iniciando importación...", {
         description: `El archivo CSV está siendo procesado. Esto puede tardar.`,
       });
-      await ImportaCSV(filePath, "Clientes");
+      await ImportaCSV(filePath, "Productos");
       await RealizarSincronizacionInicial();
       toast.success("Importación completada", {
         description: "Los productos se han cargado y sincronizado.",

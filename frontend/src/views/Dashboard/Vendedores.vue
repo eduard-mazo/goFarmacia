@@ -17,12 +17,21 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+
 import { ArrowUpDown, ChevronDown } from "lucide-vue-next";
-import { h, ref, watch, onMounted } from "vue";
+import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "../../utils";
 
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+//import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -37,6 +46,7 @@ import { backend } from "../../../wailsjs/go/models";
 import {
   ObtenerVendedoresPaginado,
   EliminarVendedor,
+  ActualizarVendedor,
 } from "../../../wailsjs/go/backend/Db";
 
 interface ObtenerVendedoresPaginadoResponse {
@@ -52,7 +62,7 @@ const sorting = ref<SortingState>([]);
 
 const pagination = ref<PaginationState>({
   pageIndex: 0, // Corresponds to `paginaActual = 1`
-  pageSize: 10,
+  pageSize: 15,
 });
 
 // --- Data Fetching from Go Backend ---
@@ -76,7 +86,7 @@ const cargarVendedores = async () => {
 
 // --- Column Definitions for Vendedor ---
 const columns: ColumnDef<backend.Vendedor>[] = [
-  {
+  /*  {
     id: "select",
     header: ({ table }) =>
       h(Checkbox, {
@@ -93,7 +103,7 @@ const columns: ColumnDef<backend.Vendedor>[] = [
       }),
     enableSorting: false,
     enableHiding: false,
-  },
+  },*/
   {
     accessorKey: "Nombre",
     header: ({ column }) => {
@@ -189,10 +199,25 @@ const table = useVueTable({
   onSortingChange: (updaterOrValue) => valueUpdater(updaterOrValue, sorting),
 });
 
+// --- Computed properties for Pagination ---
+const pageCount = computed(() => table.getPageCount());
+
+// 🌉 Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
+const currentPage = computed({
+  get: () => pagination.value.pageIndex + 1,
+  set: (newPage) => {
+    table.setPageIndex(newPage - 1);
+  },
+});
+
 // --- Action Handlers ---
-function handleEdit(vendedor: backend.Vendedor) {
-  console.log("Edit:", vendedor);
-  alert(`Editing Vendedor ID: ${vendedor.id}`);
+async function handleEdit(vendedor: backend.Vendedor) {
+  try {
+    await ActualizarVendedor(vendedor);
+    await cargarVendedores();
+  } catch (error) {
+    console.error(`Error al actualizar el VendeActualizarVendedor: ${error}`);
+  }
 }
 
 async function handleDelete(vendedor: backend.Vendedor) {
@@ -220,17 +245,12 @@ let debounceTimer: number;
 watch(busqueda, () => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
-    // When a new search is performed, go back to the first page.
-    // The pagination watcher will be triggered automatically to fetch the data.
     if (pagination.value.pageIndex !== 0) {
       pagination.value.pageIndex = 0;
-    }
-    // If we are already on the first page, the pagination watcher won't fire,
-    // so we need to trigger the fetch manually.
-    else {
+    } else {
       cargarVendedores();
     }
-  }, 300); // Wait for 300ms of inactivity before searching
+  }, 300);
 });
 </script>
 
@@ -246,7 +266,7 @@ watch(busqueda, () => {
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <Button variant="outline" class="ml-auto">
-            Columns <ChevronDown class="ml-2 h-4 w-4" />
+            Columnas <ChevronDown class="ml-2 h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -287,11 +307,7 @@ watch(busqueda, () => {
         </TableHeader>
         <TableBody>
           <template v-if="table.getRowModel().rows?.length">
-            <TableRow
-              v-for="row in table.getRowModel().rows"
-              :key="row.id"
-              :data-state="row.getIsSelected() && 'selected'"
-            >
+            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
               <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
                 <FlexRender
                   :render="cell.column.columnDef.cell"
@@ -309,27 +325,38 @@ watch(busqueda, () => {
       </Table>
     </div>
     <div class="flex items-center justify-end space-x-2 py-4">
-      <div class="flex-1 text-sm text-muted-foreground">
-        {{ table.getFilteredSelectedRowModel().rows.length }} of
-        {{ table.getCoreRowModel().rows.length }} row(s) selected.
-      </div>
       <div class="space-x-2">
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="!table.getCanPreviousPage()"
-          @click="table.previousPage()"
+        <Pagination
+          v-if="pageCount > 1"
+          v-model:page="currentPage"
+          :total="totalVendedores"
+          :items-per-page="pagination.pageSize"
+          :sibling-count="1"
+          show-edges
         >
-          Anterior
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="!table.getCanNextPage()"
-          @click="table.nextPage()"
-        >
-          Siguiente
-        </Button>
+          <PaginationContent v-slot="{ items }">
+            <PaginationPrevious />
+
+            <template v-for="(item, index) in items">
+              <PaginationItem
+                v-if="item.type === 'page'"
+                :key="index"
+                :value="item.value"
+                as-child
+              >
+                <Button
+                  class="w-10 h-10 p-0"
+                  :variant="item.value === currentPage ? 'default' : 'outline'"
+                >
+                  {{ item.value }}
+                </Button>
+              </PaginationItem>
+              <PaginationEllipsis v-else :key="item.type" :index="index" />
+            </template>
+
+            <PaginationNext />
+          </PaginationContent>
+        </Pagination>
       </div>
     </div>
   </div>

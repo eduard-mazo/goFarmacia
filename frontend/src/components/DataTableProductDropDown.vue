@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { MoreHorizontal } from "lucide-vue-next";
 import { ref } from "vue";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,11 +47,20 @@ const editableProduct = ref<backend.Producto>(
   backend.Producto.createFrom(props.producto)
 );
 
-// FIX: Separate state for each dialog
 const isEditDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
 
 // --- Handlers ---
+function openEditDialog() {
+  editableProduct.value = backend.Producto.createFrom(props.producto);
+  isEditDialogOpen.value = true;
+}
+
+function openDeleteDialog() {
+  editableProduct.value = backend.Producto.createFrom(props.producto);
+  isDeleteDialogOpen.value = true;
+}
+
 function handleSaveChanges() {
   emit("edit", editableProduct.value);
   isEditDialogOpen.value = false; // Close dialog after saving
@@ -64,7 +73,6 @@ function handleDeleteConfirm() {
 </script>
 
 <template>
-  <!-- The DropdownMenu now only controls showing the menu items -->
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
       <Button variant="ghost" class="w-8 h-8 p-0">
@@ -76,20 +84,16 @@ function handleDeleteConfirm() {
       <DropdownMenuLabel>Acciones</DropdownMenuLabel>
       <DropdownMenuSeparator />
 
-      <!-- FIX: Use @click to programmatically open the correct dialog -->
-      <DropdownMenuItem @click="isEditDialogOpen = true">
+      <DropdownMenuItem @click="openEditDialog">
         <span>Editar producto</span>
       </DropdownMenuItem>
 
-      <DropdownMenuItem @click="isDeleteDialogOpen = true" class="text-red-600">
+      <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
         <span>Eliminar producto</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
 
-  <!-- FIX: Dialog components are now siblings, not nested -->
-
-  <!-- Edit Product Dialog -->
   <Dialog v-model:open="isEditDialogOpen">
     <DialogContent class="sm:max-w-[425px]">
       <DialogHeader>
@@ -136,18 +140,17 @@ function handleDeleteConfirm() {
         </div>
       </div>
       <DialogFooter>
-        <Button type="submit" @click="handleSaveChanges"
+        <Button variant="destructive" type="submit" @click="handleSaveChanges"
           >Guardar cambios</Button
         >
       </DialogFooter>
     </DialogContent>
   </Dialog>
 
-  <!-- Delete Confirmation Dialog -->
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
+        <AlertDialogTitle>¿Estás absolutely seguro?</AlertDialogTitle>
         <AlertDialogDescription>
           Esta acción no se puede deshacer. Esto eliminará permanentemente el
           producto
@@ -157,9 +160,12 @@ function handleDeleteConfirm() {
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel>Cancelar</AlertDialogCancel>
-        <AlertDialogAction @click="handleDeleteConfirm"
-          >Continuar</AlertDialogAction
+        <AlertDialogAction
+          :class="buttonVariants({ variant: 'destructive' })"
+          @click="handleDeleteConfirm"
         >
+          Eliminar
+        </AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>
