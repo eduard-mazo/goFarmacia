@@ -93,26 +93,63 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (Pagin
 	return PaginatedResult{Records: vendedores, TotalRecords: total}, err
 }
 
-func (d *Db) ActualizarVendedor(vendedor Vendedor) (string, error) {
-	if vendedor.ID == 0 {
+func (d *Db) ActualizarVendedor(v Vendedor) (string, error) {
+	log.Println("Iniciando actualización de vendedor:", v.ID)
+	if v.ID == 0 {
 		return "", errors.New("para actualizar un vendedor se requiere un ID válido")
 	}
 
-	if err := d.LocalDB.Save(&vendedor).Error; err != nil {
+	var cur Vendedor
+	if err := d.LocalDB.First(&cur, v.ID).Error; err != nil {
 		return "", err
 	}
 
-	go func(v Vendedor) {
+	updates := map[string]interface{}{
+		"nombre":   v.Nombre,
+		"apellido": v.Apellido,
+		"cedula":   v.Cedula,
+		"email":    strings.ToLower(v.Email),
+	}
+
+	// Solo si se envía una nueva contraseña, hasheamos y actualizamos
+	if strings.TrimSpace(v.Contrasena) != "" {
+		hp, err := HashPassword(v.Contrasena)
+		if err != nil {
+			return "", fmt.Errorf("error al encriptar la contraseña: %w", err)
+		}
+		updates["contrasena"] = hp
+	}
+
+	if err := d.LocalDB.Model(&Vendedor{}).
+		Where("id = ?", v.ID).
+		Updates(updates).Error; err != nil {
+		return "", err
+	}
+
+	// UPSERT remoto por "cedula"
+	go func(id uint) {
 		if !d.isRemoteDBAvailable() {
 			return
 		}
-		if err := d.RemoteDB.Save(&v).Error; err != nil {
-			d.Log.Warnf("Fallo al sincronizar la actualización para Vendedor ID %d: %v", v.ID, err)
+		var record Vendedor
+		if err := d.LocalDB.First(&record, id).Error; err != nil {
+			d.Log.Warnf("Fallo al cargar vendedor actualizado (ID %d) para sync remoto: %v", id, err)
+			return
 		}
-	}(vendedor)
+
+		if err := d.RemoteDB.
+			Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "cedula"}},
+				DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "email", "contrasena", "updated_at"}),
+			}).
+			Create(&record).Error; err != nil {
+			d.Log.Warnf("Fallo al sincronizar la actualización para Vendedor ID %d: %v", id, err)
+		}
+	}(v.ID)
 
 	return "Vendedor actualizado localmente. Sincronizando...", nil
 }
+
 func (d *Db) EliminarVendedor(id uint) (string, error) {
 	if err := d.LocalDB.Delete(&Vendedor{}, id).Error; err != nil {
 		return "", err
@@ -195,21 +232,62 @@ func (d *Db) RegistrarProducto(producto Producto) (string, error) {
 	return "Producto registrado localmente. Sincronizando...", nil
 }
 
-func (d *Db) ActualizarProducto(producto Producto) (string, error) {
-	if producto.ID == 0 {
+func (d *Db) ActualizarProducto(p Producto) (string, error) {
+	if p.ID == 0 {
 		return "", errors.New("para actualizar un producto se requiere un ID válido")
 	}
-	if err := d.LocalDB.Save(&producto).Error; err != nil {
+
+	// Carga actual para tener valores previos (p. ej. para detectar cambio de código)
+	var cur Producto
+	if err := d.LocalDB.First(&cur, p.ID).Error; err != nil {
 		return "", err
 	}
-	go func(p Producto) {
+
+	// Solo actualizamos campos permitidos (no tocamos created_at ni deleted_at)
+	updates := map[string]interface{}{
+		"nombre":       p.Nombre,
+		"codigo":       p.Codigo,
+		"precio_venta": p.PrecioVenta,
+		"stock":        p.Stock,
+	}
+
+	// Update local sin sobrescribir toda la fila
+	if err := d.LocalDB.Model(&Producto{}).
+		Where("id = ?", p.ID).
+		Updates(updates).Error; err != nil {
+		return "", err
+	}
+
+	// Sincroniza remoto con UPSERT por "codigo"
+	go func(id uint, oldCode, newCode string) {
 		if !d.isRemoteDBAvailable() {
 			return
 		}
-		if err := d.RemoteDB.Save(&p).Error; err != nil {
-			d.Log.Warnf("Fallo al sincronizar la actualización para Producto ID %d: %v", p.ID, err)
+
+		// Cargamos de nuevo el registro local ya actualizado para enviarlo completo
+		var record Producto
+		if err := d.LocalDB.First(&record, id).Error; err != nil {
+			d.Log.Warnf("Fallo al cargar producto actualizado (ID %d) para sync remoto: %v", id, err)
+			return
 		}
-	}(producto)
+
+		// UPSERT en remoto tomando "codigo" como clave natural
+		if err := d.RemoteDB.
+			Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "codigo"}},
+				DoUpdates: clause.AssignmentColumns([]string{"nombre", "precio_venta", "stock", "updated_at"}),
+			}).
+			Create(&record).Error; err != nil {
+			d.Log.Warnf("Fallo al sincronizar la actualización para Producto ID %d: %v", id, err)
+		}
+
+		if strings.TrimSpace(oldCode) != "" && oldCode != newCode {
+			if err := d.RemoteDB.Unscoped().Where("codigo = ?", oldCode).Delete(&Producto{}).Error; err != nil {
+				d.Log.Warnf("No se pudo eliminar en remoto el producto con código antiguo '%s': %v", oldCode, err)
+			}
+		}
+	}(p.ID, cur.Codigo, p.Codigo)
+
 	return "Producto actualizado localmente. Sincronizando...", nil
 }
 
