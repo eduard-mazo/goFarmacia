@@ -29,8 +29,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Search, Trash2, UserSearch } from "lucide-vue-next";
+import { Search, Trash2, UserSearch, PlusCircle } from "lucide-vue-next";
 import { toast } from "vue-sonner";
+import CrearProductoModal from "@/components/CrearProductoModal.vue"; // Importamos el nuevo modal
 
 // Funciones e interfaces del Backend (generadas por Wails)
 import {
@@ -43,14 +44,11 @@ import {
 import { backend } from "../../../wailsjs/go/models";
 
 // --- Interfaces del Frontend ---
-// Usaremos la interfaz de Producto del backend pero extendida con 'cantidad' para el carrito
 interface ItemCarrito extends backend.Producto {
   cantidad: number;
-  // El campo PrecioVenta en backend.Producto servirá como nuestro precio unitario editable
 }
 
 // --- STORE DE AUTENTICACIÓN ---
-// Para obtener el ID del vendedor que realiza la venta
 const authStore = useAuthStore();
 const { user: authenticatedUser } = storeToRefs(authStore);
 
@@ -61,9 +59,10 @@ const carrito = ref<ItemCarrito[]>([]);
 const metodoPago = ref("efectivo");
 const efectivoRecibido = ref<number | undefined>(undefined);
 const clienteSeleccionado = ref("Cliente General");
-const clienteID = ref(1); // Asumimos ID 1 para "Cliente General"
+const clienteID = ref(1);
 const debounceTimer = ref<number | undefined>(undefined);
 const isLoading = ref(false);
+const isCreateModalOpen = ref(false); // Estado para controlar el modal
 
 // --- LÓGICA DE BÚSQUEDA ---
 watch(busqueda, (nuevoValor) => {
@@ -75,8 +74,7 @@ watch(busqueda, (nuevoValor) => {
   isLoading.value = true;
   debounceTimer.value = setTimeout(async () => {
     try {
-      // Llama a la función del backend para buscar productos
-      const resultado = await ObtenerProductosPaginado(1, 10, nuevoValor); // Pag 1, 10 resultados
+      const resultado = await ObtenerProductosPaginado(1, 10, nuevoValor);
       productosEncontrados.value =
         (resultado.Records as backend.Producto[]) || [];
     } catch (error) {
@@ -87,7 +85,7 @@ watch(busqueda, (nuevoValor) => {
     } finally {
       isLoading.value = false;
     }
-  }, 300); // Espera 300ms antes de buscar
+  }, 300);
 });
 
 // --- LÓGICA DEL CARRITO ---
@@ -103,16 +101,23 @@ function agregarAlCarrito(producto: backend.Producto) {
       });
     }
   } else {
-    // ✅ Crear nueva instancia usando el modelo de Wails
     const nuevoProducto = {
       ...new backend.Producto(producto),
-      cantidad: 1, // forzamos la cantidad inicial
+      cantidad: 1,
     } as ItemCarrito;
     carrito.value.push(nuevoProducto);
   }
 
   busqueda.value = "";
   productosEncontrados.value = [];
+}
+
+// NUEVA FUNCIÓN: Maneja el evento cuando un producto es creado desde el modal
+function handleProductCreated(nuevoProducto: backend.Producto) {
+  toast.success("Producto agregado al carrito", {
+    description: `"${nuevoProducto.Nombre}" listo para la venta.`,
+  });
+  agregarAlCarrito(nuevoProducto);
 }
 
 function manejarBusquedaConEnter() {
@@ -144,7 +149,6 @@ function actualizarCantidad(idProducto: number, nuevaCantidad: number) {
 
 // --- LÓGICA DE LA VENTA ---
 const total = computed(() =>
-  // El precio unitario es `item.PrecioVenta` que ahora es editable
   carrito.value.reduce((acc, item) => acc + item.PrecioVenta * item.cantidad, 0)
 );
 
@@ -181,7 +185,6 @@ async function finalizarVenta() {
     return;
   }
 
-  // Construir el payload para el backend
   const ventaRequest = new backend.VentaRequest({
     ClienteID: clienteID.value,
     VendedorID: authenticatedUser.value.id,
@@ -201,7 +204,6 @@ async function finalizarVenta() {
       } por un total de $${facturaCreada.Total.toLocaleString()}`,
     });
 
-    // Limpiar estado
     carrito.value = [];
     efectivoRecibido.value = undefined;
     busqueda.value = "";
@@ -238,6 +240,12 @@ async function handleImportProductos() {
 </script>
 
 <template>
+  <CrearProductoModal
+    v-model:open="isCreateModalOpen"
+    :initial-codigo="busqueda"
+    @product-created="handleProductCreated"
+  />
+
   <div class="grid grid-cols-10 gap-6 h-[calc(100vh-8rem)]">
     <div class="col-span-10 lg:col-span-7 flex flex-col gap-6">
       <Card class="flex-1 shadow-lg overflow-hidden">
@@ -250,7 +258,7 @@ async function handleImportProductos() {
               v-model="busqueda"
               placeholder="Buscar por nombre o código..."
               @keyup.enter="manejarBusquedaConEnter"
-              class="pl-10 text-lg"
+              class="pl-10 text-lg h-12"
             />
             <div
               v-if="productosEncontrados.length > 0"
@@ -277,10 +285,18 @@ async function handleImportProductos() {
               </ul>
             </div>
             <div
-              v-else-if="busqueda.length >= 2 && !isLoading"
-              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl p-4 text-center text-muted-foreground"
+              v-else-if="
+                busqueda.length >= 2 &&
+                !isLoading &&
+                productosEncontrados.length === 0
+              "
+              class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl p-4 text-center text-muted-foreground flex flex-col items-center gap-3"
             >
-              <p>No se encontraron productos.</p>
+              <p>No se encontraron productos para "{{ busqueda }}"</p>
+              <Button @click="isCreateModalOpen = true" variant="outline">
+                <PlusCircle class="w-4 h-4 mr-2" />
+                Crear Producto
+              </Button>
             </div>
           </div>
           <div class="flex-1 overflow-y-auto mt-4">
@@ -303,7 +319,7 @@ async function handleImportProductos() {
                     <TableCell class="text-center">
                       <Input
                         type="number"
-                        class="w-20 text-center mx-auto"
+                        class="w-20 text-center mx-auto h-10"
                         :model-value="item.cantidad"
                         @update:model-value="
                           actualizarCantidad(item.id, Number($event))
@@ -315,7 +331,7 @@ async function handleImportProductos() {
                     <TableCell class="text-right font-mono">
                       <Input
                         type="number"
-                        class="w-32 text-right mx-auto"
+                        class="w-32 text-right mx-auto h-10"
                         v-model="item.PrecioVenta"
                       />
                     </TableCell>
@@ -366,8 +382,13 @@ async function handleImportProductos() {
           <div class="space-y-2">
             <Label for="cliente">Cliente</Label>
             <div class="flex gap-2">
-              <Input id="cliente" :value="clienteSeleccionado" readonly />
-              <Button @click="finalizarVenta" variant="outline" size="icon">
+              <Input
+                id="cliente"
+                :value="clienteSeleccionado"
+                readonly
+                class="h-10"
+              />
+              <Button variant="outline" size="icon" class="h-10 w-10">
                 <UserSearch class="w-5 h-5" />
               </Button>
             </div>
@@ -375,7 +396,7 @@ async function handleImportProductos() {
           <div class="space-y-2">
             <Label>Método de Pago</Label>
             <Select v-model="metodoPago">
-              <SelectTrigger>
+              <SelectTrigger class="h-10">
                 <SelectValue placeholder="Seleccione un método" />
               </SelectTrigger>
               <SelectContent>

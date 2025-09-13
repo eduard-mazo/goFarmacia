@@ -16,7 +16,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
 import {
   Pagination,
   PaginationContent,
@@ -25,13 +24,10 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-
-import { ArrowUpDown, ChevronDown } from "lucide-vue-next";
+import { ArrowUpDown, ChevronDown, PlusCircle } from "lucide-vue-next";
 import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "../../utils";
-
 import { Button } from "@/components/ui/button";
-//import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -42,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import DropdownAction from "../../components/DataTableProductDropDown.vue";
+import CrearProductoModal from "@/components/CrearProductoModal.vue"; // Importamos el modal
 import { backend } from "../../../wailsjs/go/models";
 import {
   ObtenerProductosPaginado,
@@ -59,16 +56,16 @@ const listaProductos = ref<backend.Producto[]>([]);
 const totalProductos = ref(0);
 const busqueda = ref("");
 const sorting = ref<SortingState>([]);
+const isCreateModalOpen = ref(false); // Estado para el modal
 
 const pagination = ref<PaginationState>({
-  pageIndex: 0, // 0-based index for TanStack Table
+  pageIndex: 0,
   pageSize: 15,
 });
 
 // --- Data Fetching from Go Backend ---
 const cargarProductos = async () => {
   try {
-    // El backend espera una página basada en 1, así que sumamos 1
     const currentPageBackend: number = pagination.value.pageIndex + 1;
     const response: ObtenerProductosPaginadoResponse =
       await ObtenerProductosPaginado(
@@ -85,24 +82,6 @@ const cargarProductos = async () => {
 
 // --- Column Definitions for Producto ---
 const columns: ColumnDef<backend.Producto>[] = [
-  /*  {
-    id: "select",
-    header: ({ table }) =>
-      h(Checkbox, {
-        checked: table.getIsAllPageRowsSelected(),
-        "onUpdate:checked": (value: boolean) =>
-          table.toggleAllPageRowsSelected(!!value),
-        ariaLabel: "Select all",
-      }),
-    cell: ({ row }) =>
-      h(Checkbox, {
-        checked: row.getIsSelected(),
-        "onUpdate:checked": (value: boolean) => row.toggleSelected(!!value),
-        ariaLabel: "Select row",
-      }),
-    enableSorting: false,
-    enableHiding: false,
-  },*/
   {
     accessorKey: "Nombre",
     header: ({ column }) => {
@@ -217,7 +196,6 @@ const table = useVueTable({
 // --- Computed properties for Pagination ---
 const pageCount = computed(() => table.getPageCount());
 
-// 🌉 Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
 const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => {
@@ -244,9 +222,13 @@ async function handleDelete(producto: backend.Producto) {
   }
 }
 
+// NUEVA FUNCIÓN: Maneja el evento del modal, simplemente recarga la lista
+function handleProductCreated() {
+  cargarProductos();
+}
+
 // --- Lifecycle and Watchers ---
 onMounted(cargarProductos);
-
 watch(pagination, cargarProductos, { deep: true });
 
 let debounceTimer: number;
@@ -263,17 +245,26 @@ watch(busqueda, () => {
 </script>
 
 <template>
+  <CrearProductoModal
+    v-model:open="isCreateModalOpen"
+    @product-created="handleProductCreated"
+  />
+
   <div class="w-full">
-    <div class="flex items-center py-4">
+    <div class="flex items-center py-4 gap-2">
       <Input
-        class="max-w-sm"
+        class="max-w-sm h-10"
         placeholder="Buscar por nombre o código..."
         :model-value="busqueda"
         @update:model-value="busqueda = String($event)"
       />
+      <Button @click="isCreateModalOpen = true" class="h-10">
+        <PlusCircle class="w-4 h-4 mr-2" />
+        Agregar Producto
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
-          <Button variant="outline" class="ml-auto">
+          <Button variant="outline" class="ml-auto h-10">
             Columnas <ChevronDown class="ml-2 h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
