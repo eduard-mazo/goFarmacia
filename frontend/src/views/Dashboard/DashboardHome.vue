@@ -17,7 +17,7 @@ async function resetDB() {
 </script>
 
 <template>
-  <Button @click="resetDB">
+  <Button variant="outline">
     Limpiar base de datos
   </Button>
 </template>
