@@ -198,7 +198,7 @@ func (d *Db) initDB() {
 	}
 	d.Log.Info("✅ Local SQLite database connected successfully.")
 
-	// List of all models to migrate
+	// List of all models to migrate for both databases
 	models := []interface{}{&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{}, &Proveedor{}, &Compra{}, &DetalleCompra{}}
 
 	// Auto-migrate schema for the local database
@@ -210,7 +210,6 @@ func (d *Db) initDB() {
 
 	// --- 2. Initialize Remote Supabase Database ---
 	// Carga las variables de entorno del archivo .env
-	// Esto debe ser lo primero que hagas en la función main
 	err = godotenv.Load()
 	if err != nil {
 		d.Log.Fatalf("Error loading .env file: %v", err)
@@ -218,7 +217,6 @@ func (d *Db) initDB() {
 
 	secret := os.Getenv("JWT_SECRET_KEY")
 	if secret == "" {
-		// Si la clave no está, la aplicación no debe continuar.
 		d.Log.Fatalf("FATAL: La variable de entorno JWT_SECRET_KEY no está configurada.")
 	}
 	d.jwtKey = []byte(secret)
@@ -227,10 +225,21 @@ func (d *Db) initDB() {
 	d.RemoteDB, err = gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{})
 	if err != nil {
 		d.Log.Warnf("WARNING: Failed to connect to remote Supabase database. App will run in offline mode. Error: %v", err)
-		// We don't use log.Fatalf here, so the app can start in offline mode.
 		d.RemoteDB = nil // Ensure RemoteDB is nil if connection fails
 	} else {
 		d.Log.Info("✅ Remote Supabase database connected successfully.")
+		// Migramos el esquema en la base de datos remota también.
+		// Esto asegura que las tablas existan antes de que la sincronización intente leerlas.
+		d.Log.Info("Migrating remote database schema...")
+		err = d.RemoteDB.AutoMigrate(models...)
+		if err != nil {
+			// Si la migración remota falla, no podemos confiar en la conexión.
+			// Volvemos al modo offline para evitar más errores.
+			d.Log.Errorf("ERROR: Failed to migrate remote schema. Falling back to offline mode. Error: %v", err)
+			d.RemoteDB = nil
+		} else {
+			d.Log.Info("✅ Remote database schema migrated successfully.")
+		}
 	}
 }
 

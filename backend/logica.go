@@ -224,12 +224,15 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (Paginat
 
 // --- PRODUCTOS ---
 
-func (d *Db) RegistrarProducto(producto Producto) (string, error) {
+func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 	if err := d.LocalDB.Create(&producto).Error; err != nil {
-		return "", fmt.Errorf("error al registrar localmente: %w", err)
+		// Retornamos un producto vacío en caso de error
+		return Producto{}, fmt.Errorf("error al registrar localmente: %w", err)
 	}
+	// La sincronización se ejecuta en segundo plano
 	go d.syncProductoToRemote(producto.ID)
-	return "Producto registrado localmente. Sincronizando...", nil
+	// Devolvemos el objeto 'producto' completo, que GORM ha actualizado con el ID.
+	return producto, nil
 }
 
 func (d *Db) ActualizarProducto(p Producto) (string, error) {
