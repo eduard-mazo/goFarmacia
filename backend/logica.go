@@ -166,12 +166,12 @@ func (d *Db) EliminarVendedor(id uint) (string, error) {
 
 // --- CLIENTES ---
 
-func (d *Db) RegistrarCliente(cliente Cliente) (string, error) {
+func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 	if err := d.LocalDB.Create(&cliente).Error; err != nil {
-		return "", fmt.Errorf("error al registrar localmente: %w", err)
+		return Cliente{}, fmt.Errorf("error al registrar localmente: %w", err)
 	}
 	go d.syncClienteToRemote(cliente.ID)
-	return "Cliente registrado localmente. Sincronizando...", nil
+	return cliente, nil
 }
 
 func (d *Db) ActualizarCliente(cliente Cliente) (string, error) {
