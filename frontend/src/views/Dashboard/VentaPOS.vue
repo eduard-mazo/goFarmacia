@@ -248,7 +248,7 @@ async function handleImportProductos() {
 
   <div class="grid grid-cols-10 gap-6 h-[calc(100vh-8rem)]">
     <div class="col-span-10 lg:col-span-7 flex flex-col gap-6">
-      <Card class="flex-1 shadow-lg overflow-hidden">
+      <Card class="flex-1  overflow-hidden">
         <CardContent class="p-4 h-full flex flex-col">
           <div class="relative">
             <Search
@@ -374,7 +374,7 @@ async function handleImportProductos() {
     </div>
 
     <div class="col-span-10 lg:col-span-3">
-      <Card class="shadow-lg">
+      <Card>
         <CardHeader>
           <CardTitle>Gestión de Venta</CardTitle>
         </CardHeader>

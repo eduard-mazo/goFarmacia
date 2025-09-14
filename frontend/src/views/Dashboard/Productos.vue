@@ -10,6 +10,7 @@ import {
   getSortedRowModel,
   useVueTable,
 } from "@tanstack/vue-table";
+import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -45,6 +46,7 @@ import {
   EliminarProducto,
   ActualizarProducto,
 } from "../../../wailsjs/go/backend/Db";
+import CardContent from "@/components/ui/card/CardContent.vue";
 
 interface ObtenerProductosPaginadoResponse {
   Records: backend.Producto[];
@@ -287,7 +289,7 @@ watch(busqueda, () => {
       </DropdownMenu>
     </div>
 
-    <div class="rounded-md border">
+    <Card class="py-0">
       <Table>
         <TableHeader>
           <TableRow
@@ -321,7 +323,7 @@ watch(busqueda, () => {
           </TableRow>
         </TableBody>
       </Table>
-    </div>
+    </Card>
     <div class="flex items-center justify-between space-x-2 py-4">
       <Pagination
         v-if="pageCount > 1"
