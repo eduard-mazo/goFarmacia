@@ -258,7 +258,7 @@ async function handleImportProductos() {
               v-model="busqueda"
               placeholder="Buscar por nombre o código..."
               @keyup.enter="manejarBusquedaConEnter"
-              class="pl-10 text-lg h-12"
+              class="pl-10 text-lg h-10"
             />
             <div
               v-if="productosEncontrados.length > 0"
@@ -401,7 +401,6 @@ async function handleImportProductos() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="efectivo">Efectivo</SelectItem>
-                <SelectItem value="tarjeta">Tarjeta</SelectItem>
                 <SelectItem value="transferencia">Transferencia</SelectItem>
               </SelectContent>
             </Select>
@@ -413,7 +412,7 @@ async function handleImportProductos() {
               type="number"
               v-model="efectivoRecibido"
               placeholder="$ 0"
-              class="text-right h-12 text-lg font-mono"
+              class="text-right h-10 text-lg font-mono"
             />
           </div>
           <div class="space-y-3 pt-4 border-t">
@@ -435,7 +434,7 @@ async function handleImportProductos() {
           </div>
         </CardContent>
         <CardFooter>
-          <Button @click="finalizarVenta" class="w-full h-12 text-lg">
+          <Button @click="finalizarVenta" class="w-full h-10 text-lg">
             Finalizar Venta
           </Button>
         </CardFooter>

@@ -256,16 +256,16 @@ watch(busqueda, () => {
 
 <template>
   <div class="w-full">
-    <div class="flex items-center py-4">
+    <div class="flex items-center py-4 gap-2">
       <Input
-        class="max-w-sm"
+        class="max-w-sm h-10"
         placeholder="Buscar por nombre, apellido, cédula..."
         :model-value="busqueda"
         @update:model-value="busqueda = String($event)"
       />
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
-          <Button variant="outline" class="ml-auto">
+          <Button variant="outline" class="ml-auto h-10">
             Columnas <ChevronDown class="ml-2 h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
