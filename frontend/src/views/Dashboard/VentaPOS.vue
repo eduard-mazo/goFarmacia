@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 
@@ -31,28 +31,27 @@ import {
 import { Label } from "@/components/ui/label";
 import { Search, Trash2, UserSearch, PlusCircle } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import CrearProductoModal from "@/components/CrearProductoModal.vue"; // Importamos el nuevo modal
+import CrearProductoModal from "@/components/CrearProductoModal.vue";
+import BuscarClienteModal from "@/components/BuscarClienteModal.vue";
 
 // Funciones e interfaces del Backend (generadas por Wails)
 import {
-  ImportaCSV,
-  SelectFile,
-  RealizarSincronizacionInicial,
+  ObtenerClientesPaginado,
   ObtenerProductosPaginado,
   RegistrarVenta,
 } from "../../../wailsjs/go/backend/Db";
 import { backend } from "../../../wailsjs/go/models";
 
-// --- Interfaces del Frontend ---
+//[INTERFACES]
 interface ItemCarrito extends backend.Producto {
   cantidad: number;
 }
 
-// --- STORE DE AUTENTICACIÓN ---
+//[STORE] - AUTENTICACIÓN
 const authStore = useAuthStore();
 const { user: authenticatedUser } = storeToRefs(authStore);
 
-// --- ESTADO DEL COMPONENTE ---
+//[COMPONENTE] - ESTADOS
 const busqueda = ref("");
 const productosEncontrados = ref<backend.Producto[]>([]);
 const carrito = ref<ItemCarrito[]>([]);
@@ -62,10 +61,22 @@ const clienteSeleccionado = ref("Cliente General");
 const clienteID = ref(1);
 const debounceTimer = ref<number | undefined>(undefined);
 const isLoading = ref(false);
-const isCreateModalOpen = ref(false); // Estado para controlar el modal
 
-// --- LÓGICA DE BÚSQUEDA ---
+//[MODALS] - ESTADOS
+const isCreateModalOpen = ref(false);
+const isClienteModalOpen = ref(false);
+
+//[REF] - DOM
+const searchInputRef = ref<{ $el: HTMLInputElement } | null>(null);
+const searchResultsContainerRef = ref<HTMLElement | null>(null);
+const searchResultItemsRef = ref<HTMLLIElement[]>([]);
+
+//[SEARCH] - LOGIC
+const highlightedIndex = ref(-1);
+
 watch(busqueda, (nuevoValor) => {
+  highlightedIndex.value = -1;
+  searchResultItemsRef.value = []; // Limpiar las refs de los items
   clearTimeout(debounceTimer.value);
   if (nuevoValor.length < 2) {
     productosEncontrados.value = [];
@@ -77,6 +88,9 @@ watch(busqueda, (nuevoValor) => {
       const resultado = await ObtenerProductosPaginado(1, 10, nuevoValor);
       productosEncontrados.value =
         (resultado.Records as backend.Producto[]) || [];
+      if (productosEncontrados.value.length > 0) {
+        highlightedIndex.value = 0;
+      }
     } catch (error) {
       console.error("Error al buscar productos:", error);
       toast.error("Error de búsqueda", {
@@ -88,8 +102,10 @@ watch(busqueda, (nuevoValor) => {
   }, 300);
 });
 
-// --- LÓGICA DEL CARRITO ---
+//[CAR] - LOGIC
 function agregarAlCarrito(producto: backend.Producto) {
+  if (!producto) return;
+
   const itemExistente = carrito.value.find((item) => item.id === producto.id);
 
   if (itemExistente) {
@@ -110,9 +126,11 @@ function agregarAlCarrito(producto: backend.Producto) {
 
   busqueda.value = "";
   productosEncontrados.value = [];
+  nextTick(() => {
+    searchInputRef.value?.$el?.focus();
+  });
 }
 
-// NUEVA FUNCIÓN: Maneja el evento cuando un producto es creado desde el modal
 function handleProductCreated(nuevoProducto: backend.Producto) {
   toast.success("Producto agregado al carrito", {
     description: `"${nuevoProducto.Nombre}" listo para la venta.`,
@@ -122,12 +140,50 @@ function handleProductCreated(nuevoProducto: backend.Producto) {
 
 function manejarBusquedaConEnter() {
   if (
-    productosEncontrados.value.length === 1 &&
-    productosEncontrados.value[0]
+    highlightedIndex.value >= 0 &&
+    productosEncontrados.value[highlightedIndex.value]
   ) {
-    agregarAlCarrito(productosEncontrados.value[0]);
+    agregarAlCarrito(productosEncontrados.value[highlightedIndex.value]!);
+  } else if (productosEncontrados.value.length === 1) {
+    agregarAlCarrito(productosEncontrados.value[0]!);
   }
 }
+
+//[KEYBOARD NAVIGATION]
+function moverSeleccion(direccion: "arriba" | "abajo") {
+  if (productosEncontrados.value.length === 0) return;
+  if (direccion === "abajo") {
+    highlightedIndex.value =
+      (highlightedIndex.value + 1) % productosEncontrados.value.length;
+  } else if (direccion === "arriba") {
+    highlightedIndex.value =
+      (highlightedIndex.value - 1 + productosEncontrados.value.length) %
+      productosEncontrados.value.length;
+  }
+}
+
+// --- LÓGICA DE SCROLL AUTOMÁTICO ---
+watch(highlightedIndex, (newIndex) => {
+  if (
+    newIndex < 0 ||
+    !searchResultsContainerRef.value ||
+    !searchResultItemsRef.value[newIndex]
+  ) {
+    return;
+  }
+  const highlightedItem = searchResultItemsRef.value[newIndex];
+  const container = searchResultsContainerRef.value;
+  const itemTop = highlightedItem.offsetTop;
+  const itemBottom = itemTop + highlightedItem.offsetHeight;
+  const containerTop = container.scrollTop;
+  const containerBottom = containerTop + container.clientHeight;
+
+  if (itemTop < containerTop) {
+    container.scrollTop = itemTop;
+  } else if (itemBottom > containerBottom) {
+    container.scrollTop = itemBottom - container.clientHeight;
+  }
+});
 
 function eliminarDelCarrito(idProducto: number) {
   carrito.value = carrito.value.filter((p) => p.id !== idProducto);
@@ -147,7 +203,7 @@ function actualizarCantidad(idProducto: number, nuevaCantidad: number) {
   }
 }
 
-// --- LÓGICA DE LA VENTA ---
+//[SAILES] - LOGIC
 const total = computed(() =>
   carrito.value.reduce((acc, item) => acc + item.PrecioVenta * item.cantidad, 0)
 );
@@ -177,6 +233,20 @@ async function finalizarVenta() {
     });
     return;
   }
+
+  // --- NUEVA VALIDACIÓN DE PRECIO DE VENTA ---
+  const productoInvalido = carrito.value.find(
+    (item) => !item.PrecioVenta || item.PrecioVenta <= 0
+  );
+
+  if (productoInvalido) {
+    toast.error("Precio de Venta Inválido", {
+      description: `El producto "${productoInvalido.Nombre}" tiene un precio de venta no válido. Por favor, corríjalo.`,
+    });
+    return;
+  }
+  // --- FIN DE LA VALIDACIÓN ---
+
   if (!authenticatedUser.value?.id) {
     toast.error("Vendedor no identificado", {
       description:
@@ -207,8 +277,7 @@ async function finalizarVenta() {
     carrito.value = [];
     efectivoRecibido.value = undefined;
     busqueda.value = "";
-    clienteID.value = 1;
-    clienteSeleccionado.value = "Cliente General";
+    await cargarClienteGeneralPorDefecto();
   } catch (error) {
     console.error("Error al registrar la venta:", error);
     toast.error("Error al registrar la venta", {
@@ -217,26 +286,54 @@ async function finalizarVenta() {
   }
 }
 
-async function handleImportProductos() {
+//[INIT] - CARGA INICIAL
+async function cargarClienteGeneralPorDefecto() {
   try {
-    const filePath = await SelectFile();
-    if (filePath) {
-      toast.info("Iniciando importación...", {
-        description: `El archivo CSV está siendo procesado. Esto puede tardar.`,
-      });
-      await ImportaCSV(filePath, "Productos");
-      await RealizarSincronizacionInicial();
-      toast.success("Importación completada", {
-        description: "Los productos se han cargado y sincronizado.",
-      });
+    const res = await ObtenerClientesPaginado(1, 1, "222222222");
+    if (res && res.Records && res.Records.length > 0) {
+      const clienteGeneral = res.Records[0] as backend.Cliente;
+      clienteID.value = clienteGeneral.id;
+      clienteSeleccionado.value = `${clienteGeneral.Nombre} ${clienteGeneral.Apellido}`;
+    } else {
+      clienteID.value = 1;
+      clienteSeleccionado.value = "Cliente General";
     }
   } catch (error) {
-    console.error("Error al seleccionar archivo:", error);
-    toast.error("Error en carga CSV", {
-      description: `No se pudo procesar el archivo: ${error}.`,
-    });
+    console.warn("No se pudo cargar el cliente general por defecto:", error);
+    clienteID.value = 1;
+    clienteSeleccionado.value = "Cliente General";
   }
 }
+
+function handleClienteSeleccionado(cliente: backend.Cliente) {
+  clienteID.value = cliente.id;
+  clienteSeleccionado.value = `${cliente.Nombre} ${cliente.Apellido}`;
+  isClienteModalOpen.value = false;
+}
+
+// MANEJO DE ATAJOS DE TECLADO
+function handleKeyDown(event: KeyboardEvent) {
+  if (event.key === "F12") {
+    event.preventDefault();
+    finalizarVenta();
+  } else if (event.key === "F10") {
+    event.preventDefault();
+    searchInputRef.value?.$el?.focus();
+  }
+}
+
+//[LIFECYCLE] - MOUNT & UNMOUNT
+onMounted(() => {
+  window.addEventListener("keydown", handleKeyDown);
+  nextTick(() => {
+    cargarClienteGeneralPorDefecto();
+    searchInputRef.value?.$el?.focus();
+  });
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleKeyDown);
+});
 </script>
 
 <template>
@@ -245,35 +342,60 @@ async function handleImportProductos() {
     :initial-codigo="busqueda"
     @product-created="handleProductCreated"
   />
+  <BuscarClienteModal
+    v-model:open="isClienteModalOpen"
+    @cliente-seleccionado="handleClienteSeleccionado"
+  />
 
   <div class="grid grid-cols-10 gap-6 h-[calc(100vh-8rem)]">
     <div class="col-span-10 lg:col-span-7 flex flex-col gap-6">
-      <Card class="flex-1  overflow-hidden">
+      <Card class="flex-1 overflow-hidden">
         <CardContent class="p-4 h-full flex flex-col">
           <div class="relative">
             <Search
               class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground"
             />
             <Input
+              ref="searchInputRef"
               v-model="busqueda"
-              placeholder="Buscar por nombre o código..."
+              placeholder="Buscar por nombre o código... (F10)"
               @keyup.enter="manejarBusquedaConEnter"
-              class="pl-10 text-lg h-10"
+              @keydown.down.prevent="moverSeleccion('abajo')"
+              @keydown.up.prevent="moverSeleccion('arriba')"
+              class="pl-10 text-lg h-12"
             />
             <div
               v-if="productosEncontrados.length > 0"
+              ref="searchResultsContainerRef"
               class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl max-h-60 overflow-y-auto"
             >
               <ul>
                 <li
-                  v-for="producto in productosEncontrados"
+                  v-for="(producto, index) in productosEncontrados"
                   :key="producto.id"
+                  :ref="
+                    (el) => {
+                      if (el)
+                        searchResultItemsRef[index] = el as HTMLLIElement;
+                    }
+                  "
                   class="p-3 hover:bg-muted cursor-pointer flex justify-between items-center"
+                  :class="{
+                    'bg-primary text-primary-foreground hover:bg-primary':
+                      index === highlightedIndex,
+                  }"
                   @click="agregarAlCarrito(producto)"
                 >
                   <div>
                     <p class="font-semibold">{{ producto.Nombre }}</p>
-                    <p class="text-sm text-muted-foreground">
+                    <p
+                      class="text-sm"
+                      :class="
+                        index === highlightedIndex
+                          ? 'text-primary-foreground/80'
+                          : 'text-muted-foreground'
+                      "
+                    >
                       Código: {{ producto.Codigo }} | Stock:
                       {{ producto.Stock }}
                     </p>
@@ -299,6 +421,7 @@ async function handleImportProductos() {
               </Button>
             </div>
           </div>
+
           <div class="flex-1 overflow-y-auto mt-4">
             <Table>
               <TableHeader>
@@ -331,8 +454,9 @@ async function handleImportProductos() {
                     <TableCell class="text-right font-mono">
                       <Input
                         type="number"
-                        class="w-32 text-right mx-auto h-10"
+                        class="w-32 text-right mx-auto h-10 font-mono"
                         v-model="item.PrecioVenta"
+                        step="0.01"
                       />
                     </TableCell>
                     <TableCell class="text-right font-mono"
@@ -364,13 +488,6 @@ async function handleImportProductos() {
           </div>
         </CardContent>
       </Card>
-      <Button
-        @click="handleImportProductos"
-        variant="outline"
-        class="w-full h-12 text-md"
-      >
-        Importar Productos desde CSV
-      </Button>
     </div>
 
     <div class="col-span-10 lg:col-span-3">
@@ -388,7 +505,12 @@ async function handleImportProductos() {
                 readonly
                 class="h-10"
               />
-              <Button variant="outline" size="icon" class="h-10 w-10">
+              <Button
+                @click="isClienteModalOpen = true"
+                variant="outline"
+                size="icon"
+                class="h-10 w-10 flex-shrink-0"
+              >
                 <UserSearch class="w-5 h-5" />
               </Button>
             </div>
@@ -434,8 +556,8 @@ async function handleImportProductos() {
           </div>
         </CardContent>
         <CardFooter>
-          <Button @click="finalizarVenta" class="w-full h-10 text-lg">
-            Finalizar Venta
+          <Button @click="finalizarVenta" class="w-full h-12 text-lg">
+            Finalizar Venta (F12)
           </Button>
         </CardFooter>
       </Card>

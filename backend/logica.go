@@ -79,6 +79,7 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 
 // ObtenerVendedoresPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+	d.Log.Infof("Fetching vendedores - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var vendedores []Vendedor
 	var total int64
 	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
@@ -208,13 +209,14 @@ func (d *Db) EliminarCliente(id uint) (string, error) {
 
 // ObtenerClientesPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+	d.Log.Infof("Fetching clientes - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var clientes []Cliente
 	var total int64
 	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
 	query := db.Model(&Cliente{})
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		query = query.Where("LOWER(Nombre) LIKE ? OR LOWER(Apellido) LIKE ? OR NumeroID LIKE ?", searchTerm, searchTerm, searchTerm)
+		query = query.Where("LOWER(nombre) LIKE ? OR LOWER(apellido) LIKE ? OR numero_id LIKE ?", searchTerm, searchTerm, searchTerm)
 	}
 	query.Count(&total)
 	offset := (page - 1) * pageSize
