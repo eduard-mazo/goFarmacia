@@ -12,8 +12,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "vue-sonner";
-import { RegistrarCliente } from "../../wailsjs/go/backend/Db";
-import { backend } from "../../wailsjs/go/models";
+import { RegistrarCliente } from "@/../wailsjs/go/backend/Db";
+import { backend } from "@/../wailsjs/go/models";
 
 // Props para controlar el modal y pre-rellenar el código
 const props = defineProps<{

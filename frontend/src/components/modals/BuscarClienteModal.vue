@@ -10,8 +10,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import { ObtenerClientesPaginado } from "../../wailsjs/go/backend/Db";
-import { backend } from "../../wailsjs/go/models";
+import { ObtenerClientesPaginado } from "@/../wailsjs/go/backend/Db";
+import { backend } from "@/../wailsjs/go/models";
 
 // Props y Emits para la comunicación con el componente padre
 const props = defineProps<{

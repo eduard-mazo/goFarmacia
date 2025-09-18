@@ -49,11 +49,9 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useAuthStore } from "../stores/auth";
-import { backend } from "../../wailsjs/go/models";
-import {
-  RegistrarVendedor,
-} from "../../wailsjs/go/backend/Db";
+import { useAuthStore } from "../../../stores/auth";
+import { backend } from "../../../../wailsjs/go/models";
+import { RegistrarVendedor } from "../../../../wailsjs/go/backend/Db";
 
 const vendedor = ref(new backend.Vendedor());
 const authStore = useAuthStore();

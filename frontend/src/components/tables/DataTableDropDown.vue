@@ -30,21 +30,21 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { backend } from "../../wailsjs/go/models";
+import { backend } from "@/../wailsjs/go/models";
 
-// Define props to accept a Cliente object
+// Define props to accept a Vendedor object
 const props = defineProps<{
-  cliente: backend.Cliente;
+  vendedor: backend.Vendedor;
 }>();
 
 const emit = defineEmits<{
-  (e: "edit", value: backend.Cliente): void;
-  (e: "delete", value: backend.Cliente): void;
+  (e: "edit", value: backend.Vendedor): void;
+  (e: "delete", value: backend.Vendedor): void;
 }>();
 
 // --- State for Dialogs ---
-const editableProduct = ref<backend.Cliente>(
-  backend.Cliente.createFrom(props.cliente)
+const editableProduct = ref<backend.Vendedor>(
+  backend.Vendedor.createFrom(props.vendedor)
 );
 
 const isEditDialogOpen = ref(false);
@@ -52,12 +52,12 @@ const isDeleteDialogOpen = ref(false);
 
 // --- Handlers ---
 function openEditDialog() {
-  editableProduct.value = backend.Cliente.createFrom(props.cliente);
+  editableProduct.value = backend.Vendedor.createFrom(props.vendedor);
   isEditDialogOpen.value = true;
 }
 
 function openDeleteDialog() {
-  editableProduct.value = backend.Cliente.createFrom(props.cliente);
+  editableProduct.value = backend.Vendedor.createFrom(props.vendedor);
   isEditDialogOpen.value = true;
 }
 
@@ -67,7 +67,7 @@ function handleSaveChanges() {
 }
 
 function handleDeleteConfirm() {
-  emit("delete", props.cliente);
+  emit("delete", props.vendedor);
   isDeleteDialogOpen.value = false; // Ensure dialog closes
 }
 </script>
@@ -87,11 +87,11 @@ function handleDeleteConfirm() {
 
       <!-- FIX: Use @click to programmatically open the correct dialog -->
       <DropdownMenuItem @click="openEditDialog">
-        <span>Editar cliente</span>
+        <span>Editar vendedor</span>
       </DropdownMenuItem>
 
       <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
-        <span>Eliminar cliente</span>
+        <span>Eliminar vendedor</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
@@ -102,9 +102,9 @@ function handleDeleteConfirm() {
   <Dialog v-model:open="isEditDialogOpen">
     <DialogContent class="sm:max-w-[425px]">
       <DialogHeader>
-        <DialogTitle>Editar Cliente</DialogTitle>
+        <DialogTitle>Editar Vendedor</DialogTitle>
         <DialogDescription>
-          Realiza cambios en el cliente aquí. Haz clic en guardar cuando hayas
+          Realiza cambios en el vendedor aquí. Haz clic en guardar cuando hayas
           terminado.
         </DialogDescription>
       </DialogHeader>
@@ -118,10 +118,10 @@ function handleDeleteConfirm() {
           />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="documento" class="text-right">Cédula</Label>
+          <Label for="cedula" class="text-right">Cédula</Label>
           <Input
-            id="documento"
-            v-model="editableProduct.NumeroID"
+            id="cedula"
+            v-model="editableProduct.Cedula"
             class="col-span-3"
           />
         </div>
@@ -151,7 +151,7 @@ function handleDeleteConfirm() {
         <AlertDialogDescription>
           Esta acción no se puede deshacer. Esto eliminará permanentemente el
           producto
-          <span class="font-semibold">{{ props.cliente.Nombre }}</span> de la
+          <span class="font-semibold">{{ props.vendedor.Nombre }}</span> de la
           base de datos.
         </AlertDialogDescription>
       </AlertDialogHeader>

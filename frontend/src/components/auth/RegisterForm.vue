@@ -9,7 +9,7 @@ import { AlertCircle } from "lucide-vue-next"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 import { useAuthStore } from "@/stores/auth";
-import { backend } from "../../wailsjs/go/models";
+import { backend } from "@/../wailsjs/go/models";
 
 const form = ref<backend.Vendedor>({
   Nombre: "",
@@ -124,7 +124,7 @@ const handleRegister = async () => {
         </form>
         <div class="relative hidden bg-muted md:block">
           <img
-            src="../assets/images/Register_luna.png"
+            src="@/assets/images/Register_luna.png"
             alt="Image"
             class="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
           />

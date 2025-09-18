@@ -1,3 +1,31 @@
+<script lang="ts" setup>
+import { computed } from "vue";
+
+const props = defineProps<{
+  show: boolean;
+  message: string;
+  type: "success" | "error";
+}>();
+
+defineEmits(["close"]);
+
+const containerClass = computed(() => {
+  return props.show
+    ? "translate-x-0 opacity-100"
+    : "translate-x-full opacity-0";
+});
+
+const colorClasses = computed(() => {
+  if (props.type === "success") {
+    return "bg-green-100 text-green-800";
+  }
+  if (props.type === "error") {
+    return "bg-red-100 text-red-800";
+  }
+  return "bg-gray-100 text-gray-800";
+});
+</script>
+
 <template>
   <div
     v-if="show"
@@ -55,31 +83,3 @@
     </div>
   </div>
 </template>
-
-<script lang="ts" setup>
-import { computed } from "vue";
-
-const props = defineProps<{
-  show: boolean;
-  message: string;
-  type: "success" | "error";
-}>();
-
-defineEmits(["close"]);
-
-const containerClass = computed(() => {
-  return props.show
-    ? "translate-x-0 opacity-100"
-    : "translate-x-full opacity-0";
-});
-
-const colorClasses = computed(() => {
-  if (props.type === "success") {
-    return "bg-green-100 text-green-800";
-  }
-  if (props.type === "error") {
-    return "bg-red-100 text-red-800";
-  }
-  return "bg-gray-100 text-gray-800";
-});
-</script>

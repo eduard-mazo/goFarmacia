@@ -1,5 +1,16 @@
+<script setup lang="ts">
+import { backend } from "@/../wailsjs/go/models";
+
+defineProps<{
+  factura: backend.Factura | null;
+}>();
+</script>
+
 <template>
-  <div class="w-[116mm] bg-white text-black font-mono text-[20px] leading-tight p-2 box-border" v-if="factura">
+  <div
+    class="w-[116mm] bg-white text-black font-mono text-[20px] leading-tight p-2 box-border"
+    v-if="factura"
+  >
     <div class="text-center">
       <p class="font-bold">goFarmacia</p>
       <p>NIT: 123.456.789-0</p>
@@ -29,9 +40,15 @@
     </table>
     <div class="border-t border-dashed border-black my-1"></div>
     <div class="space-y-1">
-      <p class="flex justify-between"><span>Subtotal:</span> <span>${{ factura.Subtotal.toFixed(2) }}</span></p>
-      <p class="flex justify-between"><span>IVA (19%):</span> <span>${{ factura.IVA.toFixed(2) }}</span></p>
-      <p class="flex justify-between font-bold"><span>Total:</span> <span>${{ factura.Total.toFixed(2) }}</span></p>
+      <p class="flex justify-between">
+        <span>Subtotal:</span> <span>${{ factura.Subtotal.toFixed(2) }}</span>
+      </p>
+      <p class="flex justify-between">
+        <span>IVA (19%):</span> <span>${{ factura.IVA.toFixed(2) }}</span>
+      </p>
+      <p class="flex justify-between font-bold">
+        <span>Total:</span> <span>${{ factura.Total.toFixed(2) }}</span>
+      </p>
     </div>
     <div class="border-t border-dashed border-black my-1"></div>
     <div class="text-center">
@@ -39,11 +56,3 @@
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-import { backend } from "../../wailsjs/go/models";
-
-defineProps<{
-  factura: backend.Factura | null;
-}>();
-</script>

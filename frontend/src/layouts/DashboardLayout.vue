@@ -9,7 +9,7 @@ import {
   SidebarInset,
   SidebarProvider,
 } from '@/components/ui/sidebar'
-import AppSidebar from "@/components/AppSidebar.vue"
+import AppSidebar from "@/components/layout/AppSidebar.vue";
 import { Toaster } from "vue-sonner";
 </script>
 

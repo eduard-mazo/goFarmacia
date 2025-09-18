@@ -31,16 +31,16 @@ import {
 import { Label } from "@/components/ui/label";
 import { Search, Trash2, UserSearch, PlusCircle } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import CrearProductoModal from "@/components/CrearProductoModal.vue";
-import BuscarClienteModal from "@/components/BuscarClienteModal.vue";
+import CrearProductoModal from "@/components/modals/CrearProductoModal.vue";
+import BuscarClienteModal from "@/components/modals/BuscarClienteModal.vue";
 
 // Funciones e interfaces del Backend (generadas por Wails)
 import {
   ObtenerClientesPaginado,
   ObtenerProductosPaginado,
   RegistrarVenta,
-} from "../../../wailsjs/go/backend/Db";
-import { backend } from "../../../wailsjs/go/models";
+} from "@/../wailsjs/go/backend/Db";
+import { backend } from "@/../wailsjs/go/models";
 
 //[INTERFACES]
 interface ItemCarrito extends backend.Producto {
@@ -362,7 +362,7 @@ onUnmounted(() => {
               @keyup.enter="manejarBusquedaConEnter"
               @keydown.down.prevent="moverSeleccion('abajo')"
               @keydown.up.prevent="moverSeleccion('arriba')"
-              class="pl-10 text-lg h-12"
+              class="pl-10 text-lg h-10"
             />
             <div
               v-if="productosEncontrados.length > 0"
@@ -556,7 +556,7 @@ onUnmounted(() => {
           </div>
         </CardContent>
         <CardFooter>
-          <Button @click="finalizarVenta" class="w-full h-12 text-lg">
+          <Button @click="finalizarVenta" class="w-full h-10 text-lg">
             Finalizar Venta (F12)
           </Button>
         </CardFooter>

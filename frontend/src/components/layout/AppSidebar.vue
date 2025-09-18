@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { SidebarProps } from "@/components/ui/sidebar";
 import { Wallet, HandCoins, Users } from "lucide-vue-next";
-import NavMain from "@/components/NavMain.vue";
-import NavUser from "@/components/NavUser.vue";
+import NavMain from "@/components/layout/NavMain.vue";
+import NavUser from "@/components/layout/NavUser.vue";
 import {
   Sidebar,
   SidebarContent,
@@ -12,7 +12,7 @@ import {
 const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: "icon",
 });
-// This is sample data.
+
 const data = {
   navMain: [
     {
@@ -25,10 +25,15 @@ const data = {
           url: "/dashboard/pos",
           icon: HandCoins,
         },
+        {
+          title: "Facturas",
+          url: "/dashboard/facturas",
+          icon: HandCoins,
+        },
       ],
     },
     {
-      title: "Usuarios",
+      title: "Catalogo",
       url: "/dashboard",
       icon: Users,
       items: [
@@ -36,13 +41,31 @@ const data = {
           title: "Productos",
           url: "/dashboard/productos",
         },
+      ],
+    },
+    {
+      title: "Inventario",
+      url: "/dashboard",
+      icon: Users,
+      items: [
         {
-          title: "Vendedores",
-          url: "/dashboard/vendedores",
+          title: "Control de Stock",
+          url: "/dashboard/controlStock",
+        },
+      ],
+    },
+    {
+      title: "Personas",
+      url: "/dashboard",
+      icon: Users,
+      items: [
+        {
+          title: "Información Clientes",
+          url: "/dashboard/clientes",
         },
         {
-          title: "Clientes",
-          url: "/dashboard/clientes",
+          title: "Información Vendedores",
+          url: "/dashboard/vendedores",
         },
       ],
     },

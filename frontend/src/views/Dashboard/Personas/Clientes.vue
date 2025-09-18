@@ -10,13 +10,13 @@ import {
   getSortedRowModel,
   useVueTable,
 } from "@tanstack/vue-table";
-import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
 import {
   Pagination,
   PaginationContent,
@@ -25,10 +25,13 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+
 import { ArrowUpDown, ChevronDown, PlusCircle } from "lucide-vue-next";
 import { h, ref, watch, onMounted, computed } from "vue";
-import { valueUpdater } from "../../utils";
+import { valueUpdater } from "@/utils";
+
 import { Button } from "@/components/ui/button";
+//import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -38,52 +41,70 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import DropdownAction from "../../components/DataTableProductDropDown.vue";
-import CrearProductoModal from "@/components/CrearProductoModal.vue";
-import { backend } from "../../../wailsjs/go/models";
+import DropdownAction from "@/components/tables/DataTableClientDropDown.vue";
+import CrearClienteModal from "@/components/modals/CrearClienteModal.vue";
+import { backend } from "@/../wailsjs/go/models";
 import {
-  ObtenerProductosPaginado,
-  EliminarProducto,
-  ActualizarProducto,
-} from "../../../wailsjs/go/backend/Db";
-import CardContent from "@/components/ui/card/CardContent.vue";
+  ObtenerClientesPaginado,
+  EliminarCliente,
+  ActualizarCliente,
+} from "@/../wailsjs/go/backend/Db";
 
-interface ObtenerProductosPaginadoResponse {
-  Records: backend.Producto[];
+interface ObtenerClientePaginadoResponse {
+  Records: backend.Cliente[];
   TotalRecords: number;
 }
 
 // --- State Management for Data and Pagination ---
-const listaProductos = ref<backend.Producto[]>([]);
-const totalProductos = ref(0);
+const listaClientes = ref<backend.Cliente[]>([]);
+const totalClientes = ref(0);
 const busqueda = ref("");
 const sorting = ref<SortingState>([]);
 const isCreateModalOpen = ref(false); // Estado para el modal
 
 const pagination = ref<PaginationState>({
-  pageIndex: 0,
+  pageIndex: 0, // Corresponds to `paginaActual = 1`
   pageSize: 15,
 });
 
 // --- Data Fetching from Go Backend ---
-const cargarProductos = async () => {
+const cargarClientes = async () => {
   try {
-    const currentPageBackend: number = pagination.value.pageIndex + 1;
-    const response: ObtenerProductosPaginadoResponse =
-      await ObtenerProductosPaginado(
-        currentPageBackend,
+    // The backend expects page number starting from 1, TanStack uses 0-based index.
+    const currentPage: number = pagination.value.pageIndex + 1;
+    const response: ObtenerClientePaginadoResponse =
+      await ObtenerClientesPaginado(
+        currentPage,
         pagination.value.pageSize,
         busqueda.value
       );
-    listaProductos.value = response.Records || [];
-    totalProductos.value = response.TotalRecords || 0;
+    listaClientes.value = response.Records || [];
+    totalClientes.value = response.TotalRecords || 0;
   } catch (error) {
-    console.error(`Error al cargar Productos: ${error}`);
+    console.error(`Error al cargar vendedores: ${error}`);
   }
 };
 
-// --- Column Definitions for Producto ---
-const columns: ColumnDef<backend.Producto>[] = [
+// --- Column Definitions for Cliente ---
+const columns: ColumnDef<backend.Cliente>[] = [
+  /*  {
+    id: "select",
+    header: ({ table }) =>
+      h(Checkbox, {
+        checked: table.getIsAllPageRowsSelected(),
+        "onUpdate:checked": (value: boolean) =>
+          table.toggleAllPageRowsSelected(!!value),
+        ariaLabel: "Select all",
+      }),
+    cell: ({ row }) =>
+      h(Checkbox, {
+        checked: row.getIsSelected(),
+        "onUpdate:checked": (value: boolean) => row.toggleSelected(!!value),
+        ariaLabel: "Select row",
+      }),
+    enableSorting: false,
+    enableHiding: false,
+  },*/
   {
     accessorKey: "Nombre",
     header: ({ column }) => {
@@ -97,25 +118,16 @@ const columns: ColumnDef<backend.Producto>[] = [
       );
     },
     cell: ({ row }) => {
-      return h("div", { class: "capitalize" }, row.getValue("Nombre"));
-    },
-  },
-  {
-    accessorKey: "Codigo",
-    header: ({ column }) => {
+      const cliente = row.original;
       return h(
-        Button,
-        {
-          variant: "ghost",
-          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-        },
-        () => ["Código", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
+        "div",
+        { class: "uppercase" },
+        `${cliente.Nombre} ${cliente.Apellido}`
       );
     },
-    cell: ({ row }) => h("div", row.getValue("Codigo")),
   },
   {
-    accessorKey: "PrecioVenta",
+    accessorKey: "Documento",
     header: ({ column }) => {
       return h(
         Button,
@@ -123,20 +135,20 @@ const columns: ColumnDef<backend.Producto>[] = [
           variant: "ghost",
           onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
         },
-        () => ["Precio Venta", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
+        () => ["Cedula", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       );
     },
     cell: ({ row }) => {
-      const amount = parseFloat(row.getValue("PrecioVenta"));
-      const formatted = new Intl.NumberFormat("es-CO", {
-        style: "currency",
-        currency: "COP",
-      }).format(amount);
-      return h("div", { class: "text-left font-medium" }, formatted);
+      const cliente = row.original;
+      return h(
+        "div",
+        { class: "uppercase" },
+        `${cliente.TipoID} ${cliente.NumeroID}`
+      );
     },
   },
   {
-    accessorKey: "Stock",
+    accessorKey: "Email",
     header: ({ column }) => {
       return h(
         Button,
@@ -144,21 +156,21 @@ const columns: ColumnDef<backend.Producto>[] = [
           variant: "ghost",
           onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
         },
-        () => ["Stock", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
+        () => ["Email", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       );
     },
-    cell: ({ row }) => h("div", row.getValue("Stock")),
+    cell: ({ row }) => h("div", { class: "lowercase" }, row.getValue("Email")),
   },
   {
     id: "actions",
     enableHiding: false,
     cell: ({ row }) => {
-      const producto = row.original;
+      const cliente = row.original;
       return h("div", { class: "relative" }, [
         h(DropdownAction, {
-          producto,
-          onEdit: (p: backend.Producto) => handleEdit(p),
-          onDelete: (p: backend.Producto) => handleDelete(p),
+          cliente,
+          onEdit: (v: backend.Cliente) => handleEdit(v),
+          onDelete: (v: backend.Cliente) => handleDelete(v),
         }),
       ]);
     },
@@ -168,14 +180,14 @@ const columns: ColumnDef<backend.Producto>[] = [
 // --- Table Instance with Server-Side Pagination ---
 const table = useVueTable({
   get data() {
-    return listaProductos.value;
+    return listaClientes.value;
   },
   columns,
   getCoreRowModel: getCoreRowModel(),
   getSortedRowModel: getSortedRowModel(),
   manualPagination: true,
   get pageCount() {
-    return Math.ceil(totalProductos.value / pagination.value.pageSize);
+    return Math.ceil(totalClientes.value / pagination.value.pageSize);
   },
   state: {
     get sorting() {
@@ -198,6 +210,7 @@ const table = useVueTable({
 // --- Computed properties for Pagination ---
 const pageCount = computed(() => table.getPageCount());
 
+// Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
 const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => {
@@ -206,62 +219,70 @@ const currentPage = computed({
 });
 
 // --- Action Handlers ---
-async function handleEdit(producto: backend.Producto) {
+async function handleEdit(cliente: backend.Cliente) {
   try {
-    await ActualizarProducto(producto);
-    await cargarProductos();
+    await ActualizarCliente(cliente);
+    await cargarClientes();
   } catch (error) {
-    console.error(`Error al actualizar el producto: ${error}`);
+    console.error(`Error al actualizar el VendeActualizarcliente: ${error}`);
   }
 }
 
-async function handleDelete(producto: backend.Producto) {
-  try {
-    await EliminarProducto(producto.id);
-    await cargarProductos();
-  } catch (error) {
-    console.error(`Error al eliminar el producto: ${error}`);
+async function handleDelete(cliente: backend.Cliente) {
+  console.log("Delete:", cliente);
+  if (confirm(`Are you sure you want to delete ${cliente.Nombre}?`)) {
+    try {
+      await EliminarCliente(cliente.id);
+      await cargarClientes();
+      alert("Vendedor eliminado con éxito.");
+    } catch (error) {
+      console.error(`Error al eliminar cliente: ${error}`);
+      alert(`Failed to delete cliente: ${error}`);
+    }
   }
 }
 
 // NUEVA FUNCIÓN: Maneja el evento del modal, simplemente recarga la lista
-function handleProductCreated() {
-  cargarProductos();
+function handleClienteCreated() {
+  cargarClientes();
 }
 
 // --- Lifecycle and Watchers ---
-onMounted(cargarProductos);
-watch(pagination, cargarProductos, { deep: true });
+onMounted(cargarClientes);
 
+// Watch for pagination changes and fetch data immediately
+watch(pagination, cargarClientes, { deep: true });
+
+// Debounce search input to avoid excessive API calls
 let debounceTimer: number;
 watch(busqueda, () => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     if (pagination.value.pageIndex !== 0) {
-      table.setPageIndex(0);
+      pagination.value.pageIndex = 0;
     } else {
-      cargarProductos();
+      cargarClientes();
     }
   }, 300);
 });
 </script>
 
 <template>
-  <CrearProductoModal
+  <CrearClienteModal
     v-model:open="isCreateModalOpen"
-    @product-created="handleProductCreated"
+    @product-created="handleClienteCreated"
   />
   <div class="w-full">
     <div class="flex items-center py-4 gap-2">
       <Input
         class="max-w-sm h-10"
-        placeholder="Buscar por nombre o código..."
+        placeholder="Buscar por nombre, apellido, cédula..."
         :model-value="busqueda"
         @update:model-value="busqueda = String($event)"
       />
       <Button @click="isCreateModalOpen = true" class="h-10">
         <PlusCircle class="w-4 h-4 mr-2" />
-        Agregar Producto
+        Agregar Cliente
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
@@ -289,7 +310,7 @@ watch(busqueda, () => {
       </DropdownMenu>
     </div>
 
-    <Card class="py-0">
+    <div class="rounded-md border">
       <Table>
         <TableHeader>
           <TableRow
@@ -323,39 +344,41 @@ watch(busqueda, () => {
           </TableRow>
         </TableBody>
       </Table>
-    </Card>
+    </div>
     <div class="flex items-center justify-between space-x-2 py-4">
-      <Pagination
-        v-if="pageCount > 1"
-        v-model:page="currentPage"
-        :total="totalProductos"
-        :items-per-page="pagination.pageSize"
-        :sibling-count="1"
-        show-edges
-      >
-        <PaginationContent v-slot="{ items }">
-          <PaginationPrevious />
+      <div class="space-x-2">
+        <Pagination
+          v-if="pageCount > 1"
+          v-model:page="currentPage"
+          :total="totalClientes"
+          :items-per-page="pagination.pageSize"
+          :sibling-count="1"
+          show-edges
+        >
+          <PaginationContent v-slot="{ items }">
+            <PaginationPrevious />
 
-          <template v-for="(item, index) in items">
-            <PaginationItem
-              v-if="item.type === 'page'"
-              :key="index"
-              :value="item.value"
-              as-child
-            >
-              <Button
-                class="w-10 h-10 p-0"
-                :variant="item.value === currentPage ? 'default' : 'outline'"
+            <template v-for="(item, index) in items">
+              <PaginationItem
+                v-if="item.type === 'page'"
+                :key="index"
+                :value="item.value"
+                as-child
               >
-                {{ item.value }}
-              </Button>
-            </PaginationItem>
-            <PaginationEllipsis v-else :key="item.type" :index="index" />
-          </template>
+                <Button
+                  class="w-10 h-10 p-0"
+                  :variant="item.value === currentPage ? 'default' : 'outline'"
+                >
+                  {{ item.value }}
+                </Button>
+              </PaginationItem>
+              <PaginationEllipsis v-else :key="item.type" :index="index" />
+            </template>
 
-          <PaginationNext />
-        </PaginationContent>
-      </Pagination>
+            <PaginationNext />
+          </PaginationContent>
+        </Pagination>
+      </div>
     </div>
   </div>
 </template>

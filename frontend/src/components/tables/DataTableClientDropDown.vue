@@ -30,21 +30,21 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { backend } from "../../wailsjs/go/models";
+import { backend } from "@/../wailsjs/go/models";
 
-// --- Props and Emits ---
+// Define props to accept a Cliente object
 const props = defineProps<{
-  producto: backend.Producto;
+  cliente: backend.Cliente;
 }>();
 
 const emit = defineEmits<{
-  (e: "edit", value: backend.Producto): void;
-  (e: "delete", value: backend.Producto): void;
+  (e: "edit", value: backend.Cliente): void;
+  (e: "delete", value: backend.Cliente): void;
 }>();
 
 // --- State for Dialogs ---
-const editableProduct = ref<backend.Producto>(
-  backend.Producto.createFrom(props.producto)
+const editableProduct = ref<backend.Cliente>(
+  backend.Cliente.createFrom(props.cliente)
 );
 
 const isEditDialogOpen = ref(false);
@@ -52,13 +52,13 @@ const isDeleteDialogOpen = ref(false);
 
 // --- Handlers ---
 function openEditDialog() {
-  editableProduct.value = backend.Producto.createFrom(props.producto);
+  editableProduct.value = backend.Cliente.createFrom(props.cliente);
   isEditDialogOpen.value = true;
 }
 
 function openDeleteDialog() {
-  editableProduct.value = backend.Producto.createFrom(props.producto);
-  isDeleteDialogOpen.value = true;
+  editableProduct.value = backend.Cliente.createFrom(props.cliente);
+  isEditDialogOpen.value = true;
 }
 
 function handleSaveChanges() {
@@ -67,12 +67,13 @@ function handleSaveChanges() {
 }
 
 function handleDeleteConfirm() {
-  emit("delete", props.producto);
+  emit("delete", props.cliente);
   isDeleteDialogOpen.value = false; // Ensure dialog closes
 }
 </script>
 
 <template>
+  <!-- The DropdownMenu now only controls showing the menu items -->
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
       <Button variant="ghost" class="w-8 h-8 p-0">
@@ -84,22 +85,26 @@ function handleDeleteConfirm() {
       <DropdownMenuLabel>Acciones</DropdownMenuLabel>
       <DropdownMenuSeparator />
 
+      <!-- FIX: Use @click to programmatically open the correct dialog -->
       <DropdownMenuItem @click="openEditDialog">
-        <span>Editar producto</span>
+        <span>Editar cliente</span>
       </DropdownMenuItem>
 
       <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
-        <span>Eliminar producto</span>
+        <span>Eliminar cliente</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
 
+  <!-- FIX: Dialog components are now siblings, not nested -->
+
+  <!-- Edit Product Dialog -->
   <Dialog v-model:open="isEditDialogOpen">
     <DialogContent class="sm:max-w-[425px]">
       <DialogHeader>
-        <DialogTitle>Editar Producto</DialogTitle>
+        <DialogTitle>Editar Cliente</DialogTitle>
         <DialogDescription>
-          Realiza cambios en el producto aquí. Haz clic en guardar cuando hayas
+          Realiza cambios en el cliente aquí. Haz clic en guardar cuando hayas
           terminado.
         </DialogDescription>
       </DialogHeader>
@@ -113,48 +118,40 @@ function handleDeleteConfirm() {
           />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="code" class="text-right">Código</Label>
+          <Label for="documento" class="text-right">Cédula</Label>
           <Input
-            id="code"
-            v-model="editableProduct.Codigo"
+            id="documento"
+            v-model="editableProduct.NumeroID"
             class="col-span-3"
           />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="price" class="text-right">Precio Venta</Label>
+          <Label for="email" class="text-right">Email</Label>
           <Input
-            id="price"
-            type="number"
-            v-model.number="editableProduct.PrecioVenta"
-            class="col-span-3"
-          />
-        </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="stock" class="text-right">Stock</Label>
-          <Input
-            id="stock"
-            type="number"
-            v-model.number="editableProduct.Stock"
+            id="email"
+            type="email"
+            v-model.number="editableProduct.Email"
             class="col-span-3"
           />
         </div>
       </div>
       <DialogFooter>
-        <Button variant="destructive" type="submit" @click="handleSaveChanges"
+        <Button type="submit" @click="handleSaveChanges"
           >Guardar cambios</Button
         >
       </DialogFooter>
     </DialogContent>
   </Dialog>
 
+  <!-- Delete Confirmation Dialog -->
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>¿Estás absolutely seguro?</AlertDialogTitle>
+        <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
         <AlertDialogDescription>
           Esta acción no se puede deshacer. Esto eliminará permanentemente el
           producto
-          <span class="font-semibold">{{ props.producto.Nombre }}</span> de la
+          <span class="font-semibold">{{ props.cliente.Nombre }}</span> de la
           base de datos.
         </AlertDialogDescription>
       </AlertDialogHeader>

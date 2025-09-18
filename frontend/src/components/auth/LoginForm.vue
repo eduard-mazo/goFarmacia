@@ -102,7 +102,7 @@ const handleLogin = async () => {
         </form>
         <div class="relative hidden bg-muted md:block">
           <img
-            src="../assets/images/Login_luna.png"
+            src="@/assets/images/Login_luna.png"
             alt="Image"
             class="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
           />

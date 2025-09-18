@@ -26,9 +26,9 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 
-import { ArrowUpDown, ChevronDown, PlusCircle } from "lucide-vue-next";
+import { ArrowUpDown, ChevronDown } from "lucide-vue-next";
 import { h, ref, watch, onMounted, computed } from "vue";
-import { valueUpdater } from "../../utils";
+import { valueUpdater } from "@/utils";
 
 import { Button } from "@/components/ui/button";
 //import { Checkbox } from "@/components/ui/checkbox";
@@ -41,26 +41,24 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import DropdownAction from "../../components/DataTableClientDropDown.vue";
-import CrearClienteModal from "@/components/CrearClienteModal.vue";
-import { backend } from "../../../wailsjs/go/models";
+import DropdownAction from "@/components/tables/DataTableDropDown.vue"; // Adjusted path if needed
+import { backend } from "@/../wailsjs/go/models";
 import {
-  ObtenerClientesPaginado,
-  EliminarCliente,
-  ActualizarCliente,
-} from "../../../wailsjs/go/backend/Db";
+  ObtenerVendedoresPaginado,
+  EliminarVendedor,
+  ActualizarVendedor,
+} from "@/../wailsjs/go/backend/Db";
 
-interface ObtenerClientePaginadoResponse {
-  Records: backend.Cliente[];
+interface ObtenerVendedoresPaginadoResponse {
+  Records: backend.Vendedor[];
   TotalRecords: number;
 }
 
 // --- State Management for Data and Pagination ---
-const listaClientes = ref<backend.Cliente[]>([]);
-const totalClientes = ref(0);
+const listaVendedores = ref<backend.Vendedor[]>([]);
+const totalVendedores = ref(0);
 const busqueda = ref("");
 const sorting = ref<SortingState>([]);
-const isCreateModalOpen = ref(false); // Estado para el modal
 
 const pagination = ref<PaginationState>({
   pageIndex: 0, // Corresponds to `paginaActual = 1`
@@ -68,25 +66,26 @@ const pagination = ref<PaginationState>({
 });
 
 // --- Data Fetching from Go Backend ---
-const cargarClientes = async () => {
+const cargarVendedores = async () => {
   try {
     // The backend expects page number starting from 1, TanStack uses 0-based index.
     const currentPage: number = pagination.value.pageIndex + 1;
-    const response: ObtenerClientePaginadoResponse =
-      await ObtenerClientesPaginado(
+    const response: ObtenerVendedoresPaginadoResponse =
+      await ObtenerVendedoresPaginado(
         currentPage,
         pagination.value.pageSize,
         busqueda.value
       );
-    listaClientes.value = response.Records || [];
-    totalClientes.value = response.TotalRecords || 0;
+    listaVendedores.value = response.Records || [];
+    totalVendedores.value = response.TotalRecords || 0;
   } catch (error) {
     console.error(`Error al cargar vendedores: ${error}`);
+    // Here you can add a user-facing notification
   }
 };
 
-// --- Column Definitions for Cliente ---
-const columns: ColumnDef<backend.Cliente>[] = [
+// --- Column Definitions for Vendedor ---
+const columns: ColumnDef<backend.Vendedor>[] = [
   /*  {
     id: "select",
     header: ({ table }) =>
@@ -118,16 +117,16 @@ const columns: ColumnDef<backend.Cliente>[] = [
       );
     },
     cell: ({ row }) => {
-      const cliente = row.original;
+      const vendedor = row.original;
       return h(
         "div",
         { class: "uppercase" },
-        `${cliente.Nombre} ${cliente.Apellido}`
+        `${vendedor.Nombre} ${vendedor.Apellido}`
       );
     },
   },
   {
-    accessorKey: "Documento",
+    accessorKey: "Cedula",
     header: ({ column }) => {
       return h(
         Button,
@@ -138,14 +137,7 @@ const columns: ColumnDef<backend.Cliente>[] = [
         () => ["Cedula", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       );
     },
-    cell: ({ row }) => {
-      const cliente = row.original;
-      return h(
-        "div",
-        { class: "uppercase" },
-        `${cliente.TipoID} ${cliente.NumeroID}`
-      );
-    },
+    cell: ({ row }) => h("div", row.getValue("Cedula")),
   },
   {
     accessorKey: "Email",
@@ -165,12 +157,12 @@ const columns: ColumnDef<backend.Cliente>[] = [
     id: "actions",
     enableHiding: false,
     cell: ({ row }) => {
-      const cliente = row.original;
+      const vendedor = row.original;
       return h("div", { class: "relative" }, [
         h(DropdownAction, {
-          cliente,
-          onEdit: (v: backend.Cliente) => handleEdit(v),
-          onDelete: (v: backend.Cliente) => handleDelete(v),
+          vendedor,
+          onEdit: (v: backend.Vendedor) => handleEdit(v),
+          onDelete: (v: backend.Vendedor) => handleDelete(v),
         }),
       ]);
     },
@@ -180,14 +172,14 @@ const columns: ColumnDef<backend.Cliente>[] = [
 // --- Table Instance with Server-Side Pagination ---
 const table = useVueTable({
   get data() {
-    return listaClientes.value;
+    return listaVendedores.value;
   },
   columns,
   getCoreRowModel: getCoreRowModel(),
   getSortedRowModel: getSortedRowModel(),
   manualPagination: true,
   get pageCount() {
-    return Math.ceil(totalClientes.value / pagination.value.pageSize);
+    return Math.ceil(totalVendedores.value / pagination.value.pageSize);
   },
   state: {
     get sorting() {
@@ -210,7 +202,7 @@ const table = useVueTable({
 // --- Computed properties for Pagination ---
 const pageCount = computed(() => table.getPageCount());
 
-// Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
+// 🌉 Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
 const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => {
@@ -219,39 +211,34 @@ const currentPage = computed({
 });
 
 // --- Action Handlers ---
-async function handleEdit(cliente: backend.Cliente) {
+async function handleEdit(vendedor: backend.Vendedor) {
   try {
-    await ActualizarCliente(cliente);
-    await cargarClientes();
+    await ActualizarVendedor(vendedor);
+    await cargarVendedores();
   } catch (error) {
-    console.error(`Error al actualizar el VendeActualizarcliente: ${error}`);
+    console.error(`Error al actualizar el VendeActualizarVendedor: ${error}`);
   }
 }
 
-async function handleDelete(cliente: backend.Cliente) {
-  console.log("Delete:", cliente);
-  if (confirm(`Are you sure you want to delete ${cliente.Nombre}?`)) {
+async function handleDelete(vendedor: backend.Vendedor) {
+  console.log("Delete:", vendedor);
+  if (confirm(`Are you sure you want to delete ${vendedor.Nombre}?`)) {
     try {
-      await EliminarCliente(cliente.id);
-      await cargarClientes();
+      await EliminarVendedor(vendedor.id);
+      await cargarVendedores();
       alert("Vendedor eliminado con éxito.");
     } catch (error) {
-      console.error(`Error al eliminar cliente: ${error}`);
-      alert(`Failed to delete cliente: ${error}`);
+      console.error(`Error al eliminar vendedor: ${error}`);
+      alert(`Failed to delete vendedor: ${error}`);
     }
   }
 }
 
-// NUEVA FUNCIÓN: Maneja el evento del modal, simplemente recarga la lista
-function handleClienteCreated() {
-  cargarClientes();
-}
-
 // --- Lifecycle and Watchers ---
-onMounted(cargarClientes);
+onMounted(cargarVendedores);
 
 // Watch for pagination changes and fetch data immediately
-watch(pagination, cargarClientes, { deep: true });
+watch(pagination, cargarVendedores, { deep: true });
 
 // Debounce search input to avoid excessive API calls
 let debounceTimer: number;
@@ -261,17 +248,13 @@ watch(busqueda, () => {
     if (pagination.value.pageIndex !== 0) {
       pagination.value.pageIndex = 0;
     } else {
-      cargarClientes();
+      cargarVendedores();
     }
   }, 300);
 });
 </script>
 
 <template>
-  <CrearClienteModal
-    v-model:open="isCreateModalOpen"
-    @product-created="handleClienteCreated"
-  />
   <div class="w-full">
     <div class="flex items-center py-4 gap-2">
       <Input
@@ -280,10 +263,6 @@ watch(busqueda, () => {
         :model-value="busqueda"
         @update:model-value="busqueda = String($event)"
       />
-      <Button @click="isCreateModalOpen = true" class="h-10">
-        <PlusCircle class="w-4 h-4 mr-2" />
-        Agregar Cliente
-      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <Button variant="outline" class="ml-auto h-10">
@@ -345,12 +324,12 @@ watch(busqueda, () => {
         </TableBody>
       </Table>
     </div>
-    <div class="flex items-center justify-between space-x-2 py-4">
+    <div class="flex items-center justify-end space-x-2 py-4">
       <div class="space-x-2">
         <Pagination
           v-if="pageCount > 1"
           v-model:page="currentPage"
-          :total="totalClientes"
+          :total="totalVendedores"
           :items-per-page="pagination.pageSize"
           :sibling-count="1"
           show-edges
