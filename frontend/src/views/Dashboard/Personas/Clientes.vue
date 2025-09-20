@@ -31,7 +31,6 @@ import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "@/utils";
 
 import { Button } from "@/components/ui/button";
-//import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -49,6 +48,7 @@ import {
   EliminarCliente,
   ActualizarCliente,
 } from "@/../wailsjs/go/backend/Db";
+import { toast } from "vue-sonner";
 
 interface ObtenerClientePaginadoResponse {
   Records: backend.Cliente[];
@@ -81,30 +81,13 @@ const cargarClientes = async () => {
     listaClientes.value = response.Records || [];
     totalClientes.value = response.TotalRecords || 0;
   } catch (error) {
-    console.error(`Error al cargar vendedores: ${error}`);
+    console.error(`Error al cargar clientes: ${error}`);
+    toast.error("Error al cargar clientes", { description: `${error}` });
   }
 };
 
 // --- Column Definitions for Cliente ---
 const columns: ColumnDef<backend.Cliente>[] = [
-  /*  {
-    id: "select",
-    header: ({ table }) =>
-      h(Checkbox, {
-        checked: table.getIsAllPageRowsSelected(),
-        "onUpdate:checked": (value: boolean) =>
-          table.toggleAllPageRowsSelected(!!value),
-        ariaLabel: "Select all",
-      }),
-    cell: ({ row }) =>
-      h(Checkbox, {
-        checked: row.getIsSelected(),
-        "onUpdate:checked": (value: boolean) => row.toggleSelected(!!value),
-        ariaLabel: "Select row",
-      }),
-    enableSorting: false,
-    enableHiding: false,
-  },*/
   {
     accessorKey: "Nombre",
     header: ({ column }) => {
@@ -128,16 +111,7 @@ const columns: ColumnDef<backend.Cliente>[] = [
   },
   {
     accessorKey: "Documento",
-    header: ({ column }) => {
-      return h(
-        Button,
-        {
-          variant: "ghost",
-          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-        },
-        () => ["Cedula", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
-      );
-    },
+    header: "Documento",
     cell: ({ row }) => {
       const cliente = row.original;
       return h(
@@ -149,16 +123,7 @@ const columns: ColumnDef<backend.Cliente>[] = [
   },
   {
     accessorKey: "Email",
-    header: ({ column }) => {
-      return h(
-        Button,
-        {
-          variant: "ghost",
-          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-        },
-        () => ["Email", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
-      );
-    },
+    header: "Email",
     cell: ({ row }) => h("div", { class: "lowercase" }, row.getValue("Email")),
   },
   {
@@ -210,7 +175,6 @@ const table = useVueTable({
 // --- Computed properties for Pagination ---
 const pageCount = computed(() => table.getPageCount());
 
-// Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
 const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => {
@@ -222,27 +186,29 @@ const currentPage = computed({
 async function handleEdit(cliente: backend.Cliente) {
   try {
     await ActualizarCliente(cliente);
+    toast.success("Cliente actualizado", {
+      description: `Los datos de ${cliente.Nombre} han sido guardados.`,
+    });
     await cargarClientes();
   } catch (error) {
-    console.error(`Error al actualizar el VendeActualizarcliente: ${error}`);
+    console.error(`Error al actualizar el cliente: ${error}`);
+    toast.error("Error al actualizar", { description: `${error}` });
   }
 }
 
 async function handleDelete(cliente: backend.Cliente) {
-  console.log("Delete:", cliente);
-  if (confirm(`Are you sure you want to delete ${cliente.Nombre}?`)) {
+  if (confirm(`¿Estás seguro de que quieres eliminar a ${cliente.Nombre}?`)) {
     try {
       await EliminarCliente(cliente.id);
       await cargarClientes();
-      alert("Vendedor eliminado con éxito.");
+      toast.success("Cliente eliminado con éxito.");
     } catch (error) {
       console.error(`Error al eliminar cliente: ${error}`);
-      alert(`Failed to delete cliente: ${error}`);
+      toast.error("Error al eliminar", { description: `${error}` });
     }
   }
 }
 
-// NUEVA FUNCIÓN: Maneja el evento del modal, simplemente recarga la lista
 function handleClienteCreated() {
   cargarClientes();
 }
@@ -250,10 +216,8 @@ function handleClienteCreated() {
 // --- Lifecycle and Watchers ---
 onMounted(cargarClientes);
 
-// Watch for pagination changes and fetch data immediately
 watch(pagination, cargarClientes, { deep: true });
 
-// Debounce search input to avoid excessive API calls
 let debounceTimer: number;
 watch(busqueda, () => {
   clearTimeout(debounceTimer);
@@ -270,13 +234,13 @@ watch(busqueda, () => {
 <template>
   <CrearClienteModal
     v-model:open="isCreateModalOpen"
-    @product-created="handleClienteCreated"
+    @client-created="handleClienteCreated"
   />
   <div class="w-full">
     <div class="flex items-center py-4 gap-2">
       <Input
         class="max-w-sm h-10"
-        placeholder="Buscar por nombre, apellido, cédula..."
+        placeholder="Buscar por nombre, documento, email..."
         :model-value="busqueda"
         @update:model-value="busqueda = String($event)"
       />
@@ -298,11 +262,7 @@ watch(busqueda, () => {
             :key="column.id"
             class="capitalize"
             :model-value="column.getIsVisible()"
-            @update:model-value="
-              (value) => {
-                column.toggleVisibility(!!value);
-              }
-            "
+            @update:model-value="(value) => column.toggleVisibility(!!value)"
           >
             {{ column.id }}
           </DropdownMenuCheckboxItem>

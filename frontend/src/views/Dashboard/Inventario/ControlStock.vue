@@ -1,79 +1,269 @@
+<script setup lang="ts">
+import type {
+  ColumnDef,
+  PaginationState,
+  SortingState,
+} from "@tanstack/vue-table";
+import {
+  FlexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  useVueTable,
+} from "@tanstack/vue-table";
+import { h, ref, watch, onMounted, computed } from "vue";
+import { valueUpdater } from "@/utils";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import { ArrowUpDown, Edit } from "lucide-vue-next";
+
+import { backend } from "@/../wailsjs/go/models";
+import { ObtenerProductosPaginado } from "@/../wailsjs/go/backend/Db";
+import { toast } from "vue-sonner";
+import AjustarStockModal from "@/components/modals/AjustarStockModal.vue";
+
+interface ObtenerProductosPaginadoResponse {
+  Records: backend.Producto[];
+  TotalRecords: number;
+}
+
+// --- State Management ---
+const listaProductos = ref<backend.Producto[]>([]);
+const totalProductos = ref(0);
+const busqueda = ref("");
+const sorting = ref<SortingState>([]);
+const isAdjustModalOpen = ref(false);
+const productoSeleccionado = ref<backend.Producto | null>(null);
+
+const pagination = ref<PaginationState>({
+  pageIndex: 0,
+  pageSize: 15,
+});
+
+// --- Data Fetching ---
+const cargarProductos = async () => {
+  try {
+    const currentPage = pagination.value.pageIndex + 1;
+    const response: ObtenerProductosPaginadoResponse =
+      await ObtenerProductosPaginado(
+        currentPage,
+        pagination.value.pageSize,
+        busqueda.value
+      );
+    listaProductos.value = response.Records || [];
+    totalProductos.value = response.TotalRecords || 0;
+  } catch (error) {
+    console.error(`Error al cargar productos: ${error}`);
+    toast.error("Error al cargar productos", { description: `${error}` });
+  }
+};
+
+// --- Column Definitions ---
+const columns: ColumnDef<backend.Producto>[] = [
+  { accessorKey: "Codigo", header: "Código" },
+  { accessorKey: "Nombre", header: "Nombre" },
+  {
+    accessorKey: "PrecioVenta",
+    header: "Precio Venta",
+    cell: ({ row }) => {
+      const amount = parseFloat(row.getValue("PrecioVenta"));
+      const formatted = new Intl.NumberFormat("es-CO", {
+        style: "currency",
+        currency: "COP",
+      }).format(amount);
+      return h("div", { class: "text-right font-medium" }, formatted);
+    },
+  },
+  {
+    accessorKey: "Stock",
+    header: ({ column }) =>
+      h(
+        Button,
+        {
+          variant: "ghost",
+          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
+        },
+        () => ["Stock", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
+      ),
+    cell: ({ row }) => {
+      const stock = row.getValue("Stock") as number;
+      let stockClass = "";
+      if (stock <= 5) stockClass = "text-red-500 font-bold";
+      else if (stock <= 10) stockClass = "text-yellow-500 font-bold";
+      return h("div", { class: `text-center ${stockClass}` }, stock);
+    },
+  },
+  {
+    id: "actions",
+    cell: ({ row }) => {
+      const producto = row.original;
+      return h(
+        Button,
+        {
+          variant: "outline",
+          size: "sm",
+          onClick: () => handleOpenAdjustModal(producto),
+        },
+        [h(Edit, { class: "w-4 h-4 mr-2" }), "Ajustar"]
+      );
+    },
+  },
+];
+
+// --- Table Instance ---
+const table = useVueTable({
+  get data() {
+    return listaProductos.value;
+  },
+  columns,
+  getCoreRowModel: getCoreRowModel(),
+  getSortedRowModel: getSortedRowModel(),
+  manualPagination: true,
+  get pageCount() {
+    return Math.ceil(totalProductos.value / pagination.value.pageSize);
+  },
+  state: {
+    get sorting() {
+      return sorting.value;
+    },
+    get pagination() {
+      return pagination.value;
+    },
+  },
+  onPaginationChange: (updater) => valueUpdater(updater, pagination),
+  onSortingChange: (updater) => valueUpdater(updater, sorting),
+});
+
+// --- Computed & Watchers ---
+const pageCount = computed(() => table.getPageCount());
+const currentPage = computed({
+  get: () => pagination.value.pageIndex + 1,
+  set: (newPage) => table.setPageIndex(newPage - 1),
+});
+
+onMounted(cargarProductos);
+watch(pagination, cargarProductos, { deep: true });
+
+let debounceTimer: number;
+watch(busqueda, () => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    pagination.value.pageIndex = 0;
+    cargarProductos();
+  }, 300);
+});
+
+// --- Action Handlers ---
+function handleOpenAdjustModal(producto: backend.Producto) {
+  productoSeleccionado.value = producto;
+  isAdjustModalOpen.value = true;
+}
+
+async function handleStockUpdated() {
+  await cargarProductos();
+  productoSeleccionado.value = null;
+}
+</script>
+
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gray-100">
-    <div class="max-w-md w-full bg-white p-8 rounded-lg shadow-lg">
-      <h2 class="text-2xl font-bold text-center text-gray-800 mb-6">
-        Iniciar Sesión
-      </h2>
-      <form @submit.prevent="handleLogin">
-        <div class="mb-4">
-          <label for="cedula" class="block text-gray-700 text-sm font-bold mb-2"
-            >Cédula</label
+  <AjustarStockModal
+    v-if="productoSeleccionado"
+    v-model:open="isAdjustModalOpen"
+    :producto="productoSeleccionado"
+    @stock-updated="handleStockUpdated"
+  />
+
+  <div class="w-full">
+    <h1 class="text-2xl font-semibold mb-4">Control de Stock</h1>
+    <div class="flex items-center py-4">
+      <Input
+        class="max-w-sm h-10"
+        placeholder="Buscar por nombre o código..."
+        v-model="busqueda"
+      />
+    </div>
+
+    <div class="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow
+            v-for="headerGroup in table.getHeaderGroups()"
+            :key="headerGroup.id"
           >
-          <input
-            v-model="credenciales.Cedula"
-            type="text"
-            id="cedula"
-            class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            required
-          />
-        </div>
-        <div class="mb-6">
-          <label
-            for="password"
-            class="block text-gray-700 text-sm font-bold mb-2"
-            >Contraseña</label
-          >
-          <input
-            v-model="credenciales.Contrasena"
-            type="password"
-            id="password"
-            class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline"
-            required
-          />
-        </div>
-        <p v-if="errorMsg" class="text-red-500 text-xs italic mb-4">
-          {{ errorMsg }}
-        </p>
-        <div class="flex items-center justify-between">
-          <button
-            type="submit"
-            class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full"
-          >
-            Ingresar
-          </button>
-        </div>
-      </form>
+            <TableHead v-for="header in headerGroup.headers" :key="header.id">
+              <FlexRender
+                v-if="!header.isPlaceholder"
+                :render="header.column.columnDef.header"
+                :props="header.getContext()"
+              />
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <template v-if="table.getRowModel().rows?.length">
+            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
+              <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
+                <FlexRender
+                  :render="cell.column.columnDef.cell"
+                  :props="cell.getContext()"
+                />
+              </TableCell>
+            </TableRow>
+          </template>
+          <TableRow v-else>
+            <TableCell :colspan="columns.length" class="h-24 text-center">
+              No se encontraron productos.
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    </div>
+    <div class="flex items-center justify-end space-x-2 py-4">
+      <Pagination
+        v-if="pageCount > 1"
+        v-model:page="currentPage"
+        :total="totalProductos"
+        :items-per-page="pagination.pageSize"
+        :sibling-count="1"
+        show-edges
+      >
+        <PaginationContent v-slot="{ items }">
+          <PaginationPrevious />
+          <template v-for="(item, index) in items">
+            <PaginationItem
+              v-if="item.type === 'page'"
+              :key="index"
+              :value="item.value"
+              as-child
+            >
+              <Button
+                class="w-10 h-10 p-0"
+                :variant="item.value === currentPage ? 'default' : 'outline'"
+              >
+                {{ item.value }}
+              </Button>
+            </PaginationItem>
+            <PaginationEllipsis v-else :key="item.type" :index="index" />
+          </template>
+          <PaginationNext />
+        </PaginationContent>
+      </Pagination>
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { useAuthStore } from "../../../stores/auth";
-import { backend } from "../../../../wailsjs/go/models";
-import { RegistrarVendedor } from "../../../../wailsjs/go/backend/Db";
-
-const vendedor = ref(new backend.Vendedor());
-const authStore = useAuthStore();
-const credenciales = ref(new backend.LoginRequest());
-const errorMsg = ref("");
-onMounted(() => {
-  async () => {
-    try {
-      let resultado: string;
-      resultado = await RegistrarVendedor(vendedor.value);
-      alert(resultado);
-    } catch (error) {
-      alert(`Error al guardar vendedor: ${error}`);
-    }
-  };
-});
-const handleLogin = async () => {
-  errorMsg.value = "";
-  try {
-    await authStore.login(credenciales.value);
-  } catch (error) {
-    errorMsg.value = String(error) || "Credenciales inválidas.";
-  }
-};
-</script>

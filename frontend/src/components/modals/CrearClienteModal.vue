@@ -11,32 +11,35 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "vue-sonner";
 import { RegistrarCliente } from "@/../wailsjs/go/backend/Db";
 import { backend } from "@/../wailsjs/go/models";
 
-// Props para controlar el modal y pre-rellenar el código
 const props = defineProps<{
   open: boolean;
 }>();
 
-// Eventos para comunicar el resultado al componente padre
 const emit = defineEmits(["update:open", "client-created"]);
 
-// Estado del formulario
 const cliente = ref(new backend.Cliente());
 const isLoading = ref(false);
+const tiposDocumento = ["CC", "CE", "NIT", "PASAPORTE"];
 
-// Sincronizar el código inicial cuando el modal se abre
 watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      // Resetear el formulario al abrir
       cliente.value = new backend.Cliente({
         Nombre: "",
         Apellido: "",
-        TipoID: "CC", // Valor por defecto
+        TipoID: "CC", // --- CORRECCIÓN: Valor por defecto para el dropdown
         NumeroID: "",
         Telefono: "",
         Direccion: "",
@@ -47,14 +50,9 @@ watch(
 );
 
 async function handleSubmit() {
-  if (
-    !cliente.value.Nombre ||
-    !cliente.value.Email ||
-    !cliente.value.NumeroID
-  ) {
+  if (!cliente.value.Nombre || !cliente.value.NumeroID) {
     toast.error("Campos requeridos", {
-      description:
-        "El nombre, número de documento y el Email son obligatorios.",
+      description: "El nombre y el número de documento son obligatorios.",
     });
     return;
   }
@@ -107,12 +105,20 @@ async function handleSubmit() {
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="tipoId" class="text-right">Tipo ID</Label>
-          <Input
-            id="tipoId"
-            v-model="cliente.TipoID"
-            class="col-span-3 h-10"
-            placeholder="CC, NIT, CE..."
-          />
+          <Select v-model="cliente.TipoID">
+            <SelectTrigger class="col-span-3 h-10">
+              <SelectValue placeholder="Seleccione un tipo" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="tipo in tiposDocumento"
+                :key="tipo"
+                :value="tipo"
+              >
+                {{ tipo }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="numeroId" class="text-right">Número ID</Label>
