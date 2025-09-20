@@ -67,13 +67,16 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 		return response, fmt.Errorf("no se pudo generar el token: %w", err)
 	}
 
-	vendedor.Contrasena = ""
-	response = LoginResponse{Token: tokenString, Vendedor: vendedor}
-
+	// --- INICIO DE LA CORRECCIÓN: Sincronizar antes de limpiar la contraseña ---
 	// Si el login fue exitoso contra la BD remota, actualizamos la cache local.
 	if d.isRemoteDBAvailable() {
 		go d.syncVendedorToLocal(vendedor)
 	}
+
+	// Ahora, con la sincronización en camino, limpiamos la contraseña para la respuesta del frontend.
+	vendedor.Contrasena = ""
+	response = LoginResponse{Token: tokenString, Vendedor: vendedor}
+
 	return response, nil
 }
 
