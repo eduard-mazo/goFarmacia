@@ -83,22 +83,37 @@ const searchResultItemsRef = ref<HTMLLIElement[]>([]);
 const highlightedIndex = ref(-1);
 
 // [SEARCH] - LÓGICA
+// --- INICIO DE LA CORRECCIÓN: Lógica de búsqueda mejorada para escáner de código de barras ---
 watch(busqueda, (nuevoValor) => {
   highlightedIndex.value = -1;
   searchResultItemsRef.value = [];
   clearTimeout(debounceTimer.value);
-  if (nuevoValor.length < 2) {
+
+  const trimmedValue = nuevoValor.trim();
+  if (trimmedValue.length < 2) {
     productosEncontrados.value = [];
     return;
   }
+
   isLoading.value = true;
   debounceTimer.value = setTimeout(async () => {
     try {
-      const resultado = await ObtenerProductosPaginado(1, 10, nuevoValor);
-      productosEncontrados.value =
-        (resultado.Records as backend.Producto[]) || [];
-      if (productosEncontrados.value.length > 0) {
-        highlightedIndex.value = 0;
+      const resultado = await ObtenerProductosPaginado(1, 10, trimmedValue);
+      const records = (resultado.Records as backend.Producto[]) || [];
+
+      // Si hay exactamente 1 resultado y el código coincide, es un escaneo.
+      // Agrégalo directamente al carrito.
+      if (
+        records.length === 1 &&
+        records[0]!.Codigo.toLowerCase() === trimmedValue.toLowerCase()
+      ) {
+        agregarAlCarrito(records[0]!);
+        productosEncontrados.value = []; // Oculta el dropdown
+      } else {
+        productosEncontrados.value = records;
+        if (records.length > 0) {
+          highlightedIndex.value = 0;
+        }
       }
     } catch (error) {
       console.error("Error al buscar productos:", error);
@@ -108,8 +123,9 @@ watch(busqueda, (nuevoValor) => {
     } finally {
       isLoading.value = false;
     }
-  }, 300);
+  }, 150); // Reducir debounce para respuesta más rápida
 });
+// --- FIN DE LA CORRECCIÓN ---
 
 function agregarAlCarrito(producto: backend.Producto) {
   if (!producto) return;
@@ -340,7 +356,6 @@ const activeTab = ref("venta-actual");
               class="flex-1 flex flex-col mt-4 overflow-hidden"
             >
               <div class="relative">
-                <!-- Icono de búsqueda -->
                 <Search
                   class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground"
                 />
@@ -355,7 +370,6 @@ const activeTab = ref("venta-actual");
                   class="pl-10 text-lg h-10"
                 />
 
-                <!-- Lista de resultados -->
                 <div
                   v-if="productosEncontrados.length > 0"
                   ref="searchResultsContainerRef"
@@ -394,7 +408,6 @@ const activeTab = ref("venta-actual");
                   </ul>
                 </div>
 
-                <!-- Mensaje cuando no hay resultados -->
                 <div
                   v-else-if="
                     busqueda.length >= 2 &&

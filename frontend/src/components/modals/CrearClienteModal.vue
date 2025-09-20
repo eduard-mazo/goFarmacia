@@ -34,9 +34,9 @@ watch(
     if (isOpen) {
       // Resetear el formulario al abrir
       cliente.value = new backend.Cliente({
-        Nombre:"",
+        Nombre: "",
         Apellido: "",
-        TipoID: "",
+        TipoID: "CC", // Valor por defecto
         NumeroID: "",
         Telefono: "",
         Direccion: "",
@@ -47,9 +47,14 @@ watch(
 );
 
 async function handleSubmit() {
-  if (cliente.value.Nombre || !cliente.value.Email) {
+  if (
+    !cliente.value.Nombre ||
+    !cliente.value.Email ||
+    !cliente.value.NumeroID
+  ) {
     toast.error("Campos requeridos", {
-      description: "El nombre y el Email son obligatorios.",
+      description:
+        "El nombre, número de documento y el Email son obligatorios.",
     });
     return;
   }
@@ -63,7 +68,7 @@ async function handleSubmit() {
     emit("client-created", nuevoCliente);
     emit("update:open", false);
   } catch (error) {
-    console.error("Error al registrar producto:", error);
+    console.error("Error al registrar cliente:", error);
     toast.error("Error al registrar", { description: `${error}` });
   } finally {
     isLoading.value = false;
@@ -88,6 +93,7 @@ async function handleSubmit() {
             id="nombre"
             v-model="cliente.Nombre"
             class="col-span-3 h-10"
+            placeholder="Nombre del cliente"
           />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
@@ -96,6 +102,35 @@ async function handleSubmit() {
             id="apellidos"
             v-model="cliente.Apellido"
             class="col-span-3 h-10"
+            placeholder="Apellido del cliente"
+          />
+        </div>
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="tipoId" class="text-right">Tipo ID</Label>
+          <Input
+            id="tipoId"
+            v-model="cliente.TipoID"
+            class="col-span-3 h-10"
+            placeholder="CC, NIT, CE..."
+          />
+        </div>
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="numeroId" class="text-right">Número ID</Label>
+          <Input
+            id="numeroId"
+            v-model="cliente.NumeroID"
+            class="col-span-3 h-10"
+            placeholder="Número de documento"
+          />
+        </div>
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="email" class="text-right">Email</Label>
+          <Input
+            id="email"
+            v-model="cliente.Email"
+            type="email"
+            class="col-span-3 h-10"
+            placeholder="correo@ejemplo.com"
           />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
@@ -104,15 +139,17 @@ async function handleSubmit() {
             id="dirección"
             v-model="cliente.Direccion"
             class="col-span-3 h-10"
+            placeholder="Dirección de residencia"
           />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="telefono" class="text-right">Telefono</Label>
+          <Label for="telefono" class="text-right">Teléfono</Label>
           <Input
             id="telefono"
             v-model="cliente.Telefono"
-            type="number"
+            type="text"
             class="col-span-3 h-10"
+            placeholder="Número de contacto"
           />
         </div>
       </div>
@@ -121,7 +158,7 @@ async function handleSubmit() {
           >Cancelar</Button
         >
         <Button @click="handleSubmit" :disabled="isLoading">
-          {{ isLoading ? "Guardando..." : "Guardar Producto" }}
+          {{ isLoading ? "Guardando..." : "Guardar Cliente" }}
         </Button>
       </DialogFooter>
     </DialogContent>
