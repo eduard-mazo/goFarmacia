@@ -46,6 +46,7 @@ import {
   EliminarProducto,
   ActualizarProducto,
 } from "@/../wailsjs/go/backend/Db";
+import { toast } from "vue-sonner";
 
 interface ObtenerProductosPaginadoResponse {
   Records: backend.Producto[];
@@ -77,7 +78,7 @@ const cargarProductos = async () => {
     listaProductos.value = response.Records || [];
     totalProductos.value = response.TotalRecords || 0;
   } catch (error) {
-    console.error(`Error al cargar Productos: ${error}`);
+    toast.error("Error al cargar Productos", { description: `${error}` });
   }
 };
 
@@ -209,8 +210,11 @@ async function handleEdit(producto: backend.Producto) {
   try {
     await ActualizarProducto(producto);
     await cargarProductos();
+    toast.success("Producto editado con éxito", {
+      description: `Nombre: ${producto.Nombre}, Código: ${producto.Codigo}`,
+    });
   } catch (error) {
-    console.error(`Error al actualizar el producto: ${error}`);
+    toast.error("Error al actualizar el producto", { description: `${error}` });
   }
 }
 
@@ -218,8 +222,11 @@ async function handleDelete(producto: backend.Producto) {
   try {
     await EliminarProducto(producto.id);
     await cargarProductos();
+    toast.warning("Producto eliminado con éxito", {
+      description: `Nombre: ${producto.Nombre}, Código: ${producto.Codigo}`,
+    });
   } catch (error) {
-    console.error(`Error al eliminar el producto: ${error}`);
+    toast.error("Error al eliminar el producto", { description: `${error}` });
   }
 }
 

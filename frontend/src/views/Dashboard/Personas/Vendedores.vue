@@ -41,13 +41,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import DropdownAction from "@/components/tables/DataTableDropDown.vue"; // Adjusted path if needed
+import DropdownAction from "@/components/tables/DataTableVendedorDropDown.vue"; // Adjusted path if needed
 import { backend } from "@/../wailsjs/go/models";
 import {
   ObtenerVendedoresPaginado,
   EliminarVendedor,
   ActualizarVendedor,
 } from "@/../wailsjs/go/backend/Db";
+import { toast } from "vue-sonner";
 
 interface ObtenerVendedoresPaginadoResponse {
   Records: backend.Vendedor[];
@@ -79,8 +80,7 @@ const cargarVendedores = async () => {
     listaVendedores.value = response.Records || [];
     totalVendedores.value = response.TotalRecords || 0;
   } catch (error) {
-    console.error(`Error al cargar vendedores: ${error}`);
-    // Here you can add a user-facing notification
+    toast.error("Error al cargar vendedores", { description: `${error}` });
   }
 };
 
@@ -202,7 +202,7 @@ const table = useVueTable({
 // --- Computed properties for Pagination ---
 const pageCount = computed(() => table.getPageCount());
 
-// 🌉 Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
+//Puente entre la página base 1 (UI) y el pageIndex base 0 (TanStack Table)
 const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => {
@@ -215,22 +215,25 @@ async function handleEdit(vendedor: backend.Vendedor) {
   try {
     await ActualizarVendedor(vendedor);
     await cargarVendedores();
+    toast.success("Producto editado con éxito", {
+      description: `Nombre: ${vendedor.Nombre}, Cedula: ${vendedor.Cedula}`,
+    });
   } catch (error) {
-    console.error(`Error al actualizar el VendeActualizarVendedor: ${error}`);
+    toast.error("Error al actualizar el VendeActualizarVendedor", {
+      description: `${error}`,
+    });
   }
 }
 
 async function handleDelete(vendedor: backend.Vendedor) {
-  console.log("Delete:", vendedor);
-  if (confirm(`Are you sure you want to delete ${vendedor.Nombre}?`)) {
-    try {
-      await EliminarVendedor(vendedor.id);
-      await cargarVendedores();
-      alert("Vendedor eliminado con éxito.");
-    } catch (error) {
-      console.error(`Error al eliminar vendedor: ${error}`);
-      alert(`Failed to delete vendedor: ${error}`);
-    }
+  try {
+    await EliminarVendedor(vendedor.id);
+    await cargarVendedores();
+    toast.warning("Vendedor eliminado con éxito", {
+      description: `Nombre: ${vendedor.Nombre}, Email: ${vendedor.Email}`,
+    });
+  } catch (error) {
+    toast.error("Error al eliminar vendedor", { description: `${error}` });
   }
 }
 

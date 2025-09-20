@@ -81,7 +81,6 @@ const cargarClientes = async () => {
     listaClientes.value = response.Records || [];
     totalClientes.value = response.TotalRecords || 0;
   } catch (error) {
-    console.error(`Error al cargar clientes: ${error}`);
     toast.error("Error al cargar clientes", { description: `${error}` });
   }
 };
@@ -134,8 +133,8 @@ const columns: ColumnDef<backend.Cliente>[] = [
       return h("div", { class: "relative" }, [
         h(DropdownAction, {
           cliente,
-          onEdit: (v: backend.Cliente) => handleEdit(v),
-          onDelete: (v: backend.Cliente) => handleDelete(v),
+          onEdit: (c: backend.Cliente) => handleEdit(c),
+          onDelete: (c: backend.Cliente) => handleDelete(c),
         }),
       ]);
     },
@@ -186,26 +185,24 @@ const currentPage = computed({
 async function handleEdit(cliente: backend.Cliente) {
   try {
     await ActualizarCliente(cliente);
-    toast.success("Cliente actualizado", {
-      description: `Los datos de ${cliente.Nombre} han sido guardados.`,
-    });
     await cargarClientes();
+    toast.success("Cliente editado con éxito", {
+      description: `Nombre: ${cliente.Nombre}, ID: ${cliente.NumeroID}`,
+    });
   } catch (error) {
-    console.error(`Error al actualizar el cliente: ${error}`);
     toast.error("Error al actualizar", { description: `${error}` });
   }
 }
 
 async function handleDelete(cliente: backend.Cliente) {
-  if (confirm(`¿Estás seguro de que quieres eliminar a ${cliente.Nombre}?`)) {
-    try {
-      await EliminarCliente(cliente.id);
-      await cargarClientes();
-      toast.success("Cliente eliminado con éxito.");
-    } catch (error) {
-      console.error(`Error al eliminar cliente: ${error}`);
-      toast.error("Error al eliminar", { description: `${error}` });
-    }
+  try {
+    await EliminarCliente(cliente.id);
+    await cargarClientes();
+    toast.warning("Cliente eliminado con éxito", {
+      description: `Nombre: ${cliente.Nombre}, ID: ${cliente.NumeroID}`,
+    });
+  } catch (error) {
+    toast.error("Error al eliminar", { description: `${error}` });
   }
 }
 

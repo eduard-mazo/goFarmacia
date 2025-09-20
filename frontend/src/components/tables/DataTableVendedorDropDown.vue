@@ -43,7 +43,7 @@ const emit = defineEmits<{
 }>();
 
 // --- State for Dialogs ---
-const editableProduct = ref<backend.Vendedor>(
+const editableVendedor = ref<backend.Vendedor>(
   backend.Vendedor.createFrom(props.vendedor)
 );
 
@@ -52,17 +52,17 @@ const isDeleteDialogOpen = ref(false);
 
 // --- Handlers ---
 function openEditDialog() {
-  editableProduct.value = backend.Vendedor.createFrom(props.vendedor);
+  editableVendedor.value = backend.Vendedor.createFrom(props.vendedor);
   isEditDialogOpen.value = true;
 }
 
 function openDeleteDialog() {
-  editableProduct.value = backend.Vendedor.createFrom(props.vendedor);
-  isEditDialogOpen.value = true;
+  editableVendedor.value = backend.Vendedor.createFrom(props.vendedor);
+  isDeleteDialogOpen.value = true;
 }
 
 function handleSaveChanges() {
-  emit("edit", editableProduct.value);
+  emit("edit", editableVendedor.value);
   isEditDialogOpen.value = false; // Close dialog after saving
 }
 
@@ -73,7 +73,6 @@ function handleDeleteConfirm() {
 </script>
 
 <template>
-  <!-- The DropdownMenu now only controls showing the menu items -->
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
       <Button variant="ghost" class="w-8 h-8 p-0">
@@ -84,21 +83,14 @@ function handleDeleteConfirm() {
     <DropdownMenuContent align="end">
       <DropdownMenuLabel>Acciones</DropdownMenuLabel>
       <DropdownMenuSeparator />
-
-      <!-- FIX: Use @click to programmatically open the correct dialog -->
       <DropdownMenuItem @click="openEditDialog">
         <span>Editar vendedor</span>
       </DropdownMenuItem>
-
       <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
         <span>Eliminar vendedor</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
-
-  <!-- FIX: Dialog components are now siblings, not nested -->
-
-  <!-- Edit Product Dialog -->
   <Dialog v-model:open="isEditDialogOpen">
     <DialogContent class="sm:max-w-[425px]">
       <DialogHeader>
@@ -113,7 +105,7 @@ function handleDeleteConfirm() {
           <Label for="name" class="text-right">Nombre</Label>
           <Input
             id="name"
-            v-model="editableProduct.Nombre"
+            v-model="editableVendedor.Nombre"
             class="col-span-3"
           />
         </div>
@@ -121,7 +113,7 @@ function handleDeleteConfirm() {
           <Label for="cedula" class="text-right">Cédula</Label>
           <Input
             id="cedula"
-            v-model="editableProduct.Cedula"
+            v-model="editableVendedor.Cedula"
             class="col-span-3"
           />
         </div>
@@ -130,7 +122,7 @@ function handleDeleteConfirm() {
           <Input
             id="email"
             type="email"
-            v-model.number="editableProduct.Email"
+            v-model.number="editableVendedor.Email"
             class="col-span-3"
           />
         </div>
@@ -142,15 +134,13 @@ function handleDeleteConfirm() {
       </DialogFooter>
     </DialogContent>
   </Dialog>
-
-  <!-- Delete Confirmation Dialog -->
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
         <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
         <AlertDialogDescription>
           Esta acción no se puede deshacer. Esto eliminará permanentemente el
-          producto
+          vendedor
           <span class="font-semibold">{{ props.vendedor.Nombre }}</span> de la
           base de datos.
         </AlertDialogDescription>

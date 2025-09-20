@@ -43,7 +43,7 @@ const emit = defineEmits<{
 }>();
 
 // --- State for Dialogs ---
-const editableProduct = ref<backend.Cliente>(
+const editableClient = ref<backend.Cliente>(
   backend.Cliente.createFrom(props.cliente)
 );
 
@@ -52,17 +52,17 @@ const isDeleteDialogOpen = ref(false);
 
 // --- Handlers ---
 function openEditDialog() {
-  editableProduct.value = backend.Cliente.createFrom(props.cliente);
+  editableClient.value = backend.Cliente.createFrom(props.cliente);
   isEditDialogOpen.value = true;
 }
 
 function openDeleteDialog() {
-  editableProduct.value = backend.Cliente.createFrom(props.cliente);
-  isEditDialogOpen.value = true;
+  editableClient.value = backend.Cliente.createFrom(props.cliente);
+  isDeleteDialogOpen.value = true;
 }
 
 function handleSaveChanges() {
-  emit("edit", editableProduct.value);
+  emit("edit", editableClient.value);
   isEditDialogOpen.value = false; // Close dialog after saving
 }
 
@@ -95,10 +95,6 @@ function handleDeleteConfirm() {
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
-
-  <!-- FIX: Dialog components are now siblings, not nested -->
-
-  <!-- Edit Product Dialog -->
   <Dialog v-model:open="isEditDialogOpen">
     <DialogContent class="sm:max-w-[425px]">
       <DialogHeader>
@@ -111,17 +107,13 @@ function handleDeleteConfirm() {
       <div class="grid gap-4 py-4">
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="name" class="text-right">Nombre</Label>
-          <Input
-            id="name"
-            v-model="editableProduct.Nombre"
-            class="col-span-3"
-          />
+          <Input id="name" v-model="editableClient.Nombre" class="col-span-3" />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="documento" class="text-right">Cédula</Label>
           <Input
             id="documento"
-            v-model="editableProduct.NumeroID"
+            v-model="editableClient.NumeroID"
             class="col-span-3"
           />
         </div>
@@ -130,7 +122,7 @@ function handleDeleteConfirm() {
           <Input
             id="email"
             type="email"
-            v-model.number="editableProduct.Email"
+            v-model.number="editableClient.Email"
             class="col-span-3"
           />
         </div>
@@ -150,7 +142,7 @@ function handleDeleteConfirm() {
         <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
         <AlertDialogDescription>
           Esta acción no se puede deshacer. Esto eliminará permanentemente el
-          producto
+          cliente
           <span class="font-semibold">{{ props.cliente.Nombre }}</span> de la
           base de datos.
         </AlertDialogDescription>

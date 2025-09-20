@@ -83,17 +83,14 @@ function handleDeleteConfirm() {
     <DropdownMenuContent align="end">
       <DropdownMenuLabel>Acciones</DropdownMenuLabel>
       <DropdownMenuSeparator />
-
       <DropdownMenuItem @click="openEditDialog">
         <span>Editar producto</span>
       </DropdownMenuItem>
-
       <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
         <span>Eliminar producto</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
-
   <Dialog v-model:open="isEditDialogOpen">
     <DialogContent class="sm:max-w-[425px]">
       <DialogHeader>
@@ -146,7 +143,6 @@ function handleDeleteConfirm() {
       </DialogFooter>
     </DialogContent>
   </Dialog>
-
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
