@@ -21,21 +21,58 @@ type LoginResponse struct {
 
 // RegistrarVendedor crea un nuevo vendedor con una contraseña encriptada.
 func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
+	// Encriptamos la contraseña antes de cualquier operación
 	hashedPassword, err := HashPassword(vendedor.Contrasena)
 	if err != nil {
 		return Vendedor{}, fmt.Errorf("error al encriptar la contraseña: %w", err)
 	}
 	vendedor.Contrasena = hashedPassword
 
-	if err := d.LocalDB.Create(&vendedor).Error; err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return Vendedor{}, errors.New("la cédula o el email ya están registrados")
-		}
-		return Vendedor{}, fmt.Errorf("error al registrar localmente: %w", err)
+	tx := d.LocalDB.Begin()
+	if tx.Error != nil {
+		return Vendedor{}, fmt.Errorf("error al iniciar transacción: %w", tx.Error)
 	}
-	// La sincronización con ON CONFLICT es correcta para nuevos registros.
+	defer tx.Rollback() // Se revierte si algo falla
+
+	var existente Vendedor
+	// Usamos Unscoped() para buscar registros incluso si están marcados como eliminados.
+	err = tx.Unscoped().Where("cedula = ? OR email = ?", vendedor.Cedula, vendedor.Email).First(&existente).Error
+
+	if err == nil {
+		// Se encontró un vendedor con la misma cédula o email
+		if existente.DeletedAt.Valid { // El vendedor estaba eliminado
+			d.Log.Infof("Restaurando vendedor eliminado con ID: %d", existente.ID)
+			// Actualizamos los datos y lo "revivimos"
+			existente.Nombre = vendedor.Nombre
+			existente.Apellido = vendedor.Apellido
+			existente.Email = vendedor.Email
+			existente.Contrasena = vendedor.Contrasena
+			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false} // Esto lo restaura
+
+			if err := tx.Unscoped().Save(&existente).Error; err != nil {
+				return Vendedor{}, fmt.Errorf("error al restaurar vendedor: %w", err)
+			}
+			vendedor = existente
+		} else {
+			// El vendedor existe y está activo, es un error de duplicado
+			return Vendedor{}, errors.New("la cédula o el email ya están registrados en un vendedor activo")
+		}
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		// No existe, lo creamos
+		if err := tx.Create(&vendedor).Error; err != nil {
+			return Vendedor{}, fmt.Errorf("error al registrar nuevo vendedor: %w", err)
+		}
+	} else {
+		// Ocurrió otro error en la base de datos
+		return Vendedor{}, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return Vendedor{}, fmt.Errorf("error al confirmar transacción: %w", err)
+	}
+
 	go d.syncVendedorToRemote(vendedor.ID)
-	vendedor.Contrasena = ""
+	vendedor.Contrasena = "" // Limpiamos la contraseña antes de devolverla
 	return vendedor, nil
 }
 
@@ -171,9 +208,51 @@ func (d *Db) EliminarVendedor(id uint) (string, error) {
 // --- CLIENTES ---
 
 func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
-	if err := d.LocalDB.Create(&cliente).Error; err != nil {
-		return Cliente{}, fmt.Errorf("error al registrar localmente: %w", err)
+	tx := d.LocalDB.Begin()
+	if tx.Error != nil {
+		return Cliente{}, fmt.Errorf("error al iniciar transacción: %w", tx.Error)
 	}
+	defer tx.Rollback()
+
+	var existente Cliente
+	// Usamos Unscoped() para buscar por el identificador único, incluso si está eliminado.
+	err := tx.Unscoped().Where("numero_id = ?", cliente.NumeroID).First(&existente).Error
+
+	if err == nil {
+		// Se encontró un cliente con el mismo Número de ID
+		if existente.DeletedAt.Valid { // El cliente estaba eliminado
+			d.Log.Infof("Restaurando cliente eliminado con ID: %d", existente.ID)
+			// Actualizamos sus datos y lo restauramos
+			existente.Nombre = cliente.Nombre
+			existente.Apellido = cliente.Apellido
+			existente.TipoID = cliente.TipoID
+			existente.Telefono = cliente.Telefono
+			existente.Email = cliente.Email
+			existente.Direccion = cliente.Direccion
+			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
+
+			if err := tx.Unscoped().Save(&existente).Error; err != nil {
+				return Cliente{}, fmt.Errorf("error al restaurar cliente: %w", err)
+			}
+			cliente = existente
+		} else {
+			// El cliente existe y está activo, es un error
+			return Cliente{}, errors.New("el número de identificación ya está registrado en un cliente activo")
+		}
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		// No existe, se crea uno nuevo
+		if err := tx.Create(&cliente).Error; err != nil {
+			return Cliente{}, fmt.Errorf("error al registrar nuevo cliente: %w", err)
+		}
+	} else {
+		// Otro error de base de datos
+		return Cliente{}, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return Cliente{}, fmt.Errorf("error al confirmar transacción: %w", err)
+	}
+
 	go d.syncClienteToRemote(cliente.ID)
 	return cliente, nil
 }
@@ -230,13 +309,49 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (Paginat
 // --- PRODUCTOS ---
 
 func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
-	if err := d.LocalDB.Create(&producto).Error; err != nil {
-		// Retornamos un producto vacío en caso de error
-		return Producto{}, fmt.Errorf("error al registrar localmente: %w", err)
+	tx := d.LocalDB.Begin()
+	if tx.Error != nil {
+		return Producto{}, fmt.Errorf("error al iniciar transacción: %w", tx.Error)
 	}
-	// La sincronización se ejecuta en segundo plano
+	defer tx.Rollback()
+
+	var existente Producto
+	// Usamos Unscoped() para buscar por el código único, incluso si está eliminado.
+	err := tx.Unscoped().Where("codigo = ?", producto.Codigo).First(&existente).Error
+
+	if err == nil {
+		// Se encontró un producto con el mismo código
+		if existente.DeletedAt.Valid { // El producto estaba eliminado
+			d.Log.Infof("Restaurando producto eliminado con ID: %d", existente.ID)
+			// Actualizamos sus datos y lo restauramos
+			existente.Nombre = producto.Nombre
+			existente.PrecioVenta = producto.PrecioVenta
+			existente.Stock = producto.Stock // Se puede decidir si se mantiene el stock anterior o se actualiza
+			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
+
+			if err := tx.Unscoped().Save(&existente).Error; err != nil {
+				return Producto{}, fmt.Errorf("error al restaurar producto: %w", err)
+			}
+			producto = existente
+		} else {
+			// El producto existe y está activo
+			return Producto{}, errors.New("el código del producto ya está en uso")
+		}
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		// No existe, se crea uno nuevo
+		if err := tx.Create(&producto).Error; err != nil {
+			return Producto{}, fmt.Errorf("error al registrar nuevo producto: %w", err)
+		}
+	} else {
+		// Otro error de base de datos
+		return Producto{}, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return Producto{}, fmt.Errorf("error al confirmar transacción: %w", err)
+	}
+
 	go d.syncProductoToRemote(producto.ID)
-	// Devolvemos el objeto 'producto' completo, que GORM ha actualizado con el ID.
 	return producto, nil
 }
 
@@ -335,11 +450,50 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (Pagina
 // --- PROVEEDORES ---
 
 func (d *Db) RegistrarProveedor(proveedor Proveedor) (string, error) {
-	if err := d.LocalDB.Create(&proveedor).Error; err != nil {
-		return "", fmt.Errorf("error al registrar proveedor localmente: %w", err)
+	tx := d.LocalDB.Begin()
+	if tx.Error != nil {
+		return "", fmt.Errorf("error al iniciar transacción: %w", tx.Error)
 	}
-	go d.syncProveedorToRemote(proveedor.ID)
-	return "Proveedor registrado localmente. Sincronizando...", nil
+	defer tx.Rollback()
+
+	var existente Proveedor
+	// Usamos Unscoped() para buscar por el nombre único, incluso si está eliminado.
+	err := tx.Unscoped().Where("nombre = ?", proveedor.Nombre).First(&existente).Error
+
+	var finalID uint
+	if err == nil {
+		// Se encontró un proveedor con el mismo nombre
+		if existente.DeletedAt.Valid { // El proveedor estaba eliminado
+			d.Log.Infof("Restaurando proveedor eliminado con ID: %d", existente.ID)
+			existente.Telefono = proveedor.Telefono
+			existente.Email = proveedor.Email
+			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
+
+			if err := tx.Unscoped().Save(&existente).Error; err != nil {
+				return "", fmt.Errorf("error al restaurar proveedor: %w", err)
+			}
+			finalID = existente.ID
+		} else {
+			// El proveedor existe y está activo
+			return "", errors.New("el nombre del proveedor ya está en uso")
+		}
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		// No existe, se crea uno nuevo
+		if err := tx.Create(&proveedor).Error; err != nil {
+			return "", fmt.Errorf("error al registrar nuevo proveedor: %w", err)
+		}
+		finalID = proveedor.ID
+	} else {
+		// Otro error de base de datos
+		return "", err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return "", fmt.Errorf("error al confirmar transacción: %w", err)
+	}
+
+	go d.syncProveedorToRemote(finalID)
+	return "Proveedor registrado o restaurado localmente. Sincronizando...", nil
 }
 
 func (d *Db) ActualizarProveedor(proveedor Proveedor) (string, error) {
@@ -563,21 +717,20 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 	return compraCompleta, nil
 }
 
-// --- LÓGICA DE SINCRONIZACIÓN (sin cambios) ---
-// La lógica existente de "sync individual" es correcta para el modelo local-first.
+// --- LÓGICA DE SINCRONIZACIÓN ---
 
 func (d *Db) syncVendedorToRemote(id uint) {
 	if !d.isRemoteDBAvailable() {
 		return
 	}
 	var record Vendedor
-	if err := d.LocalDB.First(&record, id).Error; err != nil {
+	if err := d.LocalDB.Unscoped().First(&record, id).Error; err != nil { // Usar Unscoped por si se acaba de restaurar
 		log.Printf("SYNC ERROR: Could not find Vendedor ID %d in local DB to sync. %v", id, err)
 		return
 	}
 	err := d.RemoteDB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "cedula"}},
-		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "email", "contrasena", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "email", "contrasena", "updated_at", "deleted_at"}),
 	}).Create(&record).Error
 	if err != nil {
 		log.Printf("SYNC FAILED for Vendedor ID %d: %v", id, err)
@@ -599,13 +752,13 @@ func (d *Db) syncClienteToRemote(id uint) {
 		return
 	}
 	var record Cliente
-	if err := d.LocalDB.First(&record, id).Error; err != nil {
+	if err := d.LocalDB.Unscoped().First(&record, id).Error; err != nil {
 		log.Printf("SYNC ERROR: Could not find Cliente ID %d in local DB to sync. %v", id, err)
 		return
 	}
 	err := d.RemoteDB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "numero_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "tipo_id", "telefono", "email", "direccion", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "tipo_id", "telefono", "email", "direccion", "updated_at", "deleted_at"}),
 	}).Create(&record).Error
 	if err != nil {
 		log.Printf("SYNC FAILED for Cliente ID %d: %v", id, err)
@@ -617,13 +770,13 @@ func (d *Db) syncProductoToRemote(id uint) {
 		return
 	}
 	var record Producto
-	if err := d.LocalDB.First(&record, id).Error; err != nil {
+	if err := d.LocalDB.Unscoped().First(&record, id).Error; err != nil {
 		log.Printf("SYNC ERROR: Could not find Producto ID %d in local DB to sync. %v", id, err)
 		return
 	}
 	err := d.RemoteDB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "codigo"}},
-		DoUpdates: clause.AssignmentColumns([]string{"nombre", "precio_venta", "stock", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "precio_venta", "stock", "updated_at", "deleted_at"}),
 	}).Create(&record).Error
 	if err != nil {
 		log.Printf("SYNC FAILED for Producto ID %d: %v", id, err)
@@ -660,15 +813,14 @@ func (d *Db) syncProveedorToRemote(id uint) {
 		return
 	}
 	var record Proveedor
-	if err := d.LocalDB.First(&record, id).Error; err != nil {
+	if err := d.LocalDB.Unscoped().First(&record, id).Error; err != nil {
 		log.Printf("SYNC ERROR: Could not find Proveedor ID %d in local DB. %v", id, err)
 		return
 	}
 	err := d.RemoteDB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "nombre"}},
-		DoUpdates: clause.AssignmentColumns([]string{"telefono", "email", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"telefono", "email", "updated_at", "deleted_at"}),
 	}).Create(&record).Error
-
 	if err != nil {
 		log.Printf("SYNC FAILED for Proveedor ID %d: %v", id, err)
 	}
