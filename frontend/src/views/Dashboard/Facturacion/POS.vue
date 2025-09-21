@@ -43,7 +43,7 @@ import {
 } from "@/../wailsjs/go/backend/Db";
 import { backend } from "@/../wailsjs/go/models";
 
-// --- (El resto de la configuración inicial del script no cambia) ---
+// --- (El resto del script no ha cambiado) ---
 
 interface ObtenerProductosPaginadoResponse {
   Records: backend.Producto[];
@@ -286,6 +286,7 @@ onUnmounted(() => {
 });
 
 const activeTab = ref("venta-actual");
+
 function handleLoadCart(cartId: number) {
   if (activeCart.value.length > 0) {
     cartStore.saveCurrentCart();
@@ -318,10 +319,10 @@ function handleLoadCart(cartId: number) {
     @update:open="facturaParaRecibo = null"
   />
 
-  <div class="flex flex-col gap-4 h-[calc(100vh-8rem)]">
+  <div class="flex flex-col gap-4 h-[calc(100vh-2rem)]">
     <div class="flex-1 min-h-0">
-      <Card class="h-full flex flex-col">
-        <CardContent class="p-4 h-full flex flex-col">
+      <Card class="h-full flex flex-col py-1 px-2">
+        <CardContent class="p-2 h-full flex flex-col">
           <Tabs v-model="activeTab" class="h-full flex flex-col">
             <TabsList class="w-full flex-shrink-0">
               <TabsTrigger value="venta-actual" class="flex-1">
@@ -522,33 +523,25 @@ function handleLoadCart(cartId: number) {
                   </TableBody>
                 </Table>
               </div>
-
-              <div
-                class="flex-shrink-0 border-t pt-4 flex flex-wrap justify-between items-center gap-4"
-              >
-                <div class="flex-1 min-w-[200px] space-y-2">
-                  <div class="flex justify-between items-center text-xl">
-                    <span class="text-muted-foreground">Total</span>
-                    <span class="font-bold font-mono text-3xl"
-                      >${{ activeCartTotal.toLocaleString() }}</span
-                    >
-                  </div>
-                  <div
-                    v-if="
-                      metodoPago === 'efectivo' &&
-                      efectivoRecibido &&
-                      cambio > 0
-                    "
-                    class="flex justify-between items-center text-xl"
+              <div class="flex-shrink-0 border-t pt-4 space-y-4">
+                <div class="flex justify-between items-center text-xl">
+                  <span class="text-muted-foreground">Total</span>
+                  <span class="font-bold font-mono text-3xl"
+                    >${{ activeCartTotal.toLocaleString() }}</span
                   >
-                    <span class="text-muted-foreground">Cambio</span>
-                    <span class="font-bold font-mono text-green-400 text-3xl"
-                      >${{ cambio.toLocaleString() }}</span
-                    >
-                  </div>
                 </div>
-
-                <div class="flex-1 min-w-[250px] flex gap-2">
+                <div
+                  v-if="
+                    metodoPago === 'efectivo' && efectivoRecibido && cambio > 0
+                  "
+                  class="flex justify-between items-center text-xl"
+                >
+                  <span class="text-muted-foreground">Cambio</span>
+                  <span class="font-bold font-mono text-green-400 text-3xl"
+                    >${{ cambio.toLocaleString() }}</span
+                  >
+                </div>
+                <div class="flex gap-2">
                   <Button
                     @click="cartStore.saveCurrentCart()"
                     variant="secondary"
@@ -562,7 +555,6 @@ function handleLoadCart(cartId: number) {
                 </div>
               </div>
             </TabsContent>
-
             <TabsContent
               value="carritos-guardados"
               class="flex-1 overflow-y-auto mt-4"
