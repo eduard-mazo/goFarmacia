@@ -138,6 +138,9 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 	query.Count(&total)
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&vendedores).Error
+	for i := range vendedores {
+		vendedores[i].Contrasena = ""
+	}
 	return PaginatedResult{Records: vendedores, TotalRecords: total}, err
 }
 
@@ -664,7 +667,6 @@ func (d *Db) generarNumeroFactura() string {
 
 // ObtenerFacturas ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
-	d.Log.Infof("Fetching bills - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var facturas []Factura
 	var total int64
 	db := d.LocalDB
@@ -676,13 +678,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 			Where("LOWER(facturas.numero_factura) LIKE ? OR LOWER(clientes.nombre) LIKE ? OR LOWER(clientes.apellido) LIKE ? OR LOWER(vendedors.nombre) LIKE ?",
 				searchTerm, searchTerm, searchTerm, searchTerm)
 	}
-	allowedSortBy := map[string]string{
-		"NumeroFactura": "numero_factura",
-		"FechaEmision":  "fecha_emision",
-		"Cliente":       "clientes.nombre",
-		"Vendedor":      "vendedors.nombre",
-		"Total":         "total",
-	}
+	allowedSortBy := map[string]string{"NumeroFactura": "numero_factura", "FechaEmision": "fecha_emision", "Cliente": "clientes.nombre", "Vendedor": "vendedors.nombre", "Total": "total"}
 	if col, ok := allowedSortBy[sortBy]; ok {
 		order := "ASC"
 		if strings.ToLower(sortOrder) == "desc" {
@@ -690,20 +686,29 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 		}
 		query = query.Order(fmt.Sprintf("%s %s", col, order))
 	} else {
-		query = query.Order("id DESC")
+		query = query.Order("facturas.id DESC") // Se especifica la tabla para evitar ambigüedad
 	}
+	// Se aplica el Count sobre la consulta ya construida (con joins si es necesario)
 	if err := query.Count(&total).Error; err != nil {
 		return PaginatedResult{}, err
 	}
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&facturas).Error
-
-	return PaginatedResult{Records: facturas, TotalRecords: total}, err
+	if err != nil {
+		return PaginatedResult{}, err
+	}
+	for i := range facturas {
+		facturas[i].Vendedor.Contrasena = "" // Limpia la contraseña
+	}
+	return PaginatedResult{Records: facturas, TotalRecords: total}, nil
 }
 
 func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	var factura Factura
 	err := d.LocalDB.Preload("Cliente").Preload("Vendedor").Preload("Detalles.Producto").First(&factura, facturaID).Error
+	if err == nil {
+		factura.Vendedor.Contrasena = "" // Limpia la contraseña
+	}
 	return factura, err
 }
 

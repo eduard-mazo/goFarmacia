@@ -12,11 +12,24 @@ const formatCurrency = (value: number) => {
     maximumFractionDigits: 0,
   }).format(value);
 };
+
+const formatDate = (dateString: string) => {
+  if (!dateString) return "---";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Fecha inválida";
+  return date.toLocaleString("es-CO", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 </script>
 
 <template>
   <div
-    class="w-[116mm] max-w-full bg-white text-black font-mono text-[14px] leading-normal p-4 box-border"
+    class="max-w-full bg-white text-black font-mono text-[14px] leading-normal p-4 box-border"
     v-if="factura"
   >
     <div class="text-center mb-2">
@@ -29,7 +42,7 @@ const formatCurrency = (value: number) => {
       <p><span class="font-bold">Factura:</span> {{ factura.NumeroFactura }}</p>
       <p>
         <span class="font-bold">Fecha:</span>
-        {{ new Date(factura.fecha_emision).toLocaleString() }}
+        {{ formatDate(factura.fecha_emision) }}
       </p>
       <p>
         <span class="font-bold">Cliente:</span> {{ factura.Cliente.Nombre }}
@@ -62,9 +75,9 @@ const formatCurrency = (value: number) => {
       </thead>
       <tbody>
         <tr v-for="item in factura.Detalles" :key="item.id">
-          <td class="py-1">{{ item.Cantidad }}</td>
+          <td class="py-1 align-top">{{ item.Cantidad }}</td>
           <td class="py-1">{{ item.Producto.Nombre }}</td>
-          <td class="text-right py-1">
+          <td class="text-right py-1 align-top">
             {{ formatCurrency(item.PrecioTotal) }}
           </td>
         </tr>

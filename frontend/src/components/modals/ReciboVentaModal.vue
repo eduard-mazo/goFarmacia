@@ -3,8 +3,6 @@ import { backend } from "@/../wailsjs/go/models";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -31,15 +29,8 @@ function handlePrint() {
     :open="!!props.factura"
     @update:open="(val) => !val && emit('update:open', false)"
   >
-    <DialogContent class="max-w-xs md:max-w-md print-area">
-      <DialogHeader class="print:hidden">
-        <DialogTitle>Venta Finalizada</DialogTitle>
-      </DialogHeader>
-
-      <div class="my-4">
-        <ReciboPOS :factura="props.factura" />
-      </div>
-
+    <DialogContent class="max-w-xs md:max-w-md print-area p-2">
+      <ReciboPOS :factura="props.factura" />
       <DialogFooter class="print:hidden">
         <Button variant="outline" @click="emit('update:open', false)"
           >Cerrar</Button

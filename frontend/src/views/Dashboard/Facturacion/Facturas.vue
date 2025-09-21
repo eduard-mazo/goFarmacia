@@ -43,7 +43,6 @@ interface ObtenerFacturasPaginadoResponse {
   TotalRecords: number;
 }
 
-// [COMPONENTE] - ESTADOS
 const listaFacturas = ref<backend.Factura[]>([]);
 const totalFacturas = ref(0);
 const busqueda = ref("");
@@ -52,7 +51,6 @@ const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 15 });
 const isModalOpen = ref(false);
 const facturaSeleccionada = ref<backend.Factura | null>(null);
 
-// [SEARCH] - LÓGICA
 const cargarFacturas = async () => {
   try {
     const currentPage = pagination.value.pageIndex + 1;
@@ -83,12 +81,21 @@ const formatCurrency = (value: number) =>
     currency: "COP",
     maximumFractionDigits: 0,
   }).format(value);
+const formatDate = (dateString: string) => {
+  if (!dateString) return "---";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Fecha inválida";
+  return date.toLocaleDateString("es-CO", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
 
-// --- Column Definitions ---
 const columns: ColumnDef<backend.Factura>[] = [
   { accessorKey: "NumeroFactura", header: "N° Factura" },
   {
-    accessorKey: "FechaEmision",
+    accessorKey: "fecha_emision",
     header: ({ column }) =>
       h(
         Button,
@@ -98,8 +105,7 @@ const columns: ColumnDef<backend.Factura>[] = [
         },
         () => ["Fecha", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       ),
-    cell: ({ row }) =>
-      new Date(row.getValue("FechaEmision")).toLocaleDateString(),
+    cell: ({ row }) => formatDate(row.getValue("fecha_emision")),
   },
   {
     accessorFn: (row) => `${row.Cliente.Nombre} ${row.Cliente.Apellido}`,
@@ -144,7 +150,6 @@ const columns: ColumnDef<backend.Factura>[] = [
   },
 ];
 
-// --- Table Instance ---
 const table = useVueTable({
   get data() {
     return listaFacturas.value;
@@ -169,13 +174,11 @@ const table = useVueTable({
   onSortingChange: (updater) => valueUpdater(updater, sorting),
 });
 
-// [COMPUTED & WATCHERS]
 const pageCount = computed(() => table.getPageCount());
 const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => table.setPageIndex(newPage - 1),
 });
-
 function verDetalleFactura(factura: backend.Factura) {
   facturaSeleccionada.value = factura;
   isModalOpen.value = true;
@@ -203,9 +206,13 @@ watch(busqueda, () => {
 
 <template>
   <Dialog v-model:open="isModalOpen">
-    <DialogContent class="max-w-fit p-0 bg-transparent border-0"
-      ><ReciboPOS :factura="facturaSeleccionada"
-    /></DialogContent>
+    <DialogContent
+      class="w-[116mm] max-w-full p-0 bg-transparent border-0 shadow-none"
+    >
+      <div class="max-h-[85vh] overflow-y-auto bg-white rounded-md">
+        <ReciboPOS :factura="facturaSeleccionada" />
+      </div>
+    </DialogContent>
   </Dialog>
   <div class="w-full">
     <h1 class="text-2xl font-semibold mb-4">Historial de Facturas</h1>
@@ -218,36 +225,29 @@ watch(busqueda, () => {
     </div>
     <Card class="py-0">
       <Table>
-        <TableHeader>
-          <TableRow
+        <TableHeader
+          ><TableRow
             v-for="headerGroup in table.getHeaderGroups()"
             :key="headerGroup.id"
-          >
-            <TableHead v-for="header in headerGroup.headers" :key="header.id">
-              <FlexRender
+            ><TableHead v-for="header in headerGroup.headers" :key="header.id"
+              ><FlexRender
                 v-if="!header.isPlaceholder"
                 :render="header.column.columnDef.header"
-                :props="header.getContext()"
-              />
-            </TableHead>
-          </TableRow>
-        </TableHeader>
+                :props="header.getContext()" /></TableHead></TableRow
+        ></TableHeader>
         <TableBody>
-          <template v-if="table.getRowModel().rows?.length">
-            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
-              <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
-                <FlexRender
+          <template v-if="table.getRowModel().rows?.length"
+            ><TableRow v-for="row in table.getRowModel().rows" :key="row.id"
+              ><TableCell v-for="cell in row.getVisibleCells()" :key="cell.id"
+                ><FlexRender
                   :render="cell.column.columnDef.cell"
-                  :props="cell.getContext()"
-                />
-              </TableCell>
-            </TableRow>
-          </template>
-          <TableRow v-else>
-            <TableCell :colspan="columns.length" class="h-24 text-center"
+                  :props="cell.getContext()" /></TableCell></TableRow
+          ></template>
+          <TableRow v-else
+            ><TableCell :colspan="columns.length" class="h-24 text-center"
               >No se encontraron facturas.</TableCell
-            >
-          </TableRow>
+            ></TableRow
+          >
         </TableBody>
       </Table>
     </Card>
