@@ -118,15 +118,22 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 }
 
 // ObtenerVendedoresPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
-func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
 	d.Log.Infof("Fetching vendedores - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var vendedores []Vendedor
 	var total int64
-	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
-	query := db.Model(&Vendedor{})
+	query := d.LocalDB.Model(&Vendedor{})
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		query = query.Where("LOWER(Nombre) LIKE ? OR LOWER(Apellido) LIKE ? OR Cedula LIKE ?", searchTerm, searchTerm, searchTerm)
+		query = query.Where("LOWER(nombre) LIKE ? OR LOWER(apellido) LIKE ? OR cedula LIKE ?", searchTerm, searchTerm, searchTerm)
+	}
+	allowedSortBy := map[string]string{"Nombre": "nombre", "Cedula": "cedula", "Email": "email"}
+	if col, ok := allowedSortBy[sortBy]; ok {
+		order := "ASC"
+		if strings.ToLower(sortOrder) == "desc" {
+			order = "DESC"
+		}
+		query = query.Order(fmt.Sprintf("%s %s", col, order))
 	}
 	query.Count(&total)
 	offset := (page - 1) * pageSize
@@ -290,15 +297,23 @@ func (d *Db) EliminarCliente(id uint) (string, error) {
 }
 
 // ObtenerClientesPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
-func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
 	d.Log.Infof("Fetching clientes - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var clientes []Cliente
 	var total int64
-	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
+	db := d.LocalDB
 	query := db.Model(&Cliente{})
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
 		query = query.Where("LOWER(nombre) LIKE ? OR LOWER(apellido) LIKE ? OR numero_id LIKE ?", searchTerm, searchTerm, searchTerm)
+	}
+	allowedSortBy := map[string]string{"Nombre": "nombre", "Documento": "numero_id", "Email": "email"}
+	if col, ok := allowedSortBy[sortBy]; ok {
+		order := "ASC"
+		if strings.ToLower(sortOrder) == "desc" {
+			order = "DESC"
+		}
+		query = query.Order(fmt.Sprintf("%s %s", col, order))
 	}
 	query.Count(&total)
 	offset := (page - 1) * pageSize
@@ -429,18 +444,24 @@ func (d *Db) EliminarProducto(id uint) (string, error) {
 }
 
 // ObtenerProductosPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
-func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
 	d.Log.Infof("Fetching products - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var productos []Producto
 	var total int64
-	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
+	db := d.LocalDB
 	query := db.Model(&Producto{})
-
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
 		query = query.Where("LOWER(Nombre) LIKE ? OR LOWER(Codigo) LIKE ?", searchTerm, searchTerm)
 	}
-
+	allowedSortBy := map[string]string{"Nombre": "nombre", "Codigo": "codigo", "PrecioVenta": "precio_venta", "Stock": "stock"}
+	if col, ok := allowedSortBy[sortBy]; ok {
+		order := "ASC"
+		if strings.ToLower(sortOrder) == "desc" {
+			order = "DESC"
+		}
+		query = query.Order(fmt.Sprintf("%s %s", col, order))
+	}
 	query.Count(&total)
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&productos).Error
@@ -642,16 +663,46 @@ func (d *Db) generarNumeroFactura() string {
 }
 
 // ObtenerFacturas ahora consulta siempre la base de datos local para velocidad y consistencia.
-func (d *Db) ObtenerFacturas() ([]Factura, error) {
-	db := d.LocalDB // CAMBIO: Siempre se lee de la BD local.
+func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
+	d.Log.Infof("Fetching bills - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)
 	var facturas []Factura
-	err := db.Preload("Cliente").Preload("Vendedor").Order("id desc").Find(&facturas).Error
-	return facturas, err
+	var total int64
+	db := d.LocalDB
+	query := db.Model(&Factura{}).Preload("Cliente").Preload("Vendedor")
+	if search != "" {
+		searchTerm := "%" + strings.ToLower(search) + "%"
+		query = query.Joins("JOIN clientes ON clientes.id = facturas.cliente_id").
+			Joins("JOIN vendedors ON vendedors.id = facturas.vendedor_id").
+			Where("LOWER(facturas.numero_factura) LIKE ? OR LOWER(clientes.nombre) LIKE ? OR LOWER(clientes.apellido) LIKE ? OR LOWER(vendedors.nombre) LIKE ?",
+				searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+	allowedSortBy := map[string]string{
+		"NumeroFactura": "numero_factura",
+		"FechaEmision":  "fecha_emision",
+		"Cliente":       "clientes.nombre",
+		"Vendedor":      "vendedors.nombre",
+		"Total":         "total",
+	}
+	if col, ok := allowedSortBy[sortBy]; ok {
+		order := "ASC"
+		if strings.ToLower(sortOrder) == "desc" {
+			order = "DESC"
+		}
+		query = query.Order(fmt.Sprintf("%s %s", col, order))
+	} else {
+		query = query.Order("id DESC")
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return PaginatedResult{}, err
+	}
+	offset := (page - 1) * pageSize
+	err := query.Limit(pageSize).Offset(offset).Find(&facturas).Error
+
+	return PaginatedResult{Records: facturas, TotalRecords: total}, err
 }
 
 func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	var factura Factura
-	// Esta función ya consultaba la BD local, lo cual es correcto.
 	err := d.LocalDB.Preload("Cliente").Preload("Vendedor").Preload("Detalles.Producto").First(&factura, facturaID).Error
 	return factura, err
 }

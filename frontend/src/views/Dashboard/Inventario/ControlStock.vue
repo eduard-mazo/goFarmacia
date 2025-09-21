@@ -12,7 +12,6 @@ import {
 } from "@tanstack/vue-table";
 import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "@/utils";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -32,7 +31,6 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { ArrowUpDown, Edit } from "lucide-vue-next";
-
 import { backend } from "@/../wailsjs/go/models";
 import { ObtenerProductosPaginado } from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
@@ -43,52 +41,53 @@ interface ObtenerProductosPaginadoResponse {
   TotalRecords: number;
 }
 
-// --- State Management ---
 const listaProductos = ref<backend.Producto[]>([]);
 const totalProductos = ref(0);
 const busqueda = ref("");
 const sorting = ref<SortingState>([]);
 const isAdjustModalOpen = ref(false);
 const productoSeleccionado = ref<backend.Producto | null>(null);
+const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 15 });
 
-const pagination = ref<PaginationState>({
-  pageIndex: 0,
-  pageSize: 15,
-});
-
-// --- Data Fetching ---
 const cargarProductos = async () => {
   try {
     const currentPage = pagination.value.pageIndex + 1;
+    let sortBy = "";
+    let sortOrder = "asc";
+    if (sorting.value.length > 0) {
+      sortBy = sorting.value[0]!.id;
+      sortOrder = sorting.value[0]!.desc ? "desc" : "asc";
+    }
     const response: ObtenerProductosPaginadoResponse =
       await ObtenerProductosPaginado(
         currentPage,
         pagination.value.pageSize,
-        busqueda.value
+        busqueda.value,
+        sortBy,
+        sortOrder
       );
     listaProductos.value = response.Records || [];
     totalProductos.value = response.TotalRecords || 0;
   } catch (error) {
-    console.error(`Error al cargar productos: ${error}`);
     toast.error("Error al cargar productos", { description: `${error}` });
   }
 };
 
-// --- Column Definitions ---
 const columns: ColumnDef<backend.Producto>[] = [
   { accessorKey: "Codigo", header: "Código" },
   { accessorKey: "Nombre", header: "Nombre" },
   {
     accessorKey: "PrecioVenta",
     header: "Precio Venta",
-    cell: ({ row }) => {
-      const amount = parseFloat(row.getValue("PrecioVenta"));
-      const formatted = new Intl.NumberFormat("es-CO", {
-        style: "currency",
-        currency: "COP",
-      }).format(amount);
-      return h("div", { class: "text-right font-medium" }, formatted);
-    },
+    cell: ({ row }) =>
+      h(
+        "div",
+        { class: "text-right font-medium" },
+        new Intl.NumberFormat("es-CO", {
+          style: "currency",
+          currency: "COP",
+        }).format(parseFloat(row.getValue("PrecioVenta")))
+      ),
   },
   {
     accessorKey: "Stock",
@@ -111,30 +110,28 @@ const columns: ColumnDef<backend.Producto>[] = [
   },
   {
     id: "actions",
-    cell: ({ row }) => {
-      const producto = row.original;
-      return h(
+    cell: ({ row }) =>
+      h(
         Button,
         {
           variant: "outline",
           size: "sm",
-          onClick: () => handleOpenAdjustModal(producto),
+          onClick: () => handleOpenAdjustModal(row.original),
         },
         [h(Edit, { class: "w-4 h-4 mr-2" }), "Ajustar"]
-      );
-    },
+      ),
   },
 ];
 
-// --- Table Instance ---
 const table = useVueTable({
   get data() {
     return listaProductos.value;
   },
   columns,
+  manualPagination: true,
+  manualSorting: true,
   getCoreRowModel: getCoreRowModel(),
   getSortedRowModel: getSortedRowModel(),
-  manualPagination: true,
   get pageCount() {
     return Math.ceil(totalProductos.value / pagination.value.pageSize);
   },
@@ -150,35 +147,39 @@ const table = useVueTable({
   onSortingChange: (updater) => valueUpdater(updater, sorting),
 });
 
-// --- Computed & Watchers ---
 const pageCount = computed(() => table.getPageCount());
 const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => table.setPageIndex(newPage - 1),
 });
 
+function handleOpenAdjustModal(producto: backend.Producto) {
+  productoSeleccionado.value = producto;
+  isAdjustModalOpen.value = true;
+}
+async function handleStockUpdated() {
+  await cargarProductos();
+  productoSeleccionado.value = null;
+}
+
 onMounted(cargarProductos);
 watch(pagination, cargarProductos, { deep: true });
-
+watch(
+  sorting,
+  () => {
+    pagination.value.pageIndex = 0;
+    cargarProductos();
+  },
+  { deep: true }
+);
 let debounceTimer: number;
 watch(busqueda, () => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     pagination.value.pageIndex = 0;
     cargarProductos();
-  }, 300);
+  }, 150);
 });
-
-// --- Action Handlers ---
-function handleOpenAdjustModal(producto: backend.Producto) {
-  productoSeleccionado.value = producto;
-  isAdjustModalOpen.value = true;
-}
-
-async function handleStockUpdated() {
-  await cargarProductos();
-  productoSeleccionado.value = null;
-}
 </script>
 
 <template>
@@ -188,7 +189,6 @@ async function handleStockUpdated() {
     :producto="productoSeleccionado"
     @stock-updated="handleStockUpdated"
   />
-
   <div class="w-full">
     <h1 class="text-2xl font-semibold mb-4">Control de Stock</h1>
     <div class="flex items-center py-4">
@@ -198,39 +198,31 @@ async function handleStockUpdated() {
         v-model="busqueda"
       />
     </div>
-
     <div class="rounded-md border">
       <Table>
-        <TableHeader>
-          <TableRow
+        <TableHeader
+          ><TableRow
             v-for="headerGroup in table.getHeaderGroups()"
             :key="headerGroup.id"
-          >
-            <TableHead v-for="header in headerGroup.headers" :key="header.id">
-              <FlexRender
+            ><TableHead v-for="header in headerGroup.headers" :key="header.id"
+              ><FlexRender
                 v-if="!header.isPlaceholder"
                 :render="header.column.columnDef.header"
-                :props="header.getContext()"
-              />
-            </TableHead>
-          </TableRow>
-        </TableHeader>
+                :props="header.getContext()" /></TableHead></TableRow
+        ></TableHeader>
         <TableBody>
-          <template v-if="table.getRowModel().rows?.length">
-            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
-              <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
-                <FlexRender
+          <template v-if="table.getRowModel().rows?.length"
+            ><TableRow v-for="row in table.getRowModel().rows" :key="row.id"
+              ><TableCell v-for="cell in row.getVisibleCells()" :key="cell.id"
+                ><FlexRender
                   :render="cell.column.columnDef.cell"
-                  :props="cell.getContext()"
-                />
-              </TableCell>
-            </TableRow>
-          </template>
-          <TableRow v-else>
-            <TableCell :colspan="columns.length" class="h-24 text-center">
-              No se encontraron productos.
-            </TableCell>
-          </TableRow>
+                  :props="cell.getContext()" /></TableCell></TableRow
+          ></template>
+          <TableRow v-else
+            ><TableCell :colspan="columns.length" class="h-24 text-center"
+              >No se encontraron productos.</TableCell
+            ></TableRow
+          >
         </TableBody>
       </Table>
     </div>
@@ -244,24 +236,23 @@ async function handleStockUpdated() {
         show-edges
       >
         <PaginationContent v-slot="{ items }">
-          <PaginationPrevious />
-          <template v-for="(item, index) in items">
+          <PaginationPrevious /><template v-for="(item, index) in items">
             <PaginationItem
               v-if="item.type === 'page'"
               :key="index"
               :value="item.value"
               as-child
-            >
-              <Button
+              ><Button
                 class="w-10 h-10 p-0"
                 :variant="item.value === currentPage ? 'default' : 'outline'"
-              >
-                {{ item.value }}
-              </Button>
-            </PaginationItem>
-            <PaginationEllipsis v-else :key="item.type" :index="index" />
-          </template>
-          <PaginationNext />
+                >{{ item.value }}</Button
+              ></PaginationItem
+            >
+            <PaginationEllipsis
+              v-else
+              :key="item.type"
+              :index="index" /></template
+          ><PaginationNext />
         </PaginationContent>
       </Pagination>
     </div>

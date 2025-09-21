@@ -137,7 +137,7 @@ function handleDeleteConfirm() {
         </div>
       </div>
       <DialogFooter>
-        <Button variant="destructive" type="submit" @click="handleSaveChanges"
+        <Button type="submit" @click="handleSaveChanges"
           >Guardar cambios</Button
         >
       </DialogFooter>

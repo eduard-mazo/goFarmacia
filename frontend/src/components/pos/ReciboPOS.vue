@@ -4,54 +4,87 @@ import { backend } from "@/../wailsjs/go/models";
 defineProps<{
   factura: backend.Factura | null;
 }>();
+
+const formatCurrency = (value: number) => {
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(value);
+};
 </script>
 
 <template>
   <div
-    class="w-[116mm] bg-white text-black font-mono text-[20px] leading-tight p-2 box-border"
+    class="w-[116mm] max-w-full bg-white text-black font-mono text-[14px] leading-normal p-4 box-border"
     v-if="factura"
   >
-    <div class="text-center">
-      <p class="font-bold">goFarmacia</p>
-      <p>NIT: 123.456.789-0</p>
-      <p>Dirección de la farmacia</p>
+    <div class="text-center mb-2">
+      <p class="font-bold text-lg">DROGUERÍA LUNA</p>
+      <p>NIT: 70.120.237</p>
+      <p>Medellín, Antioquia</p>
     </div>
-    <div class="border-t border-dashed border-black my-1"></div>
-    <p>Factura: {{ factura.NumeroFactura }}</p>
-    <p>Fecha: {{ new Date(factura.fecha_emision).toLocaleString() }}</p>
-    <p>Cliente: {{ factura.Cliente.Nombre }} {{ factura.Cliente.Apellido }}</p>
-    <p>Vendedor: {{ factura.Vendedor.Nombre }}</p>
-    <div class="border-t border-dashed border-black my-1"></div>
-    <table class="w-full">
+    <div class="border-t border-dashed border-black my-2"></div>
+    <div class="space-y-1">
+      <p><span class="font-bold">Factura:</span> {{ factura.NumeroFactura }}</p>
+      <p>
+        <span class="font-bold">Fecha:</span>
+        {{ new Date(factura.fecha_emision).toLocaleString() }}
+      </p>
+      <p>
+        <span class="font-bold">Cliente:</span> {{ factura.Cliente.Nombre }}
+        {{ factura.Cliente.Apellido }}
+      </p>
+      <p>
+        <span class="font-bold">Vendedor:</span> {{ factura.Vendedor.Nombre }}
+      </p>
+    </div>
+    <div class="border-t border-dashed border-black my-2"></div>
+    <table class="w-full text-sm">
       <thead>
         <tr>
-          <th class="text-left font-normal border-b border-black">Cant</th>
-          <th class="text-left font-normal border-b border-black">Producto</th>
-          <th class="text-right font-normal border-b border-black">Total</th>
+          <th
+            class="text-left font-bold border-b-2 border-dashed border-black pb-1"
+          >
+            Cant
+          </th>
+          <th
+            class="text-left font-bold border-b-2 border-dashed border-black pb-1"
+          >
+            Producto
+          </th>
+          <th
+            class="text-right font-bold border-b-2 border-dashed border-black pb-1"
+          >
+            Total
+          </th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="item in factura.Detalles" :key="item.id">
-          <td>{{ item.Cantidad }}</td>
-          <td>{{ item.Producto.Nombre }}</td>
-          <td class="text-right">${{ item.PrecioTotal.toFixed(2) }}</td>
+          <td class="py-1">{{ item.Cantidad }}</td>
+          <td class="py-1">{{ item.Producto.Nombre }}</td>
+          <td class="text-right py-1">
+            {{ formatCurrency(item.PrecioTotal) }}
+          </td>
         </tr>
       </tbody>
     </table>
-    <div class="border-t border-dashed border-black my-1"></div>
-    <div class="space-y-1">
+    <div class="border-t border-dashed border-black my-2"></div>
+    <div class="space-y-1 text-base">
       <p class="flex justify-between">
-        <span>Subtotal:</span> <span>${{ factura.Subtotal.toFixed(2) }}</span>
+        <span>Subtotal:</span>
+        <span>{{ formatCurrency(factura.Subtotal) }}</span>
       </p>
       <p class="flex justify-between">
-        <span>IVA (19%):</span> <span>${{ factura.IVA.toFixed(2) }}</span>
+        <span>IVA (19%):</span> <span>{{ formatCurrency(factura.IVA) }}</span>
       </p>
-      <p class="flex justify-between font-bold">
-        <span>Total:</span> <span>${{ factura.Total.toFixed(2) }}</span>
+      <p class="flex justify-between font-bold text-lg">
+        <span>Total:</span> <span>{{ formatCurrency(factura.Total) }}</span>
       </p>
     </div>
-    <div class="border-t border-dashed border-black my-1"></div>
-    <div class="text-center">
+    <div class="border-t border-dashed border-black my-2"></div>
+    <div class="text-center mt-2">
       <p>¡Gracias por su compra!</p>
     </div>
   </div>

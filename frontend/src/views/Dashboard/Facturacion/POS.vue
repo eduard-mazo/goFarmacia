@@ -2,9 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
-import { useCartStore } from "@/stores/cart"; // [CORREGIDO]
-
-// Componentes de UI
+import { useCartStore } from "@/stores/cart";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,6 +52,16 @@ import {
 } from "@/../wailsjs/go/backend/Db";
 import { backend } from "@/../wailsjs/go/models";
 
+interface ObtenerProductosPaginadoResponse {
+  Records: backend.Producto[];
+  TotalRecords: number;
+}
+
+interface ObtenerClientePaginadoResponse {
+  Records: backend.Cliente[];
+  TotalRecords: number;
+}
+
 // [STORE] - AUTENTICACIÓN Y CARRITO
 const authStore = useAuthStore();
 const { user: authenticatedUser } = storeToRefs(authStore);
@@ -83,7 +91,6 @@ const searchResultItemsRef = ref<HTMLLIElement[]>([]);
 const highlightedIndex = ref(-1);
 
 // [SEARCH] - LÓGICA
-// --- INICIO DE LA CORRECCIÓN: Lógica de búsqueda mejorada para escáner de código de barras ---
 watch(busqueda, (nuevoValor) => {
   highlightedIndex.value = -1;
   searchResultItemsRef.value = [];
@@ -98,34 +105,32 @@ watch(busqueda, (nuevoValor) => {
   isLoading.value = true;
   debounceTimer.value = setTimeout(async () => {
     try {
-      const resultado = await ObtenerProductosPaginado(1, 10, trimmedValue);
-      const records = (resultado.Records as backend.Producto[]) || [];
+      const response: ObtenerProductosPaginadoResponse =
+        await ObtenerProductosPaginado(1, 10, busqueda.value, "", "asc");
 
       // Si hay exactamente 1 resultado y el código coincide, es un escaneo.
       // Agrégalo directamente al carrito.
       if (
-        records.length === 1 &&
-        records[0]!.Codigo.toLowerCase() === trimmedValue.toLowerCase()
+        response.Records.length === 1 &&
+        response.Records[0]!.Codigo.toLowerCase() === trimmedValue.toLowerCase()
       ) {
-        agregarAlCarrito(records[0]!);
+        agregarAlCarrito(response.Records[0]!);
         productosEncontrados.value = []; // Oculta el dropdown
       } else {
-        productosEncontrados.value = records;
-        if (records.length > 0) {
+        productosEncontrados.value = response.Records;
+        if (response.Records.length > 0) {
           highlightedIndex.value = 0;
         }
       }
     } catch (error) {
-      console.error("Error al buscar productos:", error);
       toast.error("Error de búsqueda", {
         description: "No se pudieron obtener los productos.",
       });
     } finally {
       isLoading.value = false;
     }
-  }, 150); // Reducir debounce para respuesta más rápida
+  }, 150);
 });
-// --- FIN DE LA CORRECCIÓN ---
 
 function agregarAlCarrito(producto: backend.Producto) {
   if (!producto) return;
@@ -267,9 +272,10 @@ async function finalizarVenta() {
 // [INIT & CLIENTE]
 async function cargarClienteGeneralPorDefecto() {
   try {
-    const res = await ObtenerClientesPaginado(1, 1, "222222222");
-    if (res && res.Records && res.Records.length > 0) {
-      const clienteGeneral = res.Records[0] as backend.Cliente;
+    const response: ObtenerClientePaginadoResponse =
+      await ObtenerClientesPaginado(1, 1, "222222222", "", "asc");
+    if (response && response.Records && response.Records.length > 0) {
+      const clienteGeneral = response.Records[0] as backend.Cliente;
       clienteID.value = clienteGeneral.id;
       clienteSeleccionado.value = `${clienteGeneral.Nombre} ${clienteGeneral.Apellido}`;
     } else {
@@ -278,7 +284,7 @@ async function cargarClienteGeneralPorDefecto() {
     }
   } catch (error) {
     console.warn("No se pudo cargar el cliente general por defecto:", error);
-    clienteID.value = 1;
+    clienteID.value = 222222222;
     clienteSeleccionado.value = "Cliente General";
   }
 }
