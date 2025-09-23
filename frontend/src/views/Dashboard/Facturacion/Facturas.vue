@@ -32,9 +32,12 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { ArrowUpDown, Eye } from "lucide-vue-next";
+import { ArrowUpDown, Eye, Loader2 } from "lucide-vue-next";
 import { backend } from "@/../wailsjs/go/models";
-import { ObtenerFacturasPaginado } from "@/../wailsjs/go/backend/Db";
+import {
+  ObtenerFacturasPaginado,
+  ObtenerDetalleFactura,
+} from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
 import ReciboPOS from "@/components/pos/ReciboPOS.vue";
 
@@ -50,6 +53,7 @@ const sorting = ref<SortingState>([]);
 const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 15 });
 const isModalOpen = ref(false);
 const facturaSeleccionada = ref<backend.Factura | null>(null);
+const loadingFacturaId = ref<number | null>(null);
 
 const cargarFacturas = async () => {
   try {
@@ -124,6 +128,7 @@ const columns: ColumnDef<backend.Factura>[] = [
         Button,
         {
           variant: "ghost",
+          class: "w-full flex justify-end",
           onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
         },
         () => ["Total", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
@@ -137,16 +142,25 @@ const columns: ColumnDef<backend.Factura>[] = [
   },
   {
     id: "actions",
-    cell: ({ row }) =>
-      h(
+    cell: ({ row }) => {
+      const isLoading = loadingFacturaId.value === row.original.id;
+      return h(
         Button,
         {
           variant: "outline",
           size: "sm",
+          disabled: isLoading,
           onClick: () => verDetalleFactura(row.original),
         },
-        [h(Eye, { class: "w-4 h-4 mr-2" }), "Ver Factura"]
-      ),
+        () =>
+          isLoading
+            ? [
+                h(Loader2, { class: "w-4 h-4 mr-2 animate-spin" }),
+                "Cargando...",
+              ]
+            : [h(Eye, { class: "w-4 h-4 mr-2" }), "Ver Factura"]
+      );
+    },
   },
 ];
 
@@ -158,7 +172,6 @@ const table = useVueTable({
   manualPagination: true,
   manualSorting: true,
   getCoreRowModel: getCoreRowModel(),
-  getSortedRowModel: getSortedRowModel(),
   get pageCount() {
     return Math.ceil(totalFacturas.value / pagination.value.pageSize);
   },
@@ -179,9 +192,17 @@ const currentPage = computed({
   get: () => pagination.value.pageIndex + 1,
   set: (newPage) => table.setPageIndex(newPage - 1),
 });
-function verDetalleFactura(factura: backend.Factura) {
-  facturaSeleccionada.value = factura;
-  isModalOpen.value = true;
+async function verDetalleFactura(factura: backend.Factura) {
+  loadingFacturaId.value = factura.id;
+  try {
+    const facturaCompleta = await ObtenerDetalleFactura(factura.id);
+    facturaSeleccionada.value = facturaCompleta;
+    isModalOpen.value = true;
+  } catch (error) {
+    toast.error("Error al cargar detalles", { description: `${error}` });
+  } finally {
+    loadingFacturaId.value = null;
+  }
 }
 
 onMounted(cargarFacturas);

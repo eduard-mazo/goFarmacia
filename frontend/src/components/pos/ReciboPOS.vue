@@ -85,13 +85,6 @@ const formatDate = (dateString: string) => {
     </table>
     <div class="border-t border-dashed border-black my-2"></div>
     <div class="space-y-1 text-base">
-      <p class="flex justify-between">
-        <span>Subtotal:</span>
-        <span>{{ formatCurrency(factura.Subtotal) }}</span>
-      </p>
-      <p class="flex justify-between">
-        <span>IVA (19%):</span> <span>{{ formatCurrency(factura.IVA) }}</span>
-      </p>
       <p class="flex justify-between font-bold text-lg">
         <span>Total:</span> <span>{{ formatCurrency(factura.Total) }}</span>
       </p>

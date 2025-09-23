@@ -608,7 +608,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	factura.Subtotal = subtotal
-	factura.IVA = subtotal * 0.19
+	factura.IVA = subtotal * 0
 	factura.Total = factura.Subtotal + factura.IVA
 	factura.NumeroFactura = d.generarNumeroFactura()
 
@@ -678,7 +678,16 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 			Where("LOWER(facturas.numero_factura) LIKE ? OR LOWER(clientes.nombre) LIKE ? OR LOWER(clientes.apellido) LIKE ? OR LOWER(vendedors.nombre) LIKE ?",
 				searchTerm, searchTerm, searchTerm, searchTerm)
 	}
-	allowedSortBy := map[string]string{"NumeroFactura": "numero_factura", "FechaEmision": "fecha_emision", "Cliente": "clientes.nombre", "Vendedor": "vendedors.nombre", "Total": "total"}
+
+	// El identificador 'fecha_emision' ahora coincide con el `accessorKey` del frontend
+	allowedSortBy := map[string]string{
+		"NumeroFactura": "numero_factura",
+		"fecha_emision": "fecha_emision",
+		"Cliente":       "clientes.nombre",
+		"Vendedor":      "vendedors.nombre",
+		"Total":         "total",
+	}
+
 	if col, ok := allowedSortBy[sortBy]; ok {
 		order := "ASC"
 		if strings.ToLower(sortOrder) == "desc" {
@@ -686,9 +695,9 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 		}
 		query = query.Order(fmt.Sprintf("%s %s", col, order))
 	} else {
-		query = query.Order("facturas.id DESC") // Se especifica la tabla para evitar ambigüedad
+		query = query.Order("facturas.id DESC")
 	}
-	// Se aplica el Count sobre la consulta ya construida (con joins si es necesario)
+
 	if err := query.Count(&total).Error; err != nil {
 		return PaginatedResult{}, err
 	}
@@ -698,7 +707,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 		return PaginatedResult{}, err
 	}
 	for i := range facturas {
-		facturas[i].Vendedor.Contrasena = "" // Limpia la contraseña
+		facturas[i].Vendedor.Contrasena = ""
 	}
 	return PaginatedResult{Records: facturas, TotalRecords: total}, nil
 }
@@ -707,7 +716,7 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	var factura Factura
 	err := d.LocalDB.Preload("Cliente").Preload("Vendedor").Preload("Detalles.Producto").First(&factura, facturaID).Error
 	if err == nil {
-		factura.Vendedor.Contrasena = "" // Limpia la contraseña
+		factura.Vendedor.Contrasena = ""
 	}
 	return factura, err
 }
