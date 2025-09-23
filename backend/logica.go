@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -334,17 +335,14 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 	defer tx.Rollback()
 
 	var existente Producto
-	// Usamos Unscoped() para buscar por el código único, incluso si está eliminado.
 	err := tx.Unscoped().Where("codigo = ?", producto.Codigo).First(&existente).Error
 
 	if err == nil {
-		// Se encontró un producto con el mismo código
-		if existente.DeletedAt.Valid { // El producto estaba eliminado
+		if existente.DeletedAt.Valid {
 			d.Log.Infof("Restaurando producto eliminado con ID: %d", existente.ID)
-			// Actualizamos sus datos y lo restauramos
 			existente.Nombre = producto.Nombre
 			existente.PrecioVenta = producto.PrecioVenta
-			existente.Stock = producto.Stock // Se puede decidir si se mantiene el stock anterior o se actualiza
+			existente.Stock = producto.Stock
 			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
 
 			if err := tx.Unscoped().Save(&existente).Error; err != nil {
@@ -352,24 +350,34 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 			}
 			producto = existente
 		} else {
-			// El producto existe y está activo
 			return Producto{}, errors.New("el código del producto ya está en uso")
 		}
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		// No existe, se crea uno nuevo
 		if err := tx.Create(&producto).Error; err != nil {
 			return Producto{}, fmt.Errorf("error al registrar nuevo producto: %w", err)
 		}
+
+		op := OperacionStock{
+			UUID:            uuid.New().String(),
+			ProductoID:      producto.ID,
+			TipoOperacion:   "INICIAL",
+			CantidadCambio:  producto.Stock,
+			StockResultante: producto.Stock,
+			VendedorID:      1, //  ID de un usuario "SISTEMA" o el admin
+			Timestamp:       time.Now(),
+		}
+		if err := tx.Create(&op).Error; err != nil {
+			return Producto{}, fmt.Errorf("error al crear la operación de stock inicial: %w", err)
+		}
 	} else {
-		// Otro error de base de datos
 		return Producto{}, err
 	}
 
 	if err := tx.Commit().Error; err != nil {
 		return Producto{}, fmt.Errorf("error al confirmar transacción: %w", err)
 	}
-
 	go d.syncProductoToRemote(producto.ID)
+	go d.SincronizarOperacionesStock()
 	return producto, nil
 }
 
@@ -378,57 +386,50 @@ func (d *Db) ActualizarProducto(p Producto) (string, error) {
 		return "", errors.New("para actualizar un producto se requiere un ID válido")
 	}
 
-	// Carga actual para tener valores previos (p. ej. para detectar cambio de código)
+	tx := d.LocalDB.Begin()
+	if tx.Error != nil {
+		return "", fmt.Errorf("error al iniciar transacción: %w", tx.Error)
+	}
+	defer tx.Rollback()
+
 	var cur Producto
-	if err := d.LocalDB.First(&cur, p.ID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cur, p.ID).Error; err != nil {
 		return "", err
 	}
 
-	// Solo actualizamos campos permitidos (no tocamos created_at ni deleted_at)
-	updates := map[string]interface{}{
-		"nombre":       p.Nombre,
-		"codigo":       p.Codigo,
-		"precio_venta": p.PrecioVenta,
-		"stock":        p.Stock,
-	}
+	cantidadCambio := p.Stock - cur.Stock
 
-	// Update local sin sobrescribir toda la fila
-	if err := d.LocalDB.Model(&Producto{}).
-		Where("id = ?", p.ID).
-		Updates(updates).Error; err != nil {
+	updates := map[string]interface{}{"nombre": p.Nombre, "precio_venta": p.PrecioVenta}
+	if err := tx.Model(&Producto{}).Where("id = ?", p.ID).Updates(updates).Error; err != nil {
 		return "", err
 	}
 
-	// Sincroniza remoto con UPSERT por "codigo"
-	go func(id uint, oldCode, newCode string) {
-		if !d.isRemoteDBAvailable() {
-			return
+	// Si hubo un cambio en el stock, se registra la operación
+	if cantidadCambio != 0 {
+		op := OperacionStock{
+			UUID:            uuid.New().String(),
+			ProductoID:      p.ID,
+			TipoOperacion:   "AJUSTE",
+			CantidadCambio:  cantidadCambio,
+			StockResultante: p.Stock,
+			VendedorID:      1, // Debería ser el ID del usuario logueado
+			Timestamp:       time.Now(),
+		}
+		if err := tx.Create(&op).Error; err != nil {
+			return "", fmt.Errorf("error al crear la operación de ajuste: %w", err)
 		}
 
-		// Cargamos de nuevo el registro local ya actualizado para enviarlo completo
-		var record Producto
-		if err := d.LocalDB.First(&record, id).Error; err != nil {
-			d.Log.Warnf("Fallo al cargar producto actualizado (ID %d) para sync remoto: %v", id, err)
-			return
+		// Actualizamos el stock en la tabla de productos (nuestra caché)
+		if err := tx.Model(&Producto{}).Where("id = ?", p.ID).Update("stock", p.Stock).Error; err != nil {
+			return "", err
 		}
+	}
 
-		// UPSERT en remoto tomando "codigo" como clave natural
-		if err := d.RemoteDB.
-			Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "codigo"}},
-				DoUpdates: clause.AssignmentColumns([]string{"nombre", "precio_venta", "stock", "updated_at"}),
-			}).
-			Create(&record).Error; err != nil {
-			d.Log.Warnf("Fallo al sincronizar la actualización para Producto ID %d: %v", id, err)
-		}
-
-		if strings.TrimSpace(oldCode) != "" && oldCode != newCode {
-			if err := d.RemoteDB.Unscoped().Where("codigo = ?", oldCode).Delete(&Producto{}).Error; err != nil {
-				d.Log.Warnf("No se pudo eliminar en remoto el producto con código antiguo '%s': %v", oldCode, err)
-			}
-		}
-	}(p.ID, cur.Codigo, p.Codigo)
-
+	if err := tx.Commit().Error; err != nil {
+		return "", fmt.Errorf("error al confirmar transacción: %w", err)
+	}
+	go d.syncProductoToRemote(p.ID)
+	go d.SincronizarOperacionesStock()
 	return "Producto actualizado localmente. Sincronizando...", nil
 }
 
@@ -559,13 +560,12 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	if tx.Error != nil {
 		return Factura{}, fmt.Errorf("error al iniciar transacción local: %w", tx.Error)
 	}
-	defer tx.Rollback() // Se revierte si algo falla
+	defer tx.Rollback()
 
 	var vendedor Vendedor
 	if err := tx.First(&vendedor, req.VendedorID).Error; err != nil {
 		return Factura{}, errors.New("vendedor no encontrado")
 	}
-
 	var cliente Cliente
 	if err := tx.First(&cliente, req.ClienteID).Error; err != nil {
 		return Factura{}, errors.New("cliente no encontrado")
@@ -592,6 +592,23 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 			return Factura{}, fmt.Errorf("stock insuficiente para %s. Disponible: %d, Solicitado: %d", producto.Nombre, producto.Stock, p.Cantidad)
 		}
 
+		nuevoStock := producto.Stock - p.Cantidad
+		op := OperacionStock{
+			UUID:            uuid.New().String(),
+			ProductoID:      producto.ID,
+			TipoOperacion:   "VENTA",
+			CantidadCambio:  -p.Cantidad,
+			StockResultante: nuevoStock,
+			VendedorID:      req.VendedorID,
+			Timestamp:       time.Now(),
+		}
+		if err := tx.Create(&op).Error; err != nil {
+			return Factura{}, fmt.Errorf("error creando operación de stock para %s: %w", producto.Nombre, err)
+		}
+
+		if err := tx.Model(&producto).Update("Stock", nuevoStock).Error; err != nil {
+			return Factura{}, fmt.Errorf("error al actualizar el stock de %s: %w", producto.Nombre, err)
+		}
 		precioTotalProducto := p.PrecioUnitario * float64(p.Cantidad)
 		subtotal += precioTotalProducto
 
@@ -622,34 +639,16 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	if err := tx.Create(&detallesFactura).Error; err != nil {
 		return Factura{}, fmt.Errorf("error al crear los detalles de la factura: %w", err)
 	}
+	if err := tx.Model(&OperacionStock{}).Where("factura_id IS NULL AND vendedor_id = ? AND timestamp > ?", req.VendedorID, time.Now().Add(-5*time.Second)).Update("factura_id", factura.ID).Error; err != nil {
+		return Factura{}, fmt.Errorf("error al asociar factura a operaciones de stock: %w", err)
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		return Factura{}, fmt.Errorf("error al confirmar transacción local: %w", err)
 	}
 
-	// Sincronizar la venta con la base de datos remota en segundo plano
 	go d.syncVentaToRemote(factura.ID)
-
-	// --- INICIO DE LA CORRECCIÓN ---
-	// Añadimos una nueva goroutine para actualizar el stock en la BD remota.
-	// Esto no bloquea la respuesta al usuario y resuelve la inconsistencia de datos.
-	go func(productosVendidos []ProductoVenta) {
-		if !d.isRemoteDBAvailable() {
-			return // No hacer nada si estamos offline
-		}
-		d.Log.Info("Iniciando sincronización de stock en remoto...")
-		for _, p := range productosVendidos {
-			// Usamos GORM para construir una sentencia UPDATE segura:
-			// UPDATE productos SET stock = stock - [cantidad] WHERE id = [id]
-			err := d.RemoteDB.Model(&Producto{}).Where("id = ?", p.ID).Update("Stock", gorm.Expr("Stock - ?", p.Cantidad)).Error
-			if err != nil {
-				// Si falla, solo lo registramos, no detenemos la aplicación.
-				d.Log.Warnf("Fallo al sincronizar el stock del producto ID %d en remoto: %v", p.ID, err)
-			}
-		}
-		d.Log.Info("Sincronización de stock en remoto finalizada.")
-	}(req.Productos) // Pasamos una copia de los productos de la request
-	// --- FIN DE LA CORRECCIÓN ---
+	go d.SincronizarOperacionesStock()
 
 	return d.ObtenerDetalleFactura(factura.ID)
 }

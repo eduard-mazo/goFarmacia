@@ -7,7 +7,6 @@ import type {
 import {
   FlexRender,
   getCoreRowModel,
-  getSortedRowModel,
   useVueTable,
 } from "@tanstack/vue-table";
 import { h, ref, onMounted, watch, computed } from "vue";
@@ -236,7 +235,6 @@ watch(busqueda, () => {
     </DialogContent>
   </Dialog>
   <div class="w-full">
-    <h1 class="text-2xl font-semibold mb-4">Historial de Facturas</h1>
     <div class="flex items-center py-4">
       <Input
         class="max-w-sm h-10"

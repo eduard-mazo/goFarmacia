@@ -15,7 +15,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// --- DATABASE STRUCTS (sin cambios) ---
+type OperacionStock struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	UUID            string    `gorm:"uniqueIndex" json:"uuid"`
+	ProductoID      uint      `json:"producto_id"`
+	TipoOperacion   string    `json:"tipo_operacion"`
+	CantidadCambio  int       `json:"cantidad_cambio"`
+	StockResultante int       `json:"stock_resultante"`
+	VendedorID      uint      `json:"vendedor_id"`
+	FacturaID       *uint     `json:"factura_id"`
+	Timestamp       time.Time `json:"timestamp"`
+	Sincronizado    bool      `gorm:"default:false" json:"sincronizado"`
+}
 
 type Vendedor struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
@@ -118,8 +129,6 @@ type DetalleCompra struct {
 	PrecioCompraUnitario float64  `json:"PrecioCompraUnitario"`
 }
 
-// --- REQUEST/RESPONSE STRUCTS ---
-
 type VentaRequest struct {
 	ClienteID  uint            `json:"ClienteID"`
 	VendedorID uint            `json:"VendedorID"`
@@ -127,7 +136,6 @@ type VentaRequest struct {
 	MetodoPago string          `json:"MetodoPago"`
 }
 
-// AJUSTE: Se añade PrecioUnitario para capturarlo desde el frontend
 type ProductoVenta struct {
 	ID             uint    `json:"ID"`
 	Cantidad       int     `json:"Cantidad"`
@@ -156,9 +164,6 @@ type PaginatedResult struct {
 	TotalRecords int64       `json:"TotalRecords"`
 }
 
-// --- DATABASE LOGIC (sin cambios) ---
-
-// Db struct now holds connections for both local and remote databases
 type Db struct {
 	ctx      context.Context
 	LocalDB  *gorm.DB // For SQLite
@@ -168,15 +173,12 @@ type Db struct {
 }
 
 func NewDb() *Db {
-	// Configura el logger aquí
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,
 		ForceColors:   true,
 	})
-	logger.SetLevel(logrus.DebugLevel) // Muestra todo durante el desarrollo
-
-	// Retorna la instancia de Db con el logger ya inicializado
+	logger.SetLevel(logrus.DebugLevel)
 	return &Db{Log: logger}
 }
 
@@ -189,52 +191,38 @@ func (d *Db) Startup(ctx context.Context) {
 
 func (d *Db) initDB() {
 	var err error
-
-	// --- 1. Initialize Local SQLite Database ---
-	// Silenciar los logs de GORM para la base de datos local
 	d.LocalDB, err = gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: "file:farmacia.db"}, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		d.Log.Fatalf("FATAL: Failed to connect to local SQLite database: %v", err)
 	}
 	d.Log.Info("✅ Local SQLite database connected successfully.")
+	models := []interface{}{&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{}, &Proveedor{}, &Compra{}, &DetalleCompra{}, &OperacionStock{}}
 
-	// List of all models to migrate for both databases
-	models := []interface{}{&Vendedor{}, &Cliente{}, &Producto{}, &Factura{}, &DetalleFactura{}, &Proveedor{}, &Compra{}, &DetalleCompra{}}
-
-	// Auto-migrate schema for the local database
 	err = d.LocalDB.AutoMigrate(models...)
 	if err != nil {
 		d.Log.Fatalf("FATAL: Failed to migrate local database schema: %v", err)
 	}
 	d.Log.Info("✅ Local database schema migrated successfully.")
 
-	// --- 2. Initialize Remote Supabase Database ---
-	// Carga las variables de entorno del archivo .env
 	err = godotenv.Load()
 	if err != nil {
 		d.Log.Fatalf("Error loading .env file: %v", err)
 	}
-
 	secret := os.Getenv("JWT_SECRET_KEY")
 	if secret == "" {
 		d.Log.Fatalf("FATAL: La variable de entorno JWT_SECRET_KEY no está configurada.")
 	}
 	d.jwtKey = []byte(secret)
 	d.Log.Info("✅ Clave secreta JWT cargada exitosamente.")
-
 	d.RemoteDB, err = gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{})
 	if err != nil {
 		d.Log.Warnf("WARNING: Failed to connect to remote Supabase database. App will run in offline mode. Error: %v", err)
-		d.RemoteDB = nil // Ensure RemoteDB is nil if connection fails
+		d.RemoteDB = nil
 	} else {
 		d.Log.Info("✅ Remote Supabase database connected successfully.")
-		// Migramos el esquema en la base de datos remota también.
-		// Esto asegura que las tablas existan antes de que la sincronización intente leerlas.
 		d.Log.Info("Migrating remote database schema...")
 		err = d.RemoteDB.AutoMigrate(models...)
 		if err != nil {
-			// Si la migración remota falla, no podemos confiar en la conexión.
-			// Volvemos al modo offline para evitar más errores.
 			d.Log.Errorf("ERROR: Failed to migrate remote schema. Falling back to offline mode. Error: %v", err)
 			d.RemoteDB = nil
 		} else {
@@ -243,7 +231,6 @@ func (d *Db) initDB() {
 	}
 }
 
-// Check if the remote database is available
 func (d *Db) isRemoteDBAvailable() bool {
 	return d.RemoteDB != nil
 }
@@ -252,25 +239,18 @@ func (d *Db) isRemoteDBAvailable() bool {
 // ¡ADVERTENCIA! ESTA ACCIÓN BORRARÁ TODOS LOS DATOS PERMANENTEMENTE.
 func (d *Db) DeepResetDatabases() error {
 	d.Log.Warn("¡INICIANDO DEEP RESET! Todos los datos serán eliminados.")
-
-	// Lista de modelos en orden inverso de dependencia para un borrado seguro.
-	// Los detalles se borran antes que las tablas maestras (Factura, Compra).
 	modelsToReset := []interface{}{
 		&DetalleFactura{}, &DetalleCompra{}, &Factura{}, &Compra{},
-		&Vendedor{}, &Cliente{}, &Producto{}, &Proveedor{},
+		&Vendedor{}, &Cliente{}, &Producto{}, &Proveedor{}, &OperacionStock{},
 	}
 
-	// --- 1. Resetear Base de Datos Local (SQLite) ---
 	d.Log.Info("Reseteando la base de datos local...")
-	// Eliminar todas las tablas.
 	err := d.LocalDB.Migrator().DropTable(modelsToReset...)
 	if err != nil {
 		d.Log.Errorf("Error al eliminar las tablas locales: %v", err)
 		return fmt.Errorf("error al eliminar las tablas locales: %w", err)
 	}
 	d.Log.Info("Tablas locales eliminadas con éxito.")
-
-	// Volver a crear el esquema.
 	err = d.LocalDB.AutoMigrate(modelsToReset...)
 	if err != nil {
 		d.Log.Errorf("Error al recrear el esquema local: %v", err)
@@ -278,14 +258,12 @@ func (d *Db) DeepResetDatabases() error {
 	}
 	d.Log.Info("✅ Esquema local recreado con éxito.")
 
-	// --- 2. Resetear Base de Datos Remota (Supabase/PostgreSQL) ---
 	if !d.isRemoteDBAvailable() {
 		d.Log.Warn("La base de datos remota no está disponible. Omitiendo reseteo remoto.")
 		return nil
 	}
 
 	d.Log.Info("Reseteando la base de datos remota...")
-	// Eliminar todas las tablas.
 	err = d.RemoteDB.Migrator().DropTable(modelsToReset...)
 	if err != nil {
 		d.Log.Errorf("Error al eliminar las tablas remotas: %v", err)
@@ -293,7 +271,6 @@ func (d *Db) DeepResetDatabases() error {
 	}
 	d.Log.Info("Tablas remotas eliminadas con éxito.")
 
-	// Volver a crear el esquema.
 	err = d.RemoteDB.AutoMigrate(modelsToReset...)
 	if err != nil {
 		d.Log.Errorf("Error al recrear el esquema remoto: %v", err)

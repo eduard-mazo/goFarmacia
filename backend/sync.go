@@ -15,19 +15,75 @@ type RecordInfo struct {
 	Record    interface{}
 }
 
+func (d *Db) SincronizarOperacionesStock() {
+	if !d.isRemoteDBAvailable() {
+		log.Println("Modo offline. Omitiendo sincronización de operaciones de stock.")
+		return
+	}
+	log.Println("INICIO: Sincronización de Operaciones de Stock")
+
+	var operacionesLocales []OperacionStock
+	if err := d.LocalDB.Where("sincronizado = ?", false).Find(&operacionesLocales).Error; err != nil {
+		log.Printf("Error al obtener operaciones de stock locales: %v", err)
+		return
+	}
+
+	if len(operacionesLocales) == 0 {
+		log.Println("No hay nuevas operaciones de stock para sincronizar.")
+		return
+	}
+
+	log.Printf("Enviando %d operaciones de stock al servidor remoto...", len(operacionesLocales))
+	if err := d.RemoteDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "uuid"}},
+		DoNothing: true,
+	}).Create(&operacionesLocales).Error; err != nil {
+		log.Printf("Error al sincronizar operaciones de stock hacia remoto: %v", err)
+		return
+	}
+
+	var uuids []string
+	for _, op := range operacionesLocales {
+		uuids = append(uuids, op.UUID)
+	}
+	if err := d.LocalDB.Model(&OperacionStock{}).Where("uuid IN ?", uuids).Update("sincronizado", true).Error; err != nil {
+		log.Printf("Error al marcar operaciones de stock como sincronizadas: %v", err)
+	}
+
+	log.Println("FIN: Sincronización de Operaciones de Stock completada.")
+}
+
+func (d *Db) RecalcularStockProducto(productoID uint) error {
+	var totalStock int
+
+	err := d.LocalDB.Model(&OperacionStock{}).
+		Where("producto_id = ?", productoID).
+		Select("sum(cantidad_cambio)").
+		Row().
+		Scan(&totalStock)
+	if err != nil {
+		return err
+	}
+
+	return d.LocalDB.Model(&Producto{}).Where("id = ?", productoID).Update("stock", totalStock).Error
+}
+
 // SincronizacionInteligente ejecuta una reconciliación profunda entre la BD local y remota.
 func (d *Db) SincronizacionInteligente() {
 	if !d.isRemoteDBAvailable() {
 		log.Println("Modo offline. Omitiendo sincronización inteligente.")
 		return
 	}
-	log.Println("INICIO: Sincronización Inteligente")
+	log.Println("[INICIO]: Sincronización Inteligente para modelos no transaccionales")
 	d.sincronizarModelo(&[]Vendedor{}, "Vendedores")
 	d.sincronizarModelo(&[]Cliente{}, "Clientes")
-	d.sincronizarModelo(&[]Producto{}, "Productos")
 	d.sincronizarModelo(&[]Proveedor{}, "Proveedores")
-	d.SincronizarHaciaLocal() // Sincroniza facturas y compras que no se reconcilian.
-	log.Println("FIN: Sincronización Inteligente")
+
+	// Sincronizar las nuevas operaciones de stock
+	d.SincronizarOperacionesStock()
+
+	d.SincronizarHaciaLocal()
+	log.Println("[FIN]: Sincronización Inteligente")
 }
 
 // sincronizarModelo es el corazón del algoritmo de reconciliación para un modelo de datos específico.

@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import type { SidebarProps } from "@/components/ui/sidebar";
-import { Wallet, HandCoins, Users } from "lucide-vue-next";
+// CAMBIO: Se importan nuevos íconos más descriptivos
+import {
+  LayoutDashboard,
+  Store,
+  History,
+  Package,
+  Warehouse,
+  Users,
+  Contact,
+  UserCog,
+} from "lucide-vue-next";
 import NavMain from "@/components/layout/NavMain.vue";
 import NavUser from "@/components/layout/NavUser.vue";
 import {
@@ -13,29 +23,30 @@ const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: "icon",
 });
 
+// CAMBIO: Se actualiza la estructura de navegación con los nuevos íconos
 const data = {
   navMain: [
     {
       title: "Facturación",
       url: "/dashboard",
-      icon: Wallet,
+      icon: LayoutDashboard, // Ícono más general para un dashboard
       items: [
         {
           title: "Punto de venta POS",
           url: "/dashboard/pos",
-          icon: HandCoins,
+          icon: Store, // Ícono de tienda, más adecuado para POS
         },
         {
           title: "Facturas",
           url: "/dashboard/facturas",
-          icon: HandCoins,
+          icon: History, // Ícono de historial, perfecto para facturas pasadas
         },
       ],
     },
     {
       title: "Catalogo",
       url: "/dashboard",
-      icon: Users,
+      icon: Package, // Ícono de paquete para productos
       items: [
         {
           title: "Productos",
@@ -46,7 +57,7 @@ const data = {
     {
       title: "Inventario",
       url: "/dashboard",
-      icon: Users,
+      icon: Warehouse, // Ícono de almacén para stock
       items: [
         {
           title: "Control de Stock",
@@ -57,15 +68,17 @@ const data = {
     {
       title: "Personas",
       url: "/dashboard",
-      icon: Users,
+      icon: Users, // Ícono de grupo para la sección principal
       items: [
         {
           title: "Información Clientes",
           url: "/dashboard/clientes",
+          icon: Contact, // Ícono específico para clientes/contactos
         },
         {
           title: "Información Vendedores",
           url: "/dashboard/vendedores",
+          icon: UserCog, // Ícono de usuario con engranaje para personal/vendedores
         },
       ],
     },
