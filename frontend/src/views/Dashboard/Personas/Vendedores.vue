@@ -45,6 +45,11 @@ import {
   ActualizarVendedor,
 } from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
+import { useAuthStore } from "@/stores/auth";
+import { storeToRefs } from "pinia";
+
+const authStore = useAuthStore();
+const { user: authenticatedUser } = storeToRefs(authStore);
 
 interface ObtenerVendedoresPaginadoResponse {
   Records: backend.Vendedor[];
@@ -129,14 +134,17 @@ const columns: ColumnDef<backend.Vendedor>[] = [
   {
     id: "actions",
     enableHiding: false,
-    cell: ({ row }) =>
-      h("div", { class: "relative" }, [
+    cell: ({ row }) => {
+      const isCurrentUser = row.original.id === authenticatedUser.value?.id;
+      return h("div", { class: "relative" }, [
         h(DropdownAction, {
           vendedor: row.original,
+          disabled: isCurrentUser,
           onEdit: (v: backend.Vendedor) => handleEdit(v),
           onDelete: (v: backend.Vendedor) => handleDelete(v),
         }),
-      ]),
+      ]);
+    },
   },
 ];
 
@@ -182,6 +190,12 @@ async function handleEdit(vendedor: backend.Vendedor) {
   }
 }
 async function handleDelete(vendedor: backend.Vendedor) {
+  if (vendedor.id === authenticatedUser.value?.id) {
+    toast.error("Acción no permitida", {
+      description: "No puedes eliminar tu propio usuario.",
+    });
+    return;
+  }
   try {
     await EliminarVendedor(vendedor.id);
     await cargarVendedores();

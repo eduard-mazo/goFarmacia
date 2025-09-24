@@ -92,7 +92,7 @@ function handleDeleteConfirm() {
     </DropdownMenuContent>
   </DropdownMenu>
   <Dialog v-model:open="isEditDialogOpen">
-    <DialogContent class="sm:max-w-[425px]">
+    <DialogContent class="w-11/12 md:max-w-[700px]">
       <DialogHeader>
         <DialogTitle>Editar Producto</DialogTitle>
         <DialogDescription>
@@ -146,7 +146,7 @@ function handleDeleteConfirm() {
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>¿Estás absolutely seguro?</AlertDialogTitle>
+        <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
         <AlertDialogDescription>
           Esta acción no se puede deshacer. Esto eliminará permanentemente el
           producto

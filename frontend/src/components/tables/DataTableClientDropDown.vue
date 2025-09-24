@@ -96,7 +96,7 @@ function handleDeleteConfirm() {
     </DropdownMenuContent>
   </DropdownMenu>
   <Dialog v-model:open="isEditDialogOpen">
-    <DialogContent class="sm:max-w-[425px]">
+    <DialogContent class="w-11/12 md:max-w-[700px]">
       <DialogHeader>
         <DialogTitle>Editar Cliente</DialogTitle>
         <DialogDescription>

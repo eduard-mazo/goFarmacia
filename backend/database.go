@@ -164,6 +164,16 @@ type PaginatedResult struct {
 	TotalRecords int64       `json:"TotalRecords"`
 }
 
+type VendedorUpdateRequest struct {
+	ID               uint   `json:"ID"`
+	Nombre           string `json:"Nombre"`
+	Apellido         string `json:"Apellido"`
+	Cedula           string `json:"Cedula"`
+	Email            string `json:"Email"`
+	ContrasenaActual string `json:"ContrasenaActual,omitempty"`
+	ContrasenaNueva  string `json:"ContrasenaNueva,omitempty"`
+}
+
 type Db struct {
 	ctx      context.Context
 	LocalDB  *gorm.DB // For SQLite

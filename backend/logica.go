@@ -118,6 +118,51 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	return response, nil
 }
 
+func (d *Db) ActualizarPerfilVendedor(req VendedorUpdateRequest) (string, error) {
+	if req.ID == 0 {
+		return "", errors.New("se requiere un ID de vendedor válido")
+	}
+
+	var vendedorActual Vendedor
+	if err := d.LocalDB.First(&vendedorActual, req.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", errors.New("vendedor no encontrado")
+		}
+		return "", err
+	}
+
+	// --- Lógica de actualización de contraseña ---
+	if req.ContrasenaNueva != "" {
+		// 1. Verificar si la contraseña actual proporcionada es correcta
+		if !CheckPasswordHash(req.ContrasenaActual, vendedorActual.Contrasena) {
+			return "", errors.New("la contraseña actual es incorrecta")
+		}
+
+		// 2. Hashear la nueva contraseña
+		hashedPassword, err := HashPassword(req.ContrasenaNueva)
+		if err != nil {
+			return "", fmt.Errorf("error al encriptar la nueva contraseña: %w", err)
+		}
+		vendedorActual.Contrasena = hashedPassword // Actualizamos la contraseña en el modelo
+	}
+
+	// --- Actualizar otros datos del perfil ---
+	vendedorActual.Nombre = req.Nombre
+	vendedorActual.Apellido = req.Apellido
+	vendedorActual.Cedula = req.Cedula
+	vendedorActual.Email = strings.ToLower(req.Email)
+
+	// Guardar todos los cambios en la base de datos
+	if err := d.LocalDB.Save(&vendedorActual).Error; err != nil {
+		return "", err
+	}
+
+	// Sincronizar con la base de datos remota en segundo plano
+	go d.syncVendedorToRemote(vendedorActual.ID)
+
+	return "Perfil actualizado correctamente.", nil
+}
+
 // ObtenerVendedoresPaginado ahora consulta siempre la base de datos local para velocidad y consistencia.
 func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
 	d.Log.Infof("Fetching vendedores - Page: %d, PageSize: %d, Search: '%s'", page, pageSize, search)

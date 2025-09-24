@@ -33,7 +33,6 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      // Resetear el formulario al abrir
       producto.value = new backend.Producto({
         Codigo: props.initialCodigo || "",
         Nombre: "",
@@ -71,7 +70,7 @@ async function handleSubmit() {
 
 <template>
   <Dialog :open="open" @update:open="(value) => emit('update:open', value)">
-    <DialogContent class="sm:max-w-[425px]">
+    <DialogContent class="sm:max-w-md">
       <DialogHeader>
         <DialogTitle>Crear Nuevo Producto</DialogTitle>
         <DialogDescription>

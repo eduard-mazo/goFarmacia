@@ -26,16 +26,14 @@ export const useAuthStore = defineStore("auth", () => {
 
   // --- ACTIONS ---
 
-  // Función para establecer el estado de autenticación
+
   function setAuth(data: backend.LoginResponse) {
     user.value = data.vendedor;
     token.value = data.token;
     localStorage.setItem("authToken", data.token);
-    // Puedes también guardar el usuario, pero el token es lo esencial.
     localStorage.setItem("authUser", JSON.stringify(data.vendedor));
   }
 
-  // Función para limpiar el estado de autenticación
   function clearAuth() {
     user.value = null;
     token.value = null;
@@ -43,7 +41,6 @@ export const useAuthStore = defineStore("auth", () => {
     localStorage.removeItem("authUser");
   }
 
-  // Acción para registrar un nuevo vendedor
   async function register(vendedorData: backend.Vendedor) {
     try {
       // La contraseña ya está en vendedorData.Contrasena
@@ -55,7 +52,6 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
-  // Acción para iniciar sesión
   async function login(email: string, contrasena: string) {
     try {
       const loginRequest: backend.LoginRequest = {
@@ -75,20 +71,27 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
-  // Acción para cerrar sesión
   function logout() {
     clearAuth();
-    // Redirigir al login
     router.push("/login");
   }
 
-  // Acción para intentar auto-login al cargar la app
   function tryAutoLogin() {
     const storedToken = localStorage.getItem("authToken");
     const storedUser = localStorage.getItem("authUser");
     if (storedToken && storedUser) {
       token.value = storedToken;
       user.value = JSON.parse(storedUser);
+    }
+  }
+
+  // NUEVA ACCIÓN: Para actualizar los datos del usuario en el estado
+  function updateUser(updatedUserData: Partial<backend.Vendedor>) {
+    if (user.value) {
+      // Fusionamos los datos nuevos con los existentes
+      user.value = { ...user.value, ...updatedUserData };
+      // Actualizamos también el localStorage para persistencia
+      localStorage.setItem("authUser", JSON.stringify(user.value));
     }
   }
 
@@ -102,5 +105,6 @@ export const useAuthStore = defineStore("auth", () => {
     login,
     logout,
     tryAutoLogin,
+    updateUser,
   };
 });

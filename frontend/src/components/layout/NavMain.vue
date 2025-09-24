@@ -14,7 +14,7 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  SidebarMenuSubItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 
 defineProps<{
@@ -29,6 +29,14 @@ defineProps<{
     }[];
   }[];
 }>();
+
+const { state, setOpen } = useSidebar();
+
+function handleMenuClick() {
+  if (state.value === "collapsed") {
+    setOpen(true);
+  }
+}
 </script>
 
 <template>
@@ -43,7 +51,7 @@ defineProps<{
         class="group/collapsible"
       >
         <SidebarMenuItem>
-          <CollapsibleTrigger as-child>
+          <CollapsibleTrigger as-child @click="handleMenuClick">
             <SidebarMenuButton :tooltip="item.title">
               <component :is="item.icon" v-if="item.icon" />
               <span>{{ item.title }}</span>
