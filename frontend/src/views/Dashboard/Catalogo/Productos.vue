@@ -12,6 +12,13 @@ import {
 } from "@tanstack/vue-table";
 import { Card } from "@/components/ui/card";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -58,7 +65,7 @@ const totalProductos = ref(0);
 const busqueda = ref("");
 const sorting = ref<SortingState>([]);
 const isCreateModalOpen = ref(false);
-const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 15 });
+const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 10 });
 
 const cargarProductos = async () => {
   try {
@@ -300,35 +307,63 @@ watch(busqueda, () => {
         </TableBody>
       </Table>
     </Card>
-    <div class="flex items-center justify-end space-x-2 py-4">
-      <Pagination
-        v-if="pageCount > 1"
-        v-model:page="currentPage"
-        :total="totalProductos"
-        :items-per-page="pagination.pageSize"
-        :sibling-count="1"
-        show-edges
-      >
-        <PaginationContent v-slot="{ items }">
-          <PaginationPrevious /><template v-for="(item, index) in items">
-            <PaginationItem
-              v-if="item.type === 'page'"
-              :key="index"
-              :value="item.value"
-              as-child
-              ><Button
-                class="w-10 h-10 p-0"
-                :variant="item.value === currentPage ? 'default' : 'outline'"
-                >{{ item.value }}</Button
-              ></PaginationItem
-            >
-            <PaginationEllipsis
-              v-else
-              :key="item.type"
-              :index="index" /></template
-          ><PaginationNext />
-        </PaginationContent>
-      </Pagination>
+    <div class="flex items-center justify-between space-x-2 py-4">
+      <div class="flex-1 text-sm text-muted-foreground">
+        Total, {{ totalProductos }} producto(s).
+      </div>
+      <div class="flex items-center space-x-4">
+        <div class="flex items-center space-x-2">
+          <p class="text-sm font-medium">Filas</p>
+          <Select
+            :model-value="`${table.getState().pagination.pageSize}`"
+            @update:model-value="(value) => table.setPageSize(Number(value))"
+          >
+            <SelectTrigger class="h-8 w-[70px]">
+              <SelectValue
+                :placeholder="`${table.getState().pagination.pageSize}`"
+              />
+            </SelectTrigger>
+            <SelectContent side="top">
+              <SelectItem
+                v-for="size in [5, 10, 15, 20]"
+                :key="size"
+                :value="`${size}`"
+              >
+                {{ size }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Pagination
+          v-if="pageCount > 1"
+          v-model:page="currentPage"
+          :total="totalProductos"
+          :items-per-page="pagination.pageSize"
+          :sibling-count="1"
+          show-edges
+        >
+          <PaginationContent v-slot="{ items }">
+            <PaginationPrevious />
+            <template v-for="(item, index) in items">
+              <PaginationItem
+                v-if="item.type === 'page'"
+                :key="index"
+                :value="item.value"
+                as-child
+              >
+                <Button
+                  class="w-10 h-10 p-0"
+                  :variant="item.value === currentPage ? 'default' : 'outline'"
+                >
+                  {{ item.value }}
+                </Button>
+              </PaginationItem>
+              <PaginationEllipsis v-else :key="item.type" :index="index" />
+            </template>
+            <PaginationNext />
+          </PaginationContent>
+        </Pagination>
+      </div>
     </div>
   </div>
 </template>
