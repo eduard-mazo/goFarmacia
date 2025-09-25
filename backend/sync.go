@@ -8,134 +8,67 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// RecordInfo es una estructura para almacenar la información clave de un registro para la comparación.
-type RecordInfo struct {
-	Key       string
-	UpdatedAt time.Time
-	Record    interface{}
+// --- PUNTO DE ENTRADA PRINCIPAL PARA LA SINCRONIZACIÓN ---
+
+// RealizarSincronizacionInicial se ejecuta al iniciar la aplicación para reconciliar los datos.
+func (d *Db) RealizarSincronizacionInicial() {
+	go d.SincronizacionInteligente()
 }
 
-func (d *Db) SincronizarOperacionesStock() {
-	if !d.isRemoteDBAvailable() {
-		log.Println("Modo offline. Omitiendo sincronización de operaciones de stock.")
-		return
-	}
-	log.Println("INICIO: Sincronización de Operaciones de Stock")
+// --- LÓGICA DE SINCRONIZACIÓN INTELIGENTE (BIDIRECCIONAL) ---
 
-	var operacionesLocales []OperacionStock
-	if err := d.LocalDB.Where("sincronizado = ?", false).Find(&operacionesLocales).Error; err != nil {
-		log.Printf("Error al obtener operaciones de stock locales: %v", err)
-		return
-	}
-
-	if len(operacionesLocales) == 0 {
-		log.Println("No hay nuevas operaciones de stock para sincronizar.")
-		return
-	}
-
-	log.Printf("Enviando %d operaciones de stock al servidor remoto...", len(operacionesLocales))
-	if err := d.RemoteDB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "uuid"}},
-		DoNothing: true,
-	}).Create(&operacionesLocales).Error; err != nil {
-		log.Printf("Error al sincronizar operaciones de stock hacia remoto: %v", err)
-		return
-	}
-
-	var uuids []string
-	for _, op := range operacionesLocales {
-		uuids = append(uuids, op.UUID)
-	}
-	if err := d.LocalDB.Model(&OperacionStock{}).Where("uuid IN ?", uuids).Update("sincronizado", true).Error; err != nil {
-		log.Printf("Error al marcar operaciones de stock como sincronizadas: %v", err)
-	}
-
-	log.Println("FIN: Sincronización de Operaciones de Stock completada.")
-}
-
-func (d *Db) RecalcularStockProducto(productoID uint) error {
-	var totalStock int
-
-	err := d.LocalDB.Model(&OperacionStock{}).
-		Where("producto_id = ?", productoID).
-		Select("sum(cantidad_cambio)").
-		Row().
-		Scan(&totalStock)
-	if err != nil {
-		return err
-	}
-
-	return d.LocalDB.Model(&Producto{}).Where("id = ?", productoID).Update("stock", totalStock).Error
-}
-
-// SincronizacionInteligente ejecuta una reconciliación profunda entre la BD local y remota.
+// SincronizacionInteligente ejecuta una reconciliación profunda comparando timestamps.
 func (d *Db) SincronizacionInteligente() {
 	if !d.isRemoteDBAvailable() {
 		log.Println("Modo offline. Omitiendo sincronización inteligente.")
 		return
 	}
-	log.Println("[INICIO]: Sincronización Inteligente para modelos no transaccionales")
+	log.Println("[INICIO]: Sincronización Inteligente")
+
+	// 1. Sincronizar modelos no transaccionales (Vendedores, Clientes, etc.)
 	d.sincronizarModelo(&[]Vendedor{}, "Vendedores")
 	d.sincronizarModelo(&[]Cliente{}, "Clientes")
 	d.sincronizarModelo(&[]Proveedor{}, "Proveedores")
 
-	// Sincronizar las nuevas operaciones de stock
+	// 2. Sincronizar operaciones de stock pendientes
 	d.SincronizarOperacionesStock()
 
-	d.SincronizarHaciaLocal()
+	// 3. Descargar datos transaccionales solo de remoto a local (Ventas, Compras)
+	d.sincronizarTransaccionesHaciaLocal()
+
 	log.Println("[FIN]: Sincronización Inteligente")
 }
 
-// sincronizarModelo es el corazón del algoritmo de reconciliación para un modelo de datos específico.
+// sincronizarModelo es el algoritmo de reconciliación para un modelo de datos específico.
 func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
 	log.Printf("--- Sincronizando modelo: %s ---\n", nombreModelo)
 
-	// 1. Cargar todos los registros de ambas bases de datos
-	var localRecords, remoteRecords []interface{}
-	if err := d.LocalDB.Find(modeloSlice).Error; err != nil {
+	// 1. Cargar registros de ambas bases de datos
+	localRecords, err := d.cargarRegistros(d.LocalDB, modeloSlice)
+	if err != nil {
 		log.Printf("Error cargando %s desde local: %v", nombreModelo, err)
 		return
 	}
-	localRecords = sliceToInterfaceSlice(modeloSlice)
-
-	if err := d.RemoteDB.Find(modeloSlice).Error; err != nil {
+	remoteRecords, err := d.cargarRegistros(d.RemoteDB, modeloSlice)
+	if err != nil {
 		log.Printf("Error cargando %s desde remoto: %v", nombreModelo, err)
 		return
 	}
-	remoteRecords = sliceToInterfaceSlice(modeloSlice)
 
-	// 2. Mapear registros por su clave única de negocio
-	localMap := make(map[string]RecordInfo)
-	for _, rec := range localRecords {
-		info := getRecordInfo(rec)
-		if info.Key != "" {
-			localMap[info.Key] = info
-		}
-	}
-
-	remoteMap := make(map[string]RecordInfo)
-	for _, rec := range remoteRecords {
-		info := getRecordInfo(rec)
-		if info.Key != "" {
-			remoteMap[info.Key] = info
-		}
-	}
+	// 2. Mapear registros por clave única
+	localMap := crearMapaDeRegistros(localRecords)
+	remoteMap := crearMapaDeRegistros(remoteRecords)
 
 	// 3. Comparar y decidir qué sincronizar
 	var paraActualizarEnRemoto, paraActualizarEnLocal []interface{}
-	allKeys := getCombinedKeys(localMap, remoteMap)
-
-	for key := range allKeys {
+	for key := range getCombinedKeys(localMap, remoteMap) {
 		local, localExists := localMap[key]
 		remote, remoteExists := remoteMap[key]
 
 		if localExists && remoteExists {
-			localTime := local.UpdatedAt.Truncate(time.Millisecond)
-			remoteTime := remote.UpdatedAt.Truncate(time.Millisecond)
-
-			if localTime.After(remoteTime) {
+			if local.UpdatedAt.After(remote.UpdatedAt) {
 				paraActualizarEnRemoto = append(paraActualizarEnRemoto, local.Record)
-			} else if remoteTime.After(localTime) {
+			} else if remote.UpdatedAt.After(local.UpdatedAt) {
 				paraActualizarEnLocal = append(paraActualizarEnLocal, remote.Record)
 			}
 		} else if localExists && !remoteExists {
@@ -145,84 +78,216 @@ func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
 		}
 	}
 
-	// 4. Ejecutar actualizaciones en lotes usando la función de ayuda
+	// 4. Ejecutar actualizaciones en lotes
 	if len(paraActualizarEnRemoto) > 0 {
 		log.Printf("[%s] Sincronizando %d registro(s) hacia Remoto...", nombreModelo, len(paraActualizarEnRemoto))
 		d.ejecutarLote(d.RemoteDB, nombreModelo, paraActualizarEnRemoto)
 	}
-
 	if len(paraActualizarEnLocal) > 0 {
 		log.Printf("[%s] Sincronizando %d registro(s) hacia Local...", nombreModelo, len(paraActualizarEnLocal))
 		d.ejecutarLote(d.LocalDB, nombreModelo, paraActualizarEnLocal)
 	}
+}
 
-	if len(paraActualizarEnLocal) == 0 && len(paraActualizarEnRemoto) == 0 {
-		log.Printf("[%s] No se encontraron diferencias. Modelo ya sincronizado.", nombreModelo)
+// --- LÓGICA DE SINCRONIZACIÓN INDIVIDUAL (UNIDIRECCIONAL) ---
+
+// Estas funciones son llamadas después de una acción específica (ej. crear un nuevo cliente).
+
+func (d *Db) syncVendedorToRemote(id uint) {
+	var record Vendedor
+	d.sincronizarRegistroIndividual(d.LocalDB.Unscoped().First(&record, id), "Vendedor", id)
+}
+func (d *Db) syncClienteToRemote(id uint) {
+	var record Cliente
+	d.sincronizarRegistroIndividual(d.LocalDB.Unscoped().First(&record, id), "Cliente", id)
+}
+func (d *Db) syncProductoToRemote(id uint) {
+	var record Producto
+	d.sincronizarRegistroIndividual(d.LocalDB.Unscoped().First(&record, id), "Producto", id)
+}
+func (d *Db) syncProveedorToRemote(id uint) {
+	var record Proveedor
+	d.sincronizarRegistroIndividual(d.LocalDB.Unscoped().First(&record, id), "Proveedor", id)
+}
+func (d *Db) syncVentaToRemote(id uint) {
+	if !d.isRemoteDBAvailable() {
+		return
+	}
+	var record Factura
+	if err := d.LocalDB.Preload("Detalles").First(&record, id).Error; err != nil {
+		log.Printf("SYNC ERROR: Factura local no encontrada (ID %d): %v", id, err)
+		return
+	}
+	d.syncVendedorToRemote(record.VendedorID)
+	d.syncClienteToRemote(record.ClienteID)
+	if err := d.RemoteDB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "numero_factura"}}, DoNothing: true}).Create(&record).Error; err != nil {
+		log.Printf("SYNC FAILED for Factura ID %d: %v", id, err)
+	}
+}
+func (d *Db) syncCompraToRemote(id uint) {
+	if !d.isRemoteDBAvailable() {
+		return
+	}
+	var record Compra
+	if err := d.LocalDB.Preload("Detalles").First(&record, id).Error; err != nil {
+		log.Printf("SYNC ERROR: Compra local no encontrada (ID %d): %v", id, err)
+		return
+	}
+	d.syncProveedorToRemote(record.ProveedorID)
+	if err := d.RemoteDB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "factura_numero"}}, DoNothing: true}).Create(&record).Error; err != nil {
+		log.Printf("SYNC FAILED for Compra ID %d: %v", id, err)
 	}
 }
 
-// ejecutarLote convierte el slice genérico a un slice tipado y ejecuta la operación en lote de forma segura.
+// syncVendedorToLocal actualiza la caché local después de un login exitoso contra la BD remota.
+func (d *Db) syncVendedorToLocal(vendedor Vendedor) {
+	err := d.LocalDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "cedula"}},
+		DoUpdates: clause.AssignmentColumns([]string{"nombre", "apellido", "email", "contrasena", "updated_at"}),
+	}).Create(&vendedor).Error
+	if err != nil {
+		log.Printf("LOCAL CACHE FAILED for Vendedor ID %d: %v", vendedor.ID, err)
+	}
+}
+
+// --- SINCRONIZACIÓN DE STOCK ---
+
+func (d *Db) SincronizarOperacionesStock() {
+	if !d.isRemoteDBAvailable() {
+		return
+	}
+	var ops []OperacionStock
+	if err := d.LocalDB.Where("sincronizado = ?", false).Find(&ops).Error; err != nil || len(ops) == 0 {
+		return
+	}
+	log.Printf("Enviando %d operaciones de stock al servidor remoto...", len(ops))
+	if err := d.RemoteDB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "uuid"}}, DoNothing: true}).Create(&ops).Error; err != nil {
+		log.Printf("Error al sincronizar operaciones de stock: %v", err)
+		return
+	}
+	var uuids []string
+	for _, op := range ops {
+		uuids = append(uuids, op.UUID)
+	}
+	d.LocalDB.Model(&OperacionStock{}).Where("uuid IN ?", uuids).Update("sincronizado", true)
+}
+
+// --- FUNCIONES DE AYUDA Y UTILIDADES ---
+
+// RecordInfo almacena datos clave para la comparación.
+type RecordInfo struct {
+	Key       string
+	UpdatedAt time.Time
+	Record    interface{}
+}
+
+func (d *Db) cargarRegistros(db *gorm.DB, modeloSlice interface{}) ([]interface{}, error) {
+	if err := db.Find(modeloSlice).Error; err != nil {
+		return nil, err
+	}
+	return sliceToInterfaceSlice(modeloSlice), nil
+}
+
+func crearMapaDeRegistros(records []interface{}) map[string]RecordInfo {
+	recordMap := make(map[string]RecordInfo)
+	for _, rec := range records {
+		info := getRecordInfo(rec)
+		if info.Key != "" {
+			recordMap[info.Key] = info
+		}
+	}
+	return recordMap
+}
+
+func (d *Db) sincronizarRegistroIndividual(result *gorm.DB, nombreModelo string, id uint) {
+	if !d.isRemoteDBAvailable() {
+		return
+	}
+	if result.Error != nil {
+		log.Printf("SYNC ERROR: Registro local de %s no encontrado (ID %d): %v", nombreModelo, id, result.Error)
+		return
+	}
+	if err := d.RemoteDB.Clauses(clause.OnConflict{
+		Columns:   getUniqueColumns(nombreModelo),
+		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(nombreModelo)),
+	}).Create(result.Statement.Dest).Error; err != nil {
+		log.Printf("SYNC FAILED for %s ID %d: %v", nombreModelo, id, err)
+	}
+}
+
+func (d *Db) sincronizarTransaccionesHaciaLocal() {
+	var facturas []Factura
+	if err := d.RemoteDB.Preload("Detalles").Find(&facturas).Error; err == nil && len(facturas) > 0 {
+		d.LocalDB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "numero_factura"}}, DoNothing: true}).Create(&facturas)
+	}
+	var compras []Compra
+	if err := d.RemoteDB.Preload("Detalles").Find(&compras).Error; err == nil && len(compras) > 0 {
+		d.LocalDB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "factura_numero"}}, DoNothing: true}).Create(&compras)
+	}
+}
+
 func (d *Db) ejecutarLote(db *gorm.DB, nombreModelo string, lote []interface{}) {
 	clauses := clause.OnConflict{
 		Columns:   getUniqueColumns(nombreModelo),
 		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(nombreModelo)),
 	}
-
-	var err error
-	switch nombreModelo {
-	case "Vendedores":
-		var records []Vendedor
-		for _, item := range lote {
-			records = append(records, item.(Vendedor))
-		}
-		err = db.Model(&Vendedor{}).Clauses(clauses).CreateInBatches(records, 100).Error
-	case "Clientes":
-		var records []Cliente
-		for _, item := range lote {
-			records = append(records, item.(Cliente))
-		}
-		err = db.Model(&Cliente{}).Clauses(clauses).CreateInBatches(records, 100).Error
-	case "Productos":
-		var records []Producto
-		for _, item := range lote {
-			records = append(records, item.(Producto))
-		}
-		err = db.Model(&Producto{}).Clauses(clauses).CreateInBatches(records, 100).Error
-	case "Proveedores":
-		var records []Proveedor
-		for _, item := range lote {
-			records = append(records, item.(Proveedor))
-		}
-		err = db.Model(&Proveedor{}).Clauses(clauses).CreateInBatches(records, 100).Error
-	default:
-		log.Printf("Modelo desconocido '%s' en ejecutarLote, no se pudo procesar el lote.", nombreModelo)
-		return
-	}
-
-	if err != nil {
+	if err := db.Clauses(clauses).CreateInBatches(lote, 100).Error; err != nil {
 		log.Printf("Error al ejecutar lote para %s: %v", nombreModelo, err)
 	}
 }
 
-// --- Funciones de Ayuda para el Algoritmo ---
-
-// getRecordInfo extrae la clave única y el timestamp de un registro genérico.
 func getRecordInfo(record interface{}) RecordInfo {
 	switch v := record.(type) {
 	case Vendedor:
 		return RecordInfo{Key: v.Cedula, UpdatedAt: v.UpdatedAt, Record: v}
+	case *Vendedor:
+		return RecordInfo{Key: v.Cedula, UpdatedAt: v.UpdatedAt, Record: *v}
 	case Cliente:
 		return RecordInfo{Key: v.NumeroID, UpdatedAt: v.UpdatedAt, Record: v}
+	case *Cliente:
+		return RecordInfo{Key: v.NumeroID, UpdatedAt: v.UpdatedAt, Record: *v}
 	case Producto:
 		return RecordInfo{Key: v.Codigo, UpdatedAt: v.UpdatedAt, Record: v}
+	case *Producto:
+		return RecordInfo{Key: v.Codigo, UpdatedAt: v.UpdatedAt, Record: *v}
 	case Proveedor:
 		return RecordInfo{Key: v.Nombre, UpdatedAt: v.UpdatedAt, Record: v}
-	default:
-		return RecordInfo{}
+	case *Proveedor:
+		return RecordInfo{Key: v.Nombre, UpdatedAt: v.UpdatedAt, Record: *v}
 	}
+	return RecordInfo{}
 }
 
-// getCombinedKeys crea un set con todas las claves de ambos mapas para asegurar que se itere sobre todos los registros.
+func sliceToInterfaceSlice(slice interface{}) []interface{} {
+	switch s := slice.(type) {
+	case *[]Vendedor:
+		var iSlice []interface{}
+		for _, v := range *s {
+			iSlice = append(iSlice, v)
+		}
+		return iSlice
+	case *[]Cliente:
+		var iSlice []interface{}
+		for _, v := range *s {
+			iSlice = append(iSlice, v)
+		}
+		return iSlice
+	case *[]Producto:
+		var iSlice []interface{}
+		for _, v := range *s {
+			iSlice = append(iSlice, v)
+		}
+		return iSlice
+	case *[]Proveedor:
+		var iSlice []interface{}
+		for _, v := range *s {
+			iSlice = append(iSlice, v)
+		}
+		return iSlice
+	}
+	return nil
+}
+
 func getCombinedKeys(map1, map2 map[string]RecordInfo) map[string]bool {
 	keys := make(map[string]bool)
 	for k := range map1 {
@@ -234,131 +299,30 @@ func getCombinedKeys(map1, map2 map[string]RecordInfo) map[string]bool {
 	return keys
 }
 
-// sliceToInterfaceSlice convierte slices tipados (ej. []Producto) a []interface{}
-func sliceToInterfaceSlice(slice interface{}) []interface{} {
-	switch s := slice.(type) {
-	case *[]Vendedor:
-		var interfaceSlice []interface{}
-		for _, v := range *s {
-			interfaceSlice = append(interfaceSlice, v)
-		}
-		return interfaceSlice
-	case *[]Cliente:
-		var interfaceSlice []interface{}
-		for _, v := range *s {
-			interfaceSlice = append(interfaceSlice, v)
-		}
-		return interfaceSlice
-	case *[]Producto:
-		var interfaceSlice []interface{}
-		for _, v := range *s {
-			interfaceSlice = append(interfaceSlice, v)
-		}
-		return interfaceSlice
-	case *[]Proveedor:
-		var interfaceSlice []interface{}
-		for _, v := range *s {
-			interfaceSlice = append(interfaceSlice, v)
-		}
-		return interfaceSlice
-	default:
-		return nil
-	}
-}
-
-// RealizarSincronizacionInicial dispara la nueva sincronización inteligente.
-func (d *Db) RealizarSincronizacionInicial() {
-	go d.SincronizacionInteligente()
-}
-
-// SincronizarHaciaRemoto sube todos los datos de la local a la remota.
-func (d *Db) SincronizarHaciaRemoto() {
-	log.Println("INICIO: Sincronización Local -> Remoto")
-	d.syncModelHaciaRemoto(&[]Vendedor{}, "Vendedores")
-	d.syncModelHaciaRemoto(&[]Cliente{}, "Clientes")
-	d.syncModelHaciaRemoto(&[]Producto{}, "Productos")
-	d.syncModelHaciaRemoto(&[]Proveedor{}, "Proveedores")
-	log.Println("FIN: Sincronización Local -> Remoto")
-}
-
-// SincronizarHaciaLocal descarga todos los datos de la remota a la local.
-func (d *Db) SincronizarHaciaLocal() {
-	log.Println("INICIO: Sincronización Remoto -> Local")
-
-	d.syncModelHaciaLocal(&[]Vendedor{}, "Vendedores")
-	d.syncModelHaciaLocal(&[]Cliente{}, "Clientes")
-	d.syncModelHaciaLocal(&[]Producto{}, "Productos")
-	d.syncModelHaciaLocal(&[]Proveedor{}, "Proveedores")
-
-	var facturas []Factura
-	if err := d.RemoteDB.Preload("Detalles").Find(&facturas).Error; err == nil && len(facturas) > 0 {
-		if err := d.LocalDB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "numero_factura"}}, DoNothing: true}).Create(&facturas).Error; err != nil {
-			log.Printf("Error sincronizando Facturas hacia local: %v", err)
-		}
-	}
-
-	var compras []Compra
-	if err := d.RemoteDB.Preload("Detalles").Find(&compras).Error; err == nil && len(compras) > 0 {
-		if err := d.LocalDB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "factura_numero"}}, DoNothing: true}).Create(&compras).Error; err != nil {
-			log.Printf("Error sincronizando Compras hacia local: %v", err)
-		}
-	}
-
-	log.Println("FIN: Sincronización Remoto -> Local")
-}
-
-func (d *Db) syncModelHaciaRemoto(modelo interface{}, nombreModelo string) {
-	if err := d.LocalDB.Find(modelo).Error; err != nil {
-		log.Printf("Error cargando %s desde local: %v", nombreModelo, err)
-		return
-	}
-	if err := d.RemoteDB.Clauses(clause.OnConflict{
-		Columns:   getUniqueColumns(nombreModelo),
-		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(nombreModelo)),
-	}).Create(modelo).Error; err != nil {
-		log.Printf("Error sincronizando %s hacia remoto: %v", nombreModelo, err)
-	}
-}
-
-func (d *Db) syncModelHaciaLocal(modelo interface{}, nombreModelo string) {
-	if err := d.RemoteDB.Find(modelo).Error; err != nil {
-		log.Printf("Error cargando %s desde remoto: %v", nombreModelo, err)
-		return
-	}
-	if err := d.LocalDB.Clauses(clause.OnConflict{
-		Columns:   getUniqueColumns(nombreModelo),
-		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(nombreModelo)),
-	}).CreateInBatches(modelo, 500).Error; err != nil {
-		log.Printf("Error sincronizando %s hacia local: %v", nombreModelo, err)
-	}
-}
-
 func getUniqueColumns(modelName string) []clause.Column {
 	switch modelName {
-	case "Vendedores":
+	case "Vendedor", "Vendedores":
 		return []clause.Column{{Name: "cedula"}}
-	case "Clientes":
+	case "Cliente", "Clientes":
 		return []clause.Column{{Name: "numero_id"}}
-	case "Productos":
+	case "Producto", "Productos":
 		return []clause.Column{{Name: "codigo"}}
-	case "Proveedores":
+	case "Proveedor", "Proveedores":
 		return []clause.Column{{Name: "nombre"}}
-	default:
-		return nil
 	}
+	return nil
 }
 
 func getUpdatableColumns(modelName string) []string {
 	switch modelName {
-	case "Vendedores":
-		return []string{"nombre", "apellido", "email", "contrasena", "updated_at"}
-	case "Clientes":
-		return []string{"nombre", "apellido", "tipo_id", "telefono", "email", "direccion", "updated_at"}
-	case "Productos":
-		return []string{"nombre", "precio_venta", "stock", "updated_at"}
-	case "Proveedores":
-		return []string{"telefono", "email", "updated_at"}
-	default:
-		return nil
+	case "Vendedor", "Vendedores":
+		return []string{"nombre", "apellido", "email", "contrasena", "updated_at", "deleted_at"}
+	case "Cliente", "Clientes":
+		return []string{"nombre", "apellido", "tipo_id", "telefono", "email", "direccion", "updated_at", "deleted_at"}
+	case "Producto", "Productos":
+		return []string{"nombre", "precio_venta", "stock", "updated_at", "deleted_at"}
+	case "Proveedor", "Proveedores":
+		return []string{"telefono", "email", "updated_at", "deleted_at"}
 	}
+	return nil
 }

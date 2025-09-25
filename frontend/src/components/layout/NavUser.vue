@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { ChevronsUpDown, LogOut, Settings } from "lucide-vue-next";
+import { ChevronsUpDown, LogOut, Settings, Loader2 } from "lucide-vue-next";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +31,6 @@ import {
 } from "@/components/ui/sidebar";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
-// CAMBIO: Asumiremos que crearemos una nueva función en el backend más segura
 import { ActualizarPerfilVendedor } from "@/../wailsjs/go/backend/Db";
 import { backend } from "@/../wailsjs/go/models";
 import { toast } from "vue-sonner";
@@ -44,10 +43,11 @@ const { isMobile } = useSidebar();
 const isSettingsDialogOpen = ref(false);
 const editableUser = ref(new backend.Vendedor());
 
-// NUEVO: Refs para el manejo de contraseñas
 const currentPassword = ref("");
 const newPassword = ref("");
 const confirmPassword = ref("");
+
+const isSaving = ref(false);
 
 watch(isSettingsDialogOpen, (isOpen) => {
   if (isOpen && authenticatedUser.value) {
@@ -61,7 +61,7 @@ watch(isSettingsDialogOpen, (isOpen) => {
 async function handleSaveChanges() {
   if (!editableUser.value) return;
 
-  // Objeto para la solicitud, basado en un nuevo modelo que crearemos en Go
+  isSaving.value = true;
   const request = new backend.VendedorUpdateRequest();
   request.ID = editableUser.value.id;
   request.Nombre = editableUser.value.Nombre;
@@ -69,40 +69,40 @@ async function handleSaveChanges() {
   request.Cedula = editableUser.value.Cedula;
   request.Email = editableUser.value.Email;
 
-  // --- Lógica de validación de contraseña ---
   if (newPassword.value || currentPassword.value) {
     if (!currentPassword.value) {
       toast.error(
         "Para cambiar la contraseña, debes ingresar tu contraseña actual."
       );
+      isSaving.value = false;
       return;
     }
     if (newPassword.value !== confirmPassword.value) {
       toast.error("La nueva contraseña y su confirmación no coinciden.");
+      isSaving.value = false;
       return;
     }
     if (newPassword.value.length < 6) {
       toast.error("La nueva contraseña debe tener al menos 6 caracteres.");
+      isSaving.value = false;
       return;
     }
-    // Si todo es correcto, añadimos las contraseñas a la solicitud
     request.ContrasenaActual = currentPassword.value;
     request.ContrasenaNueva = newPassword.value;
   }
 
   try {
-    // Llamamos a la nueva función segura del backend
     await ActualizarPerfilVendedor(request);
     toast.success("Perfil actualizado correctamente.");
-
-    // Actualizamos el store localmente
     authStore.updateUser(editableUser.value);
-
     isSettingsDialogOpen.value = false;
   } catch (error) {
     toast.error("Error al actualizar el perfil", { description: `${error}` });
+  } finally {
+    isSaving.value = false;
   }
 }
+
 function handleLogOut() {
   authStore.logout();
 }
@@ -178,83 +178,77 @@ function handleLogOut() {
                     termines.
                   </DialogDescription>
                 </DialogHeader>
-                <div class="grid gap-4 py-4">
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label for="nombre" class="text-right">Nombre</Label>
-                    <Input
-                      id="nombre"
-                      v-model="editableUser.Nombre"
-                      class="col-span-3"
-                    />
+                <div class="grid gap-6 py-4">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="grid gap-2">
+                      <Label for="nombre">Nombre</Label>
+                      <Input id="nombre" v-model="editableUser.Nombre" />
+                    </div>
+                    <div class="grid gap-2">
+                      <Label for="apellido">Apellido</Label>
+                      <Input id="apellido" v-model="editableUser.Apellido" />
+                    </div>
+                    <div class="grid gap-2">
+                      <Label for="cedula">Cédula</Label>
+                      <Input id="cedula" v-model="editableUser.Cedula" />
+                    </div>
+                    <div class="grid gap-2">
+                      <Label for="email">Email</Label>
+                      <Input
+                        id="email"
+                        v-model="editableUser.Email"
+                        type="email"
+                      />
+                    </div>
                   </div>
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label for="apellido" class="text-right">Apellido</Label>
-                    <Input
-                      id="apellido"
-                      v-model="editableUser.Apellido"
-                      class="col-span-3"
-                    />
-                  </div>
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label for="cedula" class="text-right">Cédula</Label>
-                    <Input
-                      id="cedula"
-                      v-model="editableUser.Cedula"
-                      class="col-span-3"
-                    />
-                  </div>
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label for="email" class="text-right">Email</Label>
-                    <Input
-                      id="email"
-                      v-model="editableUser.Email"
-                      class="col-span-3"
-                    />
-                  </div>
-                  <hr class="my-2" />
-                  <p
-                    class="text-sm text-muted-foreground text-center col-span-full"
-                  >
-                    Para cambiar tu contraseña, completa los siguientes tres
-                    campos.
-                  </p>
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label for="currentPassword" class="text-right"
-                      >Contraseña Actual</Label
-                    >
-                    <Input
-                      id="currentPassword"
-                      v-model="currentPassword"
-                      type="password"
-                      class="col-span-3"
-                    />
-                  </div>
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label for="newPassword" class="text-right"
-                      >Nueva Contraseña</Label
-                    >
-                    <Input
-                      id="newPassword"
-                      v-model="newPassword"
-                      type="password"
-                      class="col-span-3"
-                    />
-                  </div>
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label for="confirmPassword" class="text-right"
-                      >Confirmar Contraseña</Label
-                    >
-                    <Input
-                      id="confirmPassword"
-                      v-model="confirmPassword"
-                      type="password"
-                      class="col-span-3"
-                    />
+
+                  <div class="space-y-4">
+                    <hr />
+                    <p class="text-sm text-muted-foreground text-center">
+                      Para cambiar tu contraseña, completa los siguientes tres
+                      campos.
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div class="grid gap-2">
+                        <Label for="currentPassword">Contraseña Actual</Label>
+                        <Input
+                          id="currentPassword"
+                          v-model="currentPassword"
+                          type="password"
+                        />
+                      </div>
+                      <div class="grid gap-2">
+                        <Label for="newPassword">Nueva Contraseña</Label>
+                        <Input
+                          id="newPassword"
+                          v-model="newPassword"
+                          type="password"
+                        />
+                      </div>
+                      <div class="grid gap-2">
+                        <Label for="confirmPassword"
+                          >Confirmar Contraseña</Label
+                        >
+                        <Input
+                          id="confirmPassword"
+                          v-model="confirmPassword"
+                          type="password"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button type="button" @click="handleSaveChanges">
-                    Guardar cambios
+                  <Button
+                    type="button"
+                    @click="handleSaveChanges"
+                    :disabled="isSaving"
+                  >
+                    <Loader2
+                      v-if="isSaving"
+                      class="mr-2 h-4 w-4 animate-spin"
+                    />
+                    {{ isSaving ? "Guardando..." : "Guardar cambios" }}
                   </Button>
                 </DialogFooter>
               </DialogContent>
