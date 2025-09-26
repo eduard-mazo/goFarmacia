@@ -32,7 +32,6 @@ const data = {
     },
     {
       title: "Facturación",
-      url: "/dashboard",
       icon: Receipt,
       items: [
         {
@@ -49,7 +48,6 @@ const data = {
     },
     {
       title: "Catalogo",
-      url: "/dashboard",
       icon: Package,
       items: [
         {
@@ -60,7 +58,6 @@ const data = {
     },
     {
       title: "Inventario",
-      url: "/dashboard",
       icon: Warehouse,
       items: [
         {
@@ -71,7 +68,6 @@ const data = {
     },
     {
       title: "Personas",
-      url: "/dashboard",
       icon: Users,
       items: [
         {

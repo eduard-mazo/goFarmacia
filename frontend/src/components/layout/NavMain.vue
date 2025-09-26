@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { LucideIcon } from "lucide-vue-next";
 import { ChevronRight } from "lucide-vue-next";
+import { useRoute } from "vue-router";
+import { RouterLink } from "vue-router";
 import {
   Collapsible,
   CollapsibleContent,
@@ -17,14 +19,12 @@ import {
   SidebarMenuSubButton,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { RouterLink } from "vue-router";
 
 defineProps<{
   items: {
     title: string;
-    url: string;
+    url?: string;
     icon?: LucideIcon;
-    isActive?: boolean;
     items?: {
       title: string;
       url: string;
@@ -34,6 +34,12 @@ defineProps<{
 }>();
 
 const { state, setOpen } = useSidebar();
+const route = useRoute();
+
+const isParentActive = (item: { items?: { url: string }[] }): boolean => {
+  if (!item.items) return false;
+  return item.items.some((subItem) => route.path === subItem.url);
+};
 
 function handleMenuClick() {
   if (state.value === "collapsed") {
@@ -44,18 +50,21 @@ function handleMenuClick() {
 
 <template>
   <SidebarGroup>
-    <SidebarGroupLabel>Luna POS</SidebarGroupLabel>
+    <SidebarGroupLabel>Menú Principal</SidebarGroupLabel>
     <SidebarMenu>
       <template v-for="item in items" :key="item.title">
         <Collapsible
           v-if="item.items && item.items.length > 0"
           as-child
-          :default-open="item.isActive"
+          :default-open="isParentActive(item)"
           class="group/collapsible"
         >
           <SidebarMenuItem>
             <CollapsibleTrigger as-child @click="handleMenuClick">
-              <SidebarMenuButton :tooltip="item.title">
+              <SidebarMenuButton
+                :tooltip="item.title"
+                :class="{ 'bg-muted text-primary': isParentActive(item) }"
+              >
                 <component :is="item.icon" v-if="item.icon" />
                 <span>{{ item.title }}</span>
                 <ChevronRight
@@ -92,8 +101,9 @@ function handleMenuClick() {
         <SidebarMenuItem v-else>
           <SidebarMenuButton as-child :tooltip="item.title">
             <RouterLink
-              :to="item.url"
+              :to="item.url!"
               active-class="bg-muted text-primary"
+              exact-active-class="bg-muted text-primary"
               exact
             >
               <component :is="item.icon" v-if="item.icon" />
