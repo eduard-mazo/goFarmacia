@@ -17,6 +17,7 @@ import {
   SidebarMenuSubButton,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { RouterLink } from "vue-router";
 
 defineProps<{
   items: {
@@ -43,50 +44,64 @@ function handleMenuClick() {
 
 <template>
   <SidebarGroup>
-    <SidebarGroupLabel>Platform</SidebarGroupLabel>
+    <SidebarGroupLabel>Luna POS</SidebarGroupLabel>
     <SidebarMenu>
-      <Collapsible
-        v-for="item in items"
-        :key="item.title"
-        as-child
-        :default-open="item.isActive"
-        class="group/collapsible"
-      >
-        <SidebarMenuItem>
-          <CollapsibleTrigger as-child @click="handleMenuClick">
-            <SidebarMenuButton :tooltip="item.title">
+      <template v-for="item in items" :key="item.title">
+        <Collapsible
+          v-if="item.items && item.items.length > 0"
+          as-child
+          :default-open="item.isActive"
+          class="group/collapsible"
+        >
+          <SidebarMenuItem>
+            <CollapsibleTrigger as-child @click="handleMenuClick">
+              <SidebarMenuButton :tooltip="item.title">
+                <component :is="item.icon" v-if="item.icon" />
+                <span>{{ item.title }}</span>
+                <ChevronRight
+                  class="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
+                />
+              </SidebarMenuButton>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <SidebarMenuSub>
+                <SidebarMenuSubItem
+                  v-for="subItem in item.items"
+                  :key="subItem.title"
+                >
+                  <SidebarMenuSubButton as-child>
+                    <RouterLink
+                      :to="subItem.url"
+                      class="flex items-center gap-2"
+                      active-class="bg-muted text-primary"
+                    >
+                      <component
+                        :is="subItem.icon"
+                        v-if="subItem.icon"
+                        class="h-4 w-4"
+                      />
+                      <span>{{ subItem.title }}</span>
+                    </RouterLink>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              </SidebarMenuSub>
+            </CollapsibleContent>
+          </SidebarMenuItem>
+        </Collapsible>
+
+        <SidebarMenuItem v-else>
+          <SidebarMenuButton as-child :tooltip="item.title">
+            <RouterLink
+              :to="item.url"
+              active-class="bg-muted text-primary"
+              exact
+            >
               <component :is="item.icon" v-if="item.icon" />
               <span>{{ item.title }}</span>
-              <ChevronRight
-                class="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
-              />
-            </SidebarMenuButton>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <SidebarMenuSub>
-              <SidebarMenuSubItem
-                v-for="subItem in item.items"
-                :key="subItem.title"
-              >
-                <SidebarMenuSubButton as-child>
-                  <RouterLink
-                    :to="subItem.url"
-                    class="flex items-center gap-2"
-                    active-class="bg-muted text-primary"
-                  >
-                    <component
-                      :is="subItem.icon"
-                      v-if="subItem.icon"
-                      class="h-4 w-4"
-                    />
-                    <span>{{ subItem.title }}</span>
-                  </RouterLink>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            </SidebarMenuSub>
-          </CollapsibleContent>
+            </RouterLink>
+          </SidebarMenuButton>
         </SidebarMenuItem>
-      </Collapsible>
+      </template>
     </SidebarMenu>
   </SidebarGroup>
 </template>
