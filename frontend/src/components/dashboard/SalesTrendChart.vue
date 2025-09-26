@@ -1,61 +1,67 @@
 <script setup lang="ts">
-import { Line } from "vue-chartjs";
+import { Bar } from "vue-chartjs";
 import {
   Chart as ChartJS,
   Title,
   Tooltip,
   Legend,
-  LineElement,
+  BarElement,
   CategoryScale,
   LinearScale,
-  PointElement,
 } from "chart.js";
 import type { PropType } from "vue";
+import { computed } from "vue"; // Se importa 'computed' para mejorar la reactividad
 
-// Registrar los componentes necesarios de Chart.js
 ChartJS.register(
   Title,
   Tooltip,
   Legend,
-  LineElement,
+  BarElement,
   CategoryScale,
-  LinearScale,
-  PointElement
+  LinearScale
 );
 
-// Definir la estructura de los datos que esperamos
-interface VentaHora {
-  hora: number;
+interface VentaIndividual {
+  timestamp: string;
   total: number;
 }
 
-// Props del componente
 const props = defineProps({
   chartData: {
-    type: Array as PropType<VentaHora[]>,
+    type: Array as PropType<VentaIndividual[]>,
     required: true,
   },
 });
 
-// Opciones de configuración del gráfico
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      display: false, // Ocultamos la leyenda para un look más limpio
+      display: false,
     },
     tooltip: {
       callbacks: {
-        label: function (context: any) {
-          let label = context.dataset.label || "";
-          if (label) {
-            label += ": ";
+        title: function (context: any) {
+          if (context[0] && props.chartData) {
+            const date = new Date(
+              props.chartData[context[0].dataIndex]!.timestamp
+            );
+            return `Venta a las ${date.toLocaleTimeString("es-CO", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}`;
           }
+          return "";
+        },
+        label: function (context: any) {
+          let label = "Total: ";
           if (context.parsed.y !== null) {
             label += new Intl.NumberFormat("es-CO", {
               style: "currency",
               currency: "COP",
+              minimumFractionDigits: 0,
             }).format(context.parsed.y);
           }
           return label;
@@ -76,26 +82,54 @@ const chartOptions = {
         },
       },
     },
+    x: {
+      ticks: {
+        maxRotation: 70,
+        minRotation: 70,
+      },
+    },
   },
 };
 
-// Formatear los datos para que Chart.js los entienda
-const formattedChartData = {
-  labels: props.chartData.map((d) => `${String(d.hora).padStart(2, "0")}:00`),
-  datasets: [
-    {
-      label: "Ventas",
-      backgroundColor: "#10b981", // Color de la línea
-      borderColor: "#10b981",
-      data: props.chartData.map((d) => d.total),
-      tension: 0.2, // Ligeramente curvado para suavidad
-    },
-  ],
-};
+const formattedChartData = computed(() => {
+  if (!props.chartData || props.chartData.length === 0) {
+    return {
+      labels: [],
+      datasets: [
+        {
+          label: "Venta",
+          backgroundColor: "#10b981",
+          borderColor: "#059669",
+          borderWidth: 1,
+          data: [],
+        },
+      ],
+    };
+  }
+
+  // Si hay datos, los formatea como antes
+  return {
+    labels: props.chartData.map((d) =>
+      new Date(d.timestamp).toLocaleTimeString("es-CO", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    ),
+    datasets: [
+      {
+        label: "Venta",
+        backgroundColor: "#10b981",
+        borderColor: "#059669",
+        borderWidth: 1,
+        data: props.chartData.map((d) => d.total),
+      },
+    ],
+  };
+});
 </script>
 
 <template>
   <div class="h-full w-full">
-    <Line :data="formattedChartData" :options="chartOptions" />
+    <Bar :data="formattedChartData" :options="chartOptions" />
   </div>
 </template>

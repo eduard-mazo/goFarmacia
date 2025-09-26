@@ -13,6 +13,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
+  SidebarMenuSubItem,
   SidebarMenuSubButton,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -26,6 +27,7 @@ defineProps<{
     items?: {
       title: string;
       url: string;
+      icon?: LucideIcon;
     }[];
   }[];
 }>();
@@ -72,6 +74,11 @@ function handleMenuClick() {
                     class="flex items-center gap-2"
                     active-class="bg-muted text-primary"
                   >
+                    <component
+                      :is="subItem.icon"
+                      v-if="subItem.icon"
+                      class="h-4 w-4"
+                    />
                     <span>{{ subItem.title }}</span>
                   </RouterLink>
                 </SidebarMenuSubButton>
