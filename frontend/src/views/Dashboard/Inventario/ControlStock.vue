@@ -82,7 +82,17 @@ const cargarProductos = async () => {
 
 const columns: ColumnDef<backend.Producto>[] = [
   { accessorKey: "Codigo", header: "Código" },
-  { accessorKey: "Nombre", header: "Nombre" },
+  {
+    accessorKey: "Nombre",
+    header: "Nombre",
+    // Se agrega el renderizado de celda para aplicar estilos
+    cell: ({ row }) =>
+      h(
+        "div",
+        { class: "uppercase max-w-[600px] truncate" },
+        row.getValue("Nombre")
+      ),
+  },
   {
     accessorKey: "PrecioVenta",
     header: "Precio Venta",

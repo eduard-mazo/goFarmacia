@@ -64,7 +64,7 @@ onMounted(loadDashboardData);
 
     <div
       v-if="error"
-      class="flex items-center gap-3 text-destructive-foreground bg-destructive p-4 rounded-lg"
+      class="flex items-center gap-3 text-white bg-red-400 p-4 rounded-lg"
     >
       <AlertCircle class="h-6 w-6 flex-shrink-0" />
       <span class="font-medium">{{ error }}</span>

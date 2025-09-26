@@ -108,7 +108,7 @@ const columns: ColumnDef<backend.Vendedor>[] = [
     cell: ({ row }) =>
       h(
         "div",
-        { class: "uppercase" },
+        { class: "uppercase max-w-[300px] truncate" },
         `${row.original.Nombre} ${row.original.Apellido}`
       ),
   },
@@ -136,7 +136,12 @@ const columns: ColumnDef<backend.Vendedor>[] = [
         },
         () => ["Email", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       ),
-    cell: ({ row }) => h("div", { class: "lowercase" }, row.getValue("Email")),
+    cell: ({ row }) =>
+      h(
+        "div",
+        { class: "lowercase max-w-[300px] truncate" },
+        row.getValue("Email")
+      ),
   },
   {
     id: "actions",

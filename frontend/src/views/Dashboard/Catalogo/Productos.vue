@@ -104,7 +104,11 @@ const columns: ColumnDef<backend.Producto>[] = [
         () => ["Nombre", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       ),
     cell: ({ row }) =>
-      h("div", { class: "capitalize" }, row.getValue("Nombre")),
+      h(
+        "div",
+        { class: "uppercase max-w-[600px] truncate" },
+        row.getValue("Nombre")
+      ),
   },
   {
     accessorKey: "Codigo",

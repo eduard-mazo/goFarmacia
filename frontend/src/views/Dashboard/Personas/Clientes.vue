@@ -106,7 +106,7 @@ const columns: ColumnDef<backend.Cliente>[] = [
     cell: ({ row }) =>
       h(
         "div",
-        { class: "uppercase" },
+        { class: "uppercase max-w-[600px] truncate" },
         `${row.original.Nombre} ${row.original.Apellido}`
       ),
   },

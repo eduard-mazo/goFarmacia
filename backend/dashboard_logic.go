@@ -20,7 +20,6 @@ type VendedorRendimiento struct {
 	TotalVendido   float64 `json:"totalVendido"`
 }
 
-// --- CAMBIO: La estructura principal ahora usa VentaIndividual ---
 type DashboardData struct {
 	TotalVentasHoy     float64             `json:"totalVentasHoy"`
 	NumeroVentasHoy    int64               `json:"numeroVentasHoy"`
@@ -36,8 +35,10 @@ func (d *Db) ObtenerDatosDashboard() (DashboardData, error) {
 	now := time.Now()
 	inicioDelDia := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	finDelDia := inicioDelDia.Add(24*time.Hour - 1*time.Nanosecond)
+	data.VentasIndividuales = make([]VentaIndividual, 0)
+	data.TopProductos = make([]ProductoVendido, 0)
+	data.ProductosSinStock = make([]Producto, 0)
 
-	// Obtener total de ventas y número de transacciones
 	var totalVentas struct {
 		Total  float64
 		Numero int64
@@ -55,7 +56,6 @@ func (d *Db) ObtenerDatosDashboard() (DashboardData, error) {
 		data.TicketPromedioHoy = data.TotalVentasHoy / float64(data.NumeroVentasHoy)
 	}
 
-	// --- CAMBIO: Obtener cada venta individual en lugar de agruparlas por hora ---
 	err = d.LocalDB.Model(&Factura{}).
 		Select("fecha_emision as timestamp, total").
 		Where("fecha_emision BETWEEN ? AND ?", inicioDelDia, finDelDia).
@@ -83,7 +83,6 @@ func (d *Db) ObtenerDatosDashboard() (DashboardData, error) {
 		return data, fmt.Errorf("error al obtener productos sin stock: %w", err)
 	}
 
-	// Obtener Top Vendedor del día
 	err = d.LocalDB.Model(&Factura{}).
 		Select("v.nombre || ' ' || v.apellido as nombre_completo, SUM(facturas.total) as total_vendido").
 		Joins("JOIN vendedors v ON v.id = facturas.vendedor_id").
