@@ -113,7 +113,6 @@ func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
 	}
 }
 
-// ejecutarLote: simple, imprime claves a sincronizar, usa OnConflict UpdateAll y continúa si algún registro falla.
 func (d *Db) ejecutarLote(db *gorm.DB, nombreModelo string, lote []interface{}) {
 	if len(lote) == 0 {
 		return
@@ -137,11 +136,20 @@ func (d *Db) ejecutarLote(db *gorm.DB, nombreModelo string, lote []interface{}) 
 	}
 
 	for _, record := range lote {
-		if err := tx.Clauses(clause.OnConflict{
-			UpdateAll: true,
-		}).Create(record).Error; err != nil {
-			log.Printf("Error saving record for %s during batch: %v (continuando)", nombreModelo, err)
-			continue
+		conflictColumn := getConflictColumn(record)
+		if conflictColumn != "" {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: conflictColumn}},
+				UpdateAll: true,
+			}).Create(record).Error; err != nil {
+				log.Printf("Error saving record for %s (conflict=%s): %v", nombreModelo, conflictColumn, err)
+				continue
+			}
+		} else {
+			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(record).Error; err != nil {
+				log.Printf("Error saving record for %s: %v", nombreModelo, err)
+				continue
+			}
 		}
 	}
 
@@ -166,6 +174,7 @@ func (d *Db) SincronizarOperacionesStock() {
 
 	uniqueMap := make(map[string]OperacionStock)
 	for _, op := range ops {
+		op.Sincronizado = false
 		existing, ok := uniqueMap[op.UUID]
 		if !ok || op.Timestamp.After(existing.Timestamp) {
 			uniqueMap[op.UUID] = op
@@ -173,14 +182,11 @@ func (d *Db) SincronizarOperacionesStock() {
 	}
 	finalOps := make([]OperacionStock, 0, len(uniqueMap))
 	for _, op := range uniqueMap {
+		op.ID = 0
 		finalOps = append(finalOps, op)
 	}
 
 	log.Printf("Enviando %d operación(es) de stock al servidor remoto...", len(finalOps))
-
-	for i := range finalOps {
-		finalOps[i].ID = 0
-	}
 
 	tx := d.RemoteDB.Begin()
 	if tx.Error != nil {
@@ -192,30 +198,20 @@ func (d *Db) SincronizarOperacionesStock() {
 		Columns:   []clause.Column{{Name: "uuid"}},
 		UpdateAll: true,
 	}).Create(&finalOps).Error; err != nil {
-		log.Printf("Error en batch upsert operaciones de stock: %v. Realizando fallback por registro...", err)
+		log.Printf("Error en batch upsert operaciones de stock: %v", err)
 		tx.Rollback()
-
-		var succeededUUIDs []string
-		for _, op := range finalOps {
-			op.ID = 0 // asegurar
-			if err2 := d.RemoteDB.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "uuid"}},
-				UpdateAll: true,
-			}).Create(&op).Error; err2 != nil {
-				log.Printf("Error sincronizando operacion uuid=%s: %v", op.UUID, err2)
-				continue
-			}
-			succeededUUIDs = append(succeededUUIDs, op.UUID)
-		}
-
-		if len(succeededUUIDs) > 0 {
-			if err3 := d.LocalDB.Model(&OperacionStock{}).
-				Where("uuid IN ?", succeededUUIDs).
-				Update("sincronizado", true).Error; err3 != nil {
-				log.Printf("Error marcando operaciones sincronizadas en local (fallback): %v", err3)
-			}
-		}
 		return
+	}
+
+	productoIDs := make(map[uint]bool)
+	for _, op := range finalOps {
+		productoIDs[op.ProductoID] = true
+	}
+	for id := range productoIDs {
+		stock := d.calcularStockRealLocal(id)
+		if err := tx.Model(&Producto{}).Where("id = ?", id).Update("stock", stock).Error; err != nil {
+			log.Printf("Error actualizando stock remoto para producto %d: %v", id, err)
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -233,7 +229,6 @@ func (d *Db) SincronizarOperacionesStock() {
 		log.Printf("Error marcando operaciones de stock como sincronizadas en local: %v", err)
 	}
 }
-
 func (d *Db) sincronizarTransaccionesHaciaLocal() {
 	var ultimaFacturaLocal Factura
 	d.LocalDB.Order("created_at desc").Limit(1).Find(&ultimaFacturaLocal)
@@ -349,9 +344,8 @@ func (d *Db) syncCompraToRemote(id uint) {
 	d.ejecutarLote(d.RemoteDB, "Compras", []interface{}{&record})
 }
 
-// syncVendedorToLocal: inserta/actualiza vendedor en la DB local (usado por sincronización remota -> local)
-func (d *Db) syncVendedorToLocal(vendedor *Vendedor) {
-	d.ejecutarLote(d.LocalDB, "Vendedores", []interface{}{vendedor})
+func (d *Db) syncVendedorToLocal(vendedor Vendedor) {
+	d.ejecutarLote(d.LocalDB, "Vendedores", []interface{}{&vendedor})
 }
 
 func getRecordInfo(record interface{}) RecordInfo {
@@ -409,4 +403,34 @@ func sliceToInterfaceSlice(slice interface{}) []interface{} {
 	default:
 		return nil
 	}
+}
+
+func getConflictColumn(record interface{}) string {
+	switch record.(type) {
+	case *Vendedor:
+		return "cedula"
+	case *Cliente:
+		return "numero_id"
+	case *Producto:
+		return "codigo"
+	case *Proveedor:
+		return "nombre"
+	default:
+		return ""
+	}
+}
+
+// NUEVO: Calcula el stock real de un producto basado en operaciones locales
+func (d *Db) calcularStockRealLocal(productoID uint) int {
+	var suma int64
+	d.LocalDB.Model(&OperacionStock{}).Where("producto_id = ?", productoID).
+		Select("COALESCE(SUM(cantidad_cambio),0)").Scan(&suma)
+
+	if suma == 0 {
+		var prod Producto
+		if err := d.LocalDB.First(&prod, productoID).Error; err == nil {
+			return prod.Stock
+		}
+	}
+	return int(suma)
 }
