@@ -125,5 +125,9 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 	query.Count(&total)
 	offset := (page - 1) * pageSize
 	err := query.Limit(pageSize).Offset(offset).Find(&productos).Error
+
+	for i := range productos {
+		productos[i].Stock = d.calcularStockRealLocal(productos[i].ID)
+	}
 	return PaginatedResult{Records: productos, TotalRecords: total}, err
 }
