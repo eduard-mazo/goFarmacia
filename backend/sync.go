@@ -41,19 +41,25 @@ func (d *Db) SincronizacionInteligente() {
 func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
 	d.Log.Infof("[SINCRONIZANDO]:\t%s\n", nombreModelo)
 
-	if err := d.LocalDB.Find(modeloSlice).Error; err != nil {
+	// --- INICIO DE LA MODIFICACIÓN ---
+	// Usamos Unscoped() para incluir registros con borrado lógico en la comparación
+	if err := d.LocalDB.Unscoped().Find(modeloSlice).Error; err != nil {
 		d.Log.Errorf("Cargando %s desde LOCAL: %v", nombreModelo, err)
 		return
 	}
+	// --- FIN DE LA MODIFICACIÓN ---
 	localRecords := sliceToInterfaceSlice(modeloSlice)
 	if localRecords == nil {
 		d.Log.Warnf("Sin registros en LOCAL para %s", nombreModelo)
 	}
 
-	if err := d.RemoteDB.Find(modeloSlice).Error; err != nil {
+	// --- INICIO DE LA MODIFICACIÓN ---
+	// Usamos Unscoped() también para la base de datos remota
+	if err := d.RemoteDB.Unscoped().Find(modeloSlice).Error; err != nil {
 		d.Log.Errorf("Cargando %s desde REMOTO: %v", nombreModelo, err)
 		return
 	}
+	// --- FIN DE LA MODIFICACIÓN ---
 	remoteRecords := sliceToInterfaceSlice(modeloSlice)
 	if remoteRecords == nil {
 		d.Log.Infof("Warning: no remoteRecords parsed for %s", nombreModelo)
@@ -75,7 +81,7 @@ func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
 		}
 	}
 
-	var paraActualizarEnRemoto, paraActualizarEnLocal []interface{}
+	var paraCrearEnRemoto, paraActualizarEnRemoto, paraActualizarEnLocal []interface{}
 	allKeys := getCombinedKeys(localMap, remoteMap)
 
 	for key := range allKeys {
@@ -92,23 +98,28 @@ func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
 				paraActualizarEnLocal = append(paraActualizarEnLocal, remote.Record)
 			}
 		} else if localExists && !remoteExists {
-			paraActualizarEnRemoto = append(paraActualizarEnRemoto, local.Record)
+			paraCrearEnRemoto = append(paraCrearEnRemoto, local.Record)
 		} else if !localExists && remoteExists {
 			paraActualizarEnLocal = append(paraActualizarEnLocal, remote.Record)
 		}
 	}
 
+	if len(paraCrearEnRemoto) > 0 {
+		d.Log.Infof("[%s]\tCreando %d nuevo(s) registro(s) en REMOTO...", nombreModelo, len(paraCrearEnRemoto))
+		d.crearLoteEnRemoto(d.RemoteDB, nombreModelo, paraCrearEnRemoto)
+	}
+
 	if len(paraActualizarEnRemoto) > 0 {
-		d.Log.Infof("[%s]\tSincronizando\t%d registro(s) a REMOTO...", nombreModelo, len(paraActualizarEnRemoto))
-		d.ejecutarLote(d.RemoteDB, nombreModelo, paraActualizarEnRemoto)
+		d.Log.Infof("[%s]\tActualizando %d registro(s) en REMOTO...", nombreModelo, len(paraActualizarEnRemoto))
+		d.actualizarLoteEnRemoto(d.RemoteDB, nombreModelo, paraActualizarEnRemoto)
 	}
 
 	if len(paraActualizarEnLocal) > 0 {
-		d.Log.Infof("[%s]\tSincronizando\t%d registro(s) a LOCAL...", nombreModelo, len(paraActualizarEnLocal))
+		d.Log.Infof("[%s]\tSincronizando %d registro(s) a LOCAL...", nombreModelo, len(paraActualizarEnLocal))
 		d.ejecutarLote(d.LocalDB, nombreModelo, paraActualizarEnLocal)
 	}
 
-	if len(paraActualizarEnLocal) == 0 && len(paraActualizarEnRemoto) == 0 {
+	if len(paraActualizarEnLocal) == 0 && len(paraCrearEnRemoto) == 0 && len(paraActualizarEnRemoto) == 0 {
 		d.Log.Infof("[%s]\tNo se encuentran diferencias... MODELO sincronizado", nombreModelo)
 	}
 }
@@ -155,6 +166,96 @@ func (d *Db) ejecutarLote(db *gorm.DB, nombreModelo string, lote []interface{}) 
 
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("Error committing transaction for %s: %v", nombreModelo, err)
+	}
+}
+
+func (d *Db) crearLoteEnRemoto(db *gorm.DB, nombreModelo string, lote []interface{}) {
+	if len(lote) == 0 {
+		return
+	}
+
+	for _, record := range lote {
+		tx := db.Begin()
+		if tx.Error != nil {
+			d.Log.Errorf("Error iniciando transacción para un registro de %s: %v", nombreModelo, tx.Error)
+			continue
+		}
+
+		conflictColumn := getConflictColumn(record)
+		if conflictColumn == "" {
+			d.Log.Warnf("No se encontró columna de conflicto para el modelo %s, se omitirá la creación.", nombreModelo)
+			tx.Rollback()
+			continue
+		}
+
+		switch r := record.(type) {
+		case *Producto:
+			r.ID = 0
+		case *Vendedor:
+			r.ID = 0
+		case *Cliente:
+			r.ID = 0
+		case *Proveedor:
+			r.ID = 0
+		}
+
+		err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: conflictColumn}},
+			DoNothing: true,
+		}).Create(record).Error
+
+		if err != nil {
+			d.Log.Errorf("Error en la creación de registro para %s en REMOTO: %v", nombreModelo, err)
+			tx.Rollback()
+			continue
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			d.Log.Errorf("Error al confirmar transacción para un registro de %s: %v", nombreModelo, err)
+		}
+	}
+}
+
+func (d *Db) actualizarLoteEnRemoto(db *gorm.DB, nombreModelo string, lote []interface{}) {
+	tx := db.Begin()
+	if tx.Error != nil {
+		d.Log.Errorf("Error iniciando transacción de actualización para %s en REMOTO: %v", nombreModelo, tx.Error)
+		return
+	}
+	defer tx.Rollback()
+
+	for _, record := range lote {
+		switch r := record.(type) {
+		case *Producto:
+			result := tx.Model(&Producto{}).Where("codigo = ?", r.Codigo).Updates(map[string]interface{}{
+				"nombre":       r.Nombre,
+				"precio_venta": r.PrecioVenta,
+				"updated_at":   time.Now(),
+				"deleted_at":   r.DeletedAt,
+			})
+			if result.Error != nil {
+				d.Log.Errorf("Error actualizando producto remoto con código %s: %v", r.Codigo, result.Error)
+			}
+		case *Vendedor:
+			result := tx.Model(&Vendedor{}).Where("cedula = ?", r.Cedula).Updates(r)
+			if result.Error != nil {
+				d.Log.Errorf("Error actualizando vendedor remoto con cédula %s: %v", r.Cedula, result.Error)
+			}
+		case *Cliente:
+			result := tx.Model(&Cliente{}).Where("numero_id = ?", r.NumeroID).Updates(r)
+			if result.Error != nil {
+				d.Log.Errorf("Error actualizando cliente remoto con NumeroID %s: %v", r.NumeroID, result.Error)
+			}
+		case *Proveedor:
+			result := tx.Model(&Proveedor{}).Where("nombre = ?", r.Nombre).Updates(r)
+			if result.Error != nil {
+				d.Log.Errorf("Error actualizando proveedor remoto con nombre %s: %v", r.Nombre, result.Error)
+			}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		d.Log.Errorf("Error al confirmar transacción de actualización para %s en REMOTO: %v", nombreModelo, err)
 	}
 }
 
@@ -229,6 +330,7 @@ func (d *Db) SincronizarOperacionesStock() {
 		log.Printf("Error marcando operaciones de stock como sincronizadas en local: %v", err)
 	}
 }
+
 func (d *Db) sincronizarTransaccionesHaciaLocal() {
 	var ultimaFacturaLocal Factura
 	d.LocalDB.Order("created_at desc").Limit(1).Find(&ultimaFacturaLocal)
@@ -270,7 +372,7 @@ func (d *Db) syncVendedorToRemote(id uint) {
 		log.Printf("syncVendedorToRemote: no se encontró vendedor local ID %d: %v", id, err)
 		return
 	}
-	d.ejecutarLote(d.RemoteDB, "Vendedores", []interface{}{&record})
+	d.actualizarLoteEnRemoto(d.RemoteDB, "Vendedores", []interface{}{&record})
 }
 
 func (d *Db) syncClienteToRemote(id uint) {
@@ -282,7 +384,7 @@ func (d *Db) syncClienteToRemote(id uint) {
 		log.Printf("syncClienteToRemote: no se encontró cliente local ID %d: %v", id, err)
 		return
 	}
-	d.ejecutarLote(d.RemoteDB, "Clientes", []interface{}{&record})
+	d.actualizarLoteEnRemoto(d.RemoteDB, "Clientes", []interface{}{&record})
 }
 
 func (d *Db) syncProductoToRemote(id uint) {
@@ -294,7 +396,7 @@ func (d *Db) syncProductoToRemote(id uint) {
 		log.Printf("syncProductoToRemote: no se encontró producto local ID %d: %v", id, err)
 		return
 	}
-	d.ejecutarLote(d.RemoteDB, "Productos", []interface{}{&record})
+	d.actualizarLoteEnRemoto(d.RemoteDB, "Productos", []interface{}{&record})
 }
 
 func (d *Db) syncProveedorToRemote(id uint) {
@@ -306,10 +408,9 @@ func (d *Db) syncProveedorToRemote(id uint) {
 		log.Printf("syncProveedorToRemote: no se encontró proveedor local ID %d: %v", id, err)
 		return
 	}
-	d.ejecutarLote(d.RemoteDB, "Proveedores", []interface{}{&record})
+	d.actualizarLoteEnRemoto(d.RemoteDB, "Proveedores", []interface{}{&record})
 }
 
-// syncVentaToRemote sincroniza una factura (venta) por ID; asegura vendedor y cliente en remoto.
 func (d *Db) syncVentaToRemote(id uint) {
 	if !d.isRemoteDBAvailable() {
 		return
@@ -319,15 +420,12 @@ func (d *Db) syncVentaToRemote(id uint) {
 		log.Printf("SYNC ERROR: Local invoice not found (ID %d): %v", id, err)
 		return
 	}
-	// Asegurar existencia de referencias en remoto
 	d.syncVendedorToRemote(record.VendedorID)
 	d.syncClienteToRemote(record.ClienteID)
 
-	// Insertar/Actualizar factura con upsert
 	d.ejecutarLote(d.RemoteDB, "Facturas", []interface{}{&record})
 }
 
-// syncCompraToRemote sincroniza una compra por ID; asegura proveedor en remoto.
 func (d *Db) syncCompraToRemote(id uint) {
 	if !d.isRemoteDBAvailable() {
 		return
@@ -337,10 +435,8 @@ func (d *Db) syncCompraToRemote(id uint) {
 		log.Printf("SYNC ERROR: Local purchase not found (ID %d): %v", id, err)
 		return
 	}
-	// Asegurar proveedor en remoto
 	d.syncProveedorToRemote(record.ProveedorID)
 
-	// Insertar/Actualizar compra con upsert
 	d.ejecutarLote(d.RemoteDB, "Compras", []interface{}{&record})
 }
 
@@ -420,7 +516,6 @@ func getConflictColumn(record interface{}) string {
 	}
 }
 
-// NUEVO: Calcula el stock real de un producto basado en operaciones locales
 func (d *Db) calcularStockRealLocal(productoID uint) int {
 	var suma int64
 	d.LocalDB.Model(&OperacionStock{}).Where("producto_id = ?", productoID).
