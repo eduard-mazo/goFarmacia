@@ -35,6 +35,9 @@ importers:
       pinia:
         specifier: ^3.0.3
         version: 3.0.3(typescript@5.9.2)(vue@3.5.18(typescript@5.9.2))
+      qrcode.vue:
+        specifier: ^3.6.0
+        version: 3.6.0(vue@3.5.18(typescript@5.9.2))
       reka-ui:
         specifier: ^2.5.0
         version: 2.5.0(typescript@5.9.2)(vue@3.5.18(typescript@5.9.2))
@@ -3388,6 +3391,11 @@ packages:
 
   pump@3.0.3:
     resolution: {integrity: sha512-todwxLMY7/heScKmntwQG8CXVkWUOdYxIvY2s0VWAAMh/nd8SoYiRaKjlr7+iCs984f2P8zvrfWcDDYVb73NfA==}
+
+  qrcode.vue@3.6.0:
+    resolution: {integrity: sha512-vQcl2fyHYHMjDO1GguCldJxepq2izQjBkDEEu9NENgfVKP6mv/e2SU62WbqYHGwTgWXLhxZ1NCD1dAZKHQq1fg==}
+    peerDependencies:
+      vue: ^3.0.0
 
   qs@6.14.0:
     resolution: {integrity: sha512-YWWTjgABSKcvs/nWBi9PycY/JiPJqOD4JA6o9Sej2AtvSGarXxKC3OQSk4pAarbdQlKAh5D4FCQkJNkW+GAn3w==}
@@ -7752,6 +7760,10 @@ snapshots:
     dependencies:
       end-of-stream: 1.4.5
       once: 1.4.0
+
+  qrcode.vue@3.6.0(vue@3.5.18(typescript@5.9.2)):
+    dependencies:
+      vue: 3.5.18(typescript@5.9.2)
 
   qs@6.14.0:
     dependencies:

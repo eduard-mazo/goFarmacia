@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
@@ -28,6 +29,26 @@ type OperacionStock struct {
 	Sincronizado    bool      `gorm:"default:false" json:"sincronizado"`
 }
 
+type Claims struct {
+	UserID  uint   `json:"user_id"`
+	Email   string `json:"email"`
+	Nombre  string `json:"nombre"`
+	Cedula  string `json:"cedula"`
+	MFAStep string `json:"mfa_step,omitempty"` // Para el flujo de MFA
+	jwt.RegisteredClaims
+}
+
+type LoginResponse struct {
+	MFARequired bool     `json:"mfa_required"`
+	Token       string   `json:"token"` // Será un token temporal si MFA es requerido
+	Vendedor    Vendedor `json:"vendedor"`
+}
+
+type MFASetupResponse struct {
+	Secret   string `json:"secret"`    // Para mostrar al usuario como backup
+	ImageURL string `json:"image_url"` // QR Code en formato DataURL
+}
+
 type Vendedor struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt  time.Time      `json:"created_at" wails:"ts.type=string"`
@@ -37,7 +58,9 @@ type Vendedor struct {
 	Apellido   string         `json:"Apellido"`
 	Cedula     string         `gorm:"unique" json:"Cedula"`
 	Email      string         `gorm:"unique" json:"Email"`
-	Contrasena string         `json:"Contrasena"`
+	Contrasena string         `json:"-"`
+	MFASecret  string         `json:"-"`
+	MFAEnabled bool           `gorm:"default:false" json:"mfa_enabled"`
 }
 
 type Cliente struct {

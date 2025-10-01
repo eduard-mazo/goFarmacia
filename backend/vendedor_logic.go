@@ -6,16 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gorm"
 )
 
-// LoginResponse es la estructura que se devuelve al frontend tras un login exitoso.
-type LoginResponse struct {
-	Token    string   `json:"token"`
-	Vendedor Vendedor `json:"vendedor"`
-}
-
-// RegistrarVendedor crea un nuevo vendedor o restaura uno eliminado con la misma cédula/email.
 func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	hashedPassword, err := HashPassword(vendedor.Contrasena)
 	if err != nil {
@@ -33,13 +27,13 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	err = tx.Unscoped().Where("cedula = ? OR email = ?", vendedor.Cedula, vendedor.Email).First(&existente).Error
 
 	if err == nil {
-		if existente.DeletedAt.Valid { // El vendedor estaba eliminado y se va a reutilizar.
+		if existente.DeletedAt.Valid {
 			d.Log.Infof("Restaurando vendedor eliminado con ID: %d", existente.ID)
 			existente.Nombre = vendedor.Nombre
 			existente.Apellido = vendedor.Apellido
 			existente.Email = vendedor.Email
 			existente.Contrasena = vendedor.Contrasena
-			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false} // ¡Esta es la lógica de reutilización!
+			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
 
 			if err := tx.Unscoped().Save(&existente).Error; err != nil {
 				return Vendedor{}, fmt.Errorf("error al restaurar vendedor: %w", err)
@@ -65,10 +59,10 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	return vendedor, nil
 }
 
-// LoginVendedor verifica las credenciales, priorizando la BD remota si está disponible.
 func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	var vendedor Vendedor
 	var response LoginResponse
+
 	db := d.LocalDB
 	if d.isRemoteDBAvailable() {
 		db = d.RemoteDB
@@ -76,18 +70,13 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 
 	if err := db.Where("email = ?", req.Email).First(&vendedor).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return response, errors.New("vendedor no encontrado")
+			return response, errors.New("vendedor no encontrado o credenciales incorrectas")
 		}
 		return response, err
 	}
 
 	if !CheckPasswordHash(req.Contrasena, vendedor.Contrasena) {
-		return response, errors.New("contraseña incorrecta")
-	}
-
-	tokenString, err := d.GenerateJWT(vendedor)
-	if err != nil {
-		return response, fmt.Errorf("no se pudo generar el token: %w", err)
+		return response, errors.New("vendedor no encontrado o credenciales incorrectas")
 	}
 
 	if d.isRemoteDBAvailable() {
@@ -95,11 +84,49 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	}
 
 	vendedor.Contrasena = ""
-	response = LoginResponse{Token: tokenString, Vendedor: vendedor}
+	response.Vendedor = vendedor
+
+	if !vendedor.MFAEnabled {
+		expirationTime := time.Now().Add(24 * time.Hour)
+		claims := &Claims{
+			UserID: vendedor.ID,
+			Email:  vendedor.Email,
+			Nombre: vendedor.Nombre,
+			Cedula: vendedor.Cedula,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(expirationTime),
+			},
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString(d.jwtKey)
+		if err != nil {
+			return response, fmt.Errorf("no se pudo generar el token: %w", err)
+		}
+		response.MFARequired = false
+		response.Token = tokenString
+		return response, nil
+	}
+
+	expirationTime := time.Now().Add(5 * time.Minute)
+	claims := &Claims{
+		UserID:  vendedor.ID,
+		Email:   vendedor.Email,
+		MFAStep: "pending",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(d.jwtKey)
+	if err != nil {
+		return response, err
+	}
+
+	response.MFARequired = true
+	response.Token = tokenString
 	return response, nil
 }
 
-// ActualizarPerfilVendedor actualiza los datos del PROPIO usuario, incluyendo la contraseña de forma segura.
 func (d *Db) ActualizarPerfilVendedor(req VendedorUpdateRequest) (string, error) {
 	if req.ID == 0 {
 		return "", errors.New("se requiere un ID de vendedor válido")
@@ -139,7 +166,6 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 		return Vendedor{}, errors.New("se requiere un ID de vendedor válido para actualizar")
 	}
 
-	// Creamos un mapa solo con los campos que queremos actualizar para evitar sobreescribir la contraseña.
 	updates := map[string]interface{}{
 		"Nombre":   vendedor.Nombre,
 		"Apellido": vendedor.Apellido,
@@ -156,15 +182,12 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 		return Vendedor{}, errors.New("no se encontró el vendedor para actualizar o los datos no cambiaron")
 	}
 
-	// Sincronizamos en segundo plano
 	go d.syncVendedorToRemote(vendedor.ID)
 
-	// Devolvemos el objeto actualizado sin la contraseña
 	vendedor.Contrasena = ""
 	return vendedor, nil
 }
 
-// ObtenerVendedoresPaginado retorna una lista paginada de vendedores desde la BD local.
 func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
 	var vendedores []Vendedor
 	var total int64
@@ -192,11 +215,10 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 	return PaginatedResult{Records: vendedores, TotalRecords: total}, err
 }
 
-// EliminarVendedor realiza un borrado lógico (soft delete) de un vendedor.
 func (d *Db) EliminarVendedor(id uint) (string, error) {
-	if err := d.LocalDB.Delete(&Vendedor{}, id).Error; err != nil {
+	if err := d.LocalDB.Session(&gorm.Session{SkipHooks: true}).Delete(&Vendedor{}, id).Error; err != nil {
 		return "", err
 	}
-	go d.syncVendedorToRemote(id) // Sincroniza el borrado
+	go d.syncVendedorToRemote(id)
 	return "Vendedor eliminado localmente. Sincronizando...", nil
 }

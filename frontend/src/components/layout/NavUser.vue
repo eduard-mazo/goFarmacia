@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { ChevronsUpDown, LogOut, Settings, Loader2 } from "lucide-vue-next";
+import {
+  ChevronsUpDown,
+  LogOut,
+  Settings,
+  Loader2,
+  ShieldCheck,
+} from "lucide-vue-next";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +40,7 @@ import { useAuthStore } from "@/stores/auth";
 import { ActualizarPerfilVendedor } from "@/../wailsjs/go/backend/Db";
 import { backend } from "@/../wailsjs/go/models";
 import { toast } from "vue-sonner";
+import MFASetup from "@/components/auth/MFASetup.vue";
 
 const authStore = useAuthStore();
 const userAvatar = "https://avatar.iran.liara.run/public/boy";
@@ -51,7 +58,7 @@ const isSaving = ref(false);
 
 watch(isSettingsDialogOpen, (isOpen) => {
   if (isOpen && authenticatedUser.value) {
-    editableUser.value = { ...authenticatedUser.value };
+    editableUser.value = JSON.parse(JSON.stringify(authenticatedUser.value));
     currentPassword.value = "";
     newPassword.value = "";
     confirmPassword.value = "";
@@ -94,7 +101,12 @@ async function handleSaveChanges() {
   try {
     await ActualizarPerfilVendedor(request);
     toast.success("Perfil actualizado correctamente.");
-    authStore.updateUser(editableUser.value);
+    authStore.updateUser({
+      Nombre: editableUser.value.Nombre,
+      Apellido: editableUser.value.Apellido,
+      Cedula: editableUser.value.Cedula,
+      Email: editableUser.value.Email,
+    });
     isSettingsDialogOpen.value = false;
   } catch (error) {
     toast.error("Error al actualizar el perfil", { description: `${error}` });
@@ -105,6 +117,12 @@ async function handleSaveChanges() {
 
 function handleLogOut() {
   authStore.logout();
+}
+
+function onMfaEnabled() {
+  if (editableUser.value) {
+    editableUser.value.mfa_enabled = true;
+  }
 }
 </script>
 
@@ -170,71 +188,92 @@ function handleLogOut() {
                   <span>Ajustes</span>
                 </DropdownMenuItem>
               </DialogTrigger>
-              <DialogContent class="w-11/12 md:max-w-[700px]">
+              <DialogContent class="w-11/12 md:max-w-[800px]">
                 <DialogHeader>
-                  <DialogTitle>Editar Perfil</DialogTitle>
+                  <DialogTitle>Editar Perfil y Seguridad</DialogTitle>
                   <DialogDescription>
-                    Realiza cambios a tu perfil aquí. Haz clic en guardar cuando
-                    termines.
+                    Realiza cambios a tu perfil o configura la autenticación de
+                    dos factores (2FA).
                   </DialogDescription>
                 </DialogHeader>
-                <div class="grid gap-6 py-4">
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="grid gap-2">
-                      <Label for="nombre">Nombre</Label>
-                      <Input id="nombre" v-model="editableUser.Nombre" />
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 py-4">
+                  <div class="space-y-6">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div class="grid gap-2">
+                        <Label for="nombre">Nombre</Label>
+                        <Input id="nombre" v-model="editableUser.Nombre" />
+                      </div>
+                      <div class="grid gap-2">
+                        <Label for="apellido">Apellido</Label>
+                        <Input id="apellido" v-model="editableUser.Apellido" />
+                      </div>
+                      <div class="grid gap-2">
+                        <Label for="cedula">Cédula</Label>
+                        <Input id="cedula" v-model="editableUser.Cedula" />
+                      </div>
+                      <div class="grid gap-2">
+                        <Label for="email">Email</Label>
+                        <Input
+                          id="email"
+                          v-model="editableUser.Email"
+                          type="email"
+                        />
+                      </div>
                     </div>
-                    <div class="grid gap-2">
-                      <Label for="apellido">Apellido</Label>
-                      <Input id="apellido" v-model="editableUser.Apellido" />
-                    </div>
-                    <div class="grid gap-2">
-                      <Label for="cedula">Cédula</Label>
-                      <Input id="cedula" v-model="editableUser.Cedula" />
-                    </div>
-                    <div class="grid gap-2">
-                      <Label for="email">Email</Label>
-                      <Input
-                        id="email"
-                        v-model="editableUser.Email"
-                        type="email"
-                      />
+
+                    <div class="space-y-4">
+                      <hr />
+                      <p class="text-sm text-muted-foreground text-center">
+                        Para cambiar tu contraseña, completa los siguientes
+                        campos.
+                      </p>
+                      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div class="grid gap-2">
+                          <Label for="currentPassword">Contraseña Actual</Label>
+                          <Input
+                            id="currentPassword"
+                            v-model="currentPassword"
+                            type="password"
+                          />
+                        </div>
+                        <div class="grid gap-2">
+                          <Label for="newPassword">Nueva Contraseña</Label>
+                          <Input
+                            id="newPassword"
+                            v-model="newPassword"
+                            type="password"
+                          />
+                        </div>
+                        <div class="grid gap-2">
+                          <Label for="confirmPassword"
+                            >Confirmar Contraseña</Label
+                          >
+                          <Input
+                            id="confirmPassword"
+                            v-model="confirmPassword"
+                            type="password"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  <div class="space-y-4">
-                    <hr />
-                    <p class="text-sm text-muted-foreground text-center">
-                      Para cambiar tu contraseña, completa los siguientes tres
-                      campos.
-                    </p>
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <div class="grid gap-2">
-                        <Label for="currentPassword">Contraseña Actual</Label>
-                        <Input
-                          id="currentPassword"
-                          v-model="currentPassword"
-                          type="password"
-                        />
-                      </div>
-                      <div class="grid gap-2">
-                        <Label for="newPassword">Nueva Contraseña</Label>
-                        <Input
-                          id="newPassword"
-                          v-model="newPassword"
-                          type="password"
-                        />
-                      </div>
-                      <div class="grid gap-2">
-                        <Label for="confirmPassword"
-                          >Confirmar Contraseña</Label
-                        >
-                        <Input
-                          id="confirmPassword"
-                          v-model="confirmPassword"
-                          type="password"
-                        />
-                      </div>
+                  <div>
+                    <MFASetup
+                      v-if="!editableUser.mfa_enabled"
+                      @mfa-enabled="onMfaEnabled"
+                    />
+
+                    <div
+                      v-else
+                      class="flex flex-col items-center justify-center h-full p-6 border rounded-lg bg-secondary/50"
+                    >
+                      <ShieldCheck class="w-16 h-16 text-green-500 mb-4" />
+                      <h3 class="text-lg font-semibold">2FA está Activo</h3>
+                      <p class="text-sm text-muted-foreground text-center mt-2">
+                        La autenticación de dos factores ya está protegiendo tu
+                        cuenta.
+                      </p>
                     </div>
                   </div>
                 </div>

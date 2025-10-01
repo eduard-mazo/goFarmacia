@@ -1,7 +1,4 @@
-import {
-  createRouter,
-  createWebHashHistory,
-} from "vue-router";
+import { createRouter, createWebHashHistory } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 
 const routes = [
@@ -15,6 +12,7 @@ const routes = [
     path: "/Register",
     name: "Register",
     component: () => import("@/views/Register.vue"),
+    meta: { public: true },
   },
   {
     path: "/dashboard",
@@ -66,25 +64,22 @@ const routes = [
 ];
 
 const router = createRouter({
-  history: createWebHashHistory(), // <-- CAMBIO: Se utiliza el modo Hash History
+  history: createWebHashHistory(),
   routes,
 });
 
 router.beforeEach((to, _, next) => {
   const authStore = useAuthStore();
-
   if (!authStore.isAuthenticated) {
     authStore.tryAutoLogin();
   }
 
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
+  const isPublic = to.matched.some((record) => record.meta.public);
 
   if (requiresAuth && !authStore.isAuthenticated) {
     next({ name: "Login" });
-  } else if (
-    (to.name === "Login" || to.name === "Register") &&
-    authStore.isAuthenticated
-  ) {
+  } else if (isPublic && authStore.isAuthenticated) {
     next({ name: "DashboardHome" });
   } else {
     next();
