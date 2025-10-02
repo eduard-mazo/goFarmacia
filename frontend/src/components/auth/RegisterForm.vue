@@ -5,19 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AlertCircle } from "lucide-vue-next"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertCircle } from "lucide-vue-next";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import { useAuthStore } from "@/stores/auth";
 import { backend } from "@/../wailsjs/go/models";
 
-const form = ref<backend.Vendedor>({
-  Nombre: "",
-  Apellido: "",
-  Cedula: "",
-  Email: "",
-  Contrasena: "",
-} as backend.Vendedor);
+const registerPayload = ref<backend.Vendedor>(new backend.Vendedor());
 
 const error = ref<string | null>(null);
 const isLoading = ref(false);
@@ -28,7 +22,7 @@ const handleRegister = async () => {
   isLoading.value = true;
   error.value = "";
   try {
-    await authStore.register(form.value);
+    await authStore.register(registerPayload.value);
     // Redirigir al login para que el usuario inicie sesión con su nueva cuenta.
     router.push({ path: "/login", query: { registered: "true" } });
   } catch (err: any) {
@@ -55,7 +49,7 @@ const handleRegister = async () => {
               <Label for="name">Nombres</Label>
               <Input
                 id="name"
-                v-model="form.Nombre"
+                v-model="registerPayload.Nombre"
                 type="text"
                 placeholder="John Doe"
                 required
@@ -65,7 +59,7 @@ const handleRegister = async () => {
               <Label for="name">Apellidos</Label>
               <Input
                 id="name"
-                v-model="form.Apellido"
+                v-model="registerPayload.Apellido"
                 type="text"
                 placeholder="Velasquez Suaza"
                 required
@@ -75,7 +69,7 @@ const handleRegister = async () => {
               <Label for="email">Correo Electrónico</Label>
               <Input
                 id="email"
-                v-model="form.Email"
+                v-model="registerPayload.Email"
                 type="email"
                 placeholder="m@example.com"
                 required
@@ -85,7 +79,7 @@ const handleRegister = async () => {
               <Label for="email">Cedula</Label>
               <Input
                 id="email"
-                v-model="form.Cedula"
+                v-model="registerPayload.Cedula"
                 type="text"
                 placeholder="1020430991"
                 required
@@ -95,7 +89,7 @@ const handleRegister = async () => {
               <Label for="password">Contraseña</Label>
               <Input
                 id="password"
-                v-model="form.Contrasena"
+                v-model="registerPayload.Contrasena"
                 type="password"
                 required
               />

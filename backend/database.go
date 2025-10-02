@@ -58,7 +58,7 @@ type Vendedor struct {
 	Apellido   string         `json:"Apellido"`
 	Cedula     string         `gorm:"unique" json:"Cedula"`
 	Email      string         `gorm:"unique" json:"Email"`
-	Contrasena string         `json:"-"`
+	Contrasena string         `json:"Contrasena"`
 	MFASecret  string         `json:"-"`
 	MFAEnabled bool           `gorm:"default:false" json:"mfa_enabled"`
 }

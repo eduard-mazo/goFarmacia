@@ -42,7 +42,7 @@ func (d *Db) GenerateJWT(vendedor Vendedor) (string, error) {
 
 func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "TuFarmacia",
+		Issuer:      "LUNA_POS",
 		AccountName: email,
 	})
 	if err != nil {

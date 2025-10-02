@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
+import { jwtDecode } from "jwt-decode";
 
 const routes = [
   {
@@ -70,6 +71,22 @@ const router = createRouter({
 
 router.beforeEach((to, _, next) => {
   const authStore = useAuthStore();
+  const token = authStore.token;
+
+  if (token) {
+    try {
+      const decodedToken: { exp: number } = jwtDecode(token);
+      if (decodedToken.exp * 1000 < Date.now()) {
+        authStore.logout();
+        return next({ name: "Login" });
+      }
+    } catch (error) {
+      console.error("Token inválido:", error);
+      authStore.logout();
+      return next({ name: "Login" });
+    }
+  }
+
   if (!authStore.isAuthenticated) {
     authStore.tryAutoLogin();
   }

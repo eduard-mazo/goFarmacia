@@ -1,7 +1,14 @@
-<script setup>
-import { ref } from "vue";
-import { useRouter } from "vue-router";
+<script setup lang="ts">
+import { ref, onMounted } from "vue";
+import { useAuthStore } from "@/stores/auth";
+import { backend } from "@/../wailsjs/go/models";
+import { toast } from "vue-sonner";
+import { useRoute } from "vue-router";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertCircle, Loader2, ArrowLeft } from "lucide-vue-next";
 import {
   Card,
   CardContent,
@@ -10,54 +17,39 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { LoginVendedor, VerificarLoginMFA } from "@/../wailsjs/go/backend/Db";
-import { useAuthStore } from "@/stores/auth";
-import { backend } from "@/../wailsjs/go/models";
 
-const router = useRouter();
 const authStore = useAuthStore();
+const route = useRoute();
 
-const isLoading = ref(false);
-const error = ref("");
+const credentials = ref<backend.LoginRequest>(new backend.LoginRequest());
+const mfaCode = ref<string>("");
 
-const mfaRequired = ref(false);
-const tempToken = ref("");
-const mfaCode = ref("");
+const isLoading = ref<boolean>(false);
+const error = ref<string>("");
+const loginStep = ref<number>(1); // 1 para credenciales, 2 para MFA
 
-const vendedorInfo = ref(null);
-
-const credentials = ref({
-  Email: "",
-  Contrasena: "",
+onMounted(() => {
+  if (route.query.registered === "true") {
+    toast.success("¡Cuenta creada con éxito! Ahora puedes iniciar sesión.");
+  }
 });
 
-const handleLogin = async () => {
+async function handleLogin() {
   isLoading.value = true;
   error.value = "";
   try {
-    const response = await LoginVendedor(credentials.value);
-
-    vendedorInfo.value = response.vendedor;
-
-    if (response.mfa_required) {
-      mfaRequired.value = true;
-      tempToken.value = response.token;
-    } else {
-      authStore.setAuthenticated(vendedorInfo.value, response.token);
-      router.push("/");
+    const requiresMFA = await authStore.login(credentials.value);
+    if (requiresMFA) {
+      loginStep.value = 2;
     }
-  } catch (err) {
-    error.value = err;
-    vendedorInfo.value = null;
+  } catch (err: any) {
+    error.value = err.message || "Credenciales incorrectas.";
   } finally {
     isLoading.value = false;
   }
-};
+}
 
-const handleVerifyMFA = async () => {
+async function handleVerifyMFA() {
   if (mfaCode.value.length !== 6) {
     error.value = "El código debe tener 6 dígitos.";
     return;
@@ -65,105 +57,124 @@ const handleVerifyMFA = async () => {
   isLoading.value = true;
   error.value = "";
   try {
-    const finalToken = await VerificarLoginMFA(tempToken.value, mfaCode.value);
-
-    if (vendedorInfo.value) {
-      authStore.setAuthenticated(vendedorInfo.value, finalToken);
-      router.push("/");
-    } else {
-      throw new Error(
-        "No se pudo recuperar la información del usuario. Intenta iniciar sesión de nuevo."
-      );
-    }
-  } catch (err) {
-    error.value = err;
+    await authStore.verifyMfaAndFinishLogin(mfaCode.value);
+  } catch (err: any) {
+    error.value = err.message || "Código MFA incorrecto o expirado.";
   } finally {
     isLoading.value = false;
   }
-};
+}
 </script>
 
 <template>
-  <div class="flex items-center justify-center min-h-screen bg-background">
-    <Card class="w-full max-w-md">
-      <CardHeader>
-        <CardTitle class="text-2xl font-bold text-center">
-          {{ !mfaRequired ? "Iniciar Sesión" : "Verificación de Dos Pasos" }}
-        </CardTitle>
-        <CardDescription class="text-center">
-          {{
-            !mfaRequired
-              ? "Ingresa tus credenciales para acceder al sistema."
-              : "Ingresa el código de tu aplicación de autenticación."
-          }}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Alert v-if="error" variant="destructive" class="mb-4">
-          <AlertTitle>Error de Autenticación</AlertTitle>
-          <AlertDescription>
-            {{ error }}
-          </AlertDescription>
-        </Alert>
-
-        <form
-          v-if="!mfaRequired"
-          @submit.prevent="handleLogin"
-          class="space-y-4"
+  <Card class="w-full max-w-sm">
+    <CardHeader class="text-center">
+      <CardTitle class="text-2xl">
+        {{
+          loginStep === 1 ? "¡Bienvenido de Nuevo!" : "Verificación Requerida"
+        }}
+      </CardTitle>
+      <CardDescription>
+        <span v-if="loginStep === 1">Ingresa a tu cuenta de Luna POS.</span>
+        <span v-else
+          >Ingresa el código de 6 dígitos de tu app de autenticación.</span
         >
-          <div class="space-y-2">
-            <Label for="email">Email</Label>
-            <Input
-              id="email"
-              v-model="credentials.Email"
-              type="email"
-              placeholder="tu@email.com"
-              required
-            />
-          </div>
-          <div class="space-y-2">
+      </CardDescription>
+    </CardHeader>
+
+    <CardContent>
+      <form
+        v-if="loginStep === 1"
+        @submit.prevent="handleLogin"
+        class="grid gap-4"
+      >
+        <div class="grid gap-2">
+          <Label for="email">Correo</Label>
+          <Input
+            id="email"
+            v-model="credentials.Email"
+            type="email"
+            placeholder="m@example.com"
+            required
+          />
+        </div>
+        <div class="grid gap-2">
+          <div class="flex items-center">
             <Label for="password">Contraseña</Label>
-            <Input
-              id="password"
-              v-model="credentials.Contrasena"
-              type="password"
-              required
-            />
           </div>
-          <Button type="submit" class="w-full" :disabled="isLoading">
-            {{ isLoading ? "Ingresando..." : "Ingresar" }}
-          </Button>
-        </form>
+          <Input
+            id="password"
+            v-model="credentials.Contrasena"
+            type="password"
+            required
+          />
+        </div>
+      </form>
 
-        <form
-          v-if="mfaRequired"
-          @submit.prevent="handleVerifyMFA"
-          class="space-y-4"
+      <form
+        v-if="loginStep === 2"
+        @submit.prevent="handleVerifyMFA"
+        class="grid gap-2"
+      >
+        <Label for="mfa-code">Código de Autenticación</Label>
+        <Input
+          id="mfa-code"
+          v-model="mfaCode"
+          class="text-center text-lg tracking-[0.5em]"
+          maxlength="6"
+          autocomplete="one-time-code"
+          required
+        />
+      </form>
+
+      <Alert v-if="error" variant="destructive" class="mt-4">
+        <AlertCircle class="w-4 h-4" />
+        <AlertTitle>Error de Autenticación</AlertTitle>
+        <AlertDescription>{{ error }}</AlertDescription>
+      </Alert>
+    </CardContent>
+
+    <CardFooter class="flex flex-col gap-4">
+      <Button
+        v-if="loginStep === 1"
+        type="submit"
+        @click="handleLogin"
+        class="w-full"
+        :disabled="isLoading"
+      >
+        <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
+        {{ isLoading ? "Ingresando..." : "Iniciar Sesión" }}
+      </Button>
+      <Button
+        v-if="loginStep === 2"
+        type="submit"
+        @click="handleVerifyMFA"
+        class="w-full"
+        :disabled="isLoading"
+      >
+        <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
+        {{ isLoading ? "Verificando..." : "Verificar Código" }}
+      </Button>
+
+      <div class="text-center text-sm">
+        <span v-if="loginStep === 1">
+          ¿No tienes una cuenta?
+          <router-link to="/register" class="underline underline-offset-4"
+            >Regístrate</router-link
+          >
+        </span>
+        <Button
+          v-if="loginStep === 2"
+          variant="link"
+          size="sm"
+          @click="
+            loginStep = 1;
+            error = '';
+          "
         >
-          <div class="space-y-2">
-            <Label for="mfa-code">Código de 6 dígitos</Label>
-            <Input
-              id="mfa-code"
-              v-model="mfaCode"
-              type="text"
-              placeholder="123456"
-              maxlength="6"
-              required
-              autocomplete="one-time-code"
-              class="text-center text-lg tracking-[0.5em]"
-            />
-          </div>
-          <Button type="submit" class="w-full" :disabled="isLoading">
-            {{ isLoading ? "Verificando..." : "Verificar Código" }}
-          </Button>
-        </form>
-      </CardContent>
-      <CardFooter class="flex justify-center">
-        <p class="text-sm text-muted-foreground">
-          ¿No tienes cuenta?
-          <router-link to="/register" class="underline">Regístrate</router-link>
-        </p>
-      </CardFooter>
-    </Card>
-  </div>
+          <ArrowLeft class="w-4 h-4 mr-1" /> Volver
+        </Button>
+      </div>
+    </CardFooter>
+  </Card>
 </template>

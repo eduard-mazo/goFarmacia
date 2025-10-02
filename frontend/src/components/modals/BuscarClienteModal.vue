@@ -35,7 +35,13 @@ watch(busqueda, (nuevoValor) => {
   isLoading.value = true;
   debounceTimer.value = setTimeout(async () => {
     try {
-      const resultado = await ObtenerClientesPaginado(1, 15, nuevoValor);
+      const resultado = await ObtenerClientesPaginado(
+        1,
+        15,
+        nuevoValor,
+        "",
+        "asc"
+      );
       clientes.value = (resultado.Records as backend.Cliente[]) || [];
     } catch (error) {
       console.error("Error al buscar clientes:", error);
