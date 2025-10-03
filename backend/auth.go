@@ -41,6 +41,12 @@ func (d *Db) GenerateJWT(vendedor Vendedor) (string, error) {
 }
 
 func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
+	// --- LÓGICA MODIFICADA ---
+	var vendedor Vendedor
+	if err := d.LocalDB.Where("email = ?", email).First(&vendedor).Error; err != nil {
+		return MFASetupResponse{}, errors.New("vendedor no encontrado")
+	}
+
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "LUNA_POS",
 		AccountName: email,
@@ -49,8 +55,13 @@ func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 		return MFASetupResponse{}, errors.New("no se pudo generar la clave MFA")
 	}
 
-	if err := d.LocalDB.Model(&Vendedor{}).Where("email = ?", email).Update("mfa_secret", key.Secret()).Error; err != nil {
+	vendedor.MFASecret = key.Secret()
+	if err := d.LocalDB.Save(&vendedor).Error; err != nil {
 		return MFASetupResponse{}, errors.New("no se pudo guardar la clave MFA")
+	}
+
+	if d.isRemoteDBAvailable() {
+		go d.syncVendedorToRemote(vendedor.ID)
 	}
 
 	var buf bytes.Buffer
@@ -114,34 +125,41 @@ func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 		return false, errors.New("el código de verificación es incorrecto")
 	}
 
-	if err := d.LocalDB.Model(&vendedor).Update("mfa_enabled", true).Error; err != nil {
+	// Actualizamos el estado de MFA en el objeto
+	vendedor.MFAEnabled = true
+	if err := d.LocalDB.Save(&vendedor).Error; err != nil {
 		return false, errors.New("no se pudo habilitar MFA")
+	}
+
+	if d.isRemoteDBAvailable() {
+		go d.syncVendedorToRemote(vendedor.ID)
 	}
 
 	return true, nil
 }
 
-func (d *Db) VerificarLoginMFA(tempToken string, code string) (string, error) {
+func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, error) {
+	var response LoginResponse
 	claims := &Claims{}
 
 	tkn, err := jwt.ParseWithClaims(tempToken, claims, func(token *jwt.Token) (interface{}, error) {
 		return d.jwtKey, nil
 	})
 	if err != nil || !tkn.Valid || claims.MFAStep != "pending" {
-		return "", errors.New("token temporal inválido o expirado")
+		return response, errors.New("token temporal inválido o expirado")
 	}
 
 	var vendedor Vendedor
 	if err := d.LocalDB.Where("email = ?", claims.Email).First(&vendedor).Error; err != nil {
-		return "", errors.New("usuario no encontrado")
+		return response, errors.New("usuario no encontrado")
 	}
 
 	if !vendedor.MFAEnabled || vendedor.MFASecret == "" {
-		return "", errors.New("MFA no está habilitado para este usuario")
+		return response, errors.New("MFA no está habilitado para este usuario")
 	}
 	valid := totp.Validate(code, vendedor.MFASecret)
 	if !valid {
-		return "", errors.New("código MFA incorrecto")
+		return response, errors.New("código MFA incorrecto")
 	}
 
 	expirationTime := time.Now().Add(24 * time.Hour)
@@ -158,8 +176,13 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (string, error) {
 	finalToken := jwt.NewWithClaims(jwt.SigningMethodHS256, finalClaims)
 	tokenString, err := finalToken.SignedString(d.jwtKey)
 	if err != nil {
-		return "", err
+		return response, err
 	}
 
-	return tokenString, nil
+	vendedor.Contrasena = ""
+	response.Token = tokenString
+	response.Vendedor = vendedor
+	response.MFARequired = false
+
+	return response, nil
 }

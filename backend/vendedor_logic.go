@@ -54,7 +54,10 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 		return Vendedor{}, fmt.Errorf("error al confirmar transacción: %w", err)
 	}
 
-	go d.syncVendedorToRemote(vendedor.ID)
+	if d.isRemoteDBAvailable() {
+		go d.syncVendedorToRemote(vendedor.ID)
+	}
+
 	vendedor.Contrasena = ""
 	return vendedor, nil
 }
@@ -157,7 +160,10 @@ func (d *Db) ActualizarPerfilVendedor(req VendedorUpdateRequest) (string, error)
 		return "", err
 	}
 
-	go d.syncVendedorToRemote(vendedorActual.ID)
+	if d.isRemoteDBAvailable() {
+		go d.syncVendedorToRemote(vendedorActual.ID)
+	}
+
 	return "Perfil actualizado correctamente.", nil
 }
 
@@ -182,7 +188,9 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 		return Vendedor{}, errors.New("no se encontró el vendedor para actualizar o los datos no cambiaron")
 	}
 
-	go d.syncVendedorToRemote(vendedor.ID)
+	if d.isRemoteDBAvailable() {
+		go d.syncVendedorToRemote(vendedor.ID)
+	}
 
 	vendedor.Contrasena = ""
 	return vendedor, nil
@@ -219,6 +227,10 @@ func (d *Db) EliminarVendedor(id uint) (string, error) {
 	if err := d.LocalDB.Session(&gorm.Session{SkipHooks: true}).Delete(&Vendedor{}, id).Error; err != nil {
 		return "", err
 	}
-	go d.syncVendedorToRemote(id)
+
+	if d.isRemoteDBAvailable() {
+		go d.syncVendedorToRemote(id)
+	}
+
 	return "Vendedor eliminado localmente. Sincronizando...", nil
 }

@@ -45,19 +45,18 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
-  // Completa el login después de una verificación MFA exitosa
   async function verifyMfaAndFinishLogin(mfaCode: string) {
     if (!tempMFAToken.value) {
       throw new Error(
         "No se encontró un token de MFA temporal. Por favor, inicie sesión de nuevo."
       );
     }
-    const finalToken = await VerificarLoginMFA(tempMFAToken.value, mfaCode);
+    const finalResponse = await VerificarLoginMFA(tempMFAToken.value, mfaCode);
 
-    // Para obtener los datos del usuario, podríamos decodificar el nuevo token o hacer otra llamada.
-    // Por simplicidad, asumimos que el usuario que inició el MFA es el correcto.
-    // Una implementación más robusta podría hacer que VerificarLoginMFA devuelva el objeto Vendedor.
-    tryAutoLogin(finalToken); // Re-usa tryAutoLogin para popular el estado con el nuevo token final
+    setAuthenticated(finalResponse.vendedor, finalResponse.token);
+
+    tempMFAToken.value = null;
+
     router.push("/dashboard");
   }
 
