@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -30,7 +29,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 			return Factura{}, fmt.Errorf("producto con ID %d no encontrado", p.ID)
 		}
 		if producto.Stock < p.Cantidad {
-			return Factura{}, fmt.Errorf("stock insuficiente para %s", producto.Nombre)
+			return Factura{}, fmt.Errorf("stock insuficiente para %s. Disponible: %d, Solicitado: %d", producto.Nombre, producto.Stock, p.Cantidad)
 		}
 
 		nuevoStock := producto.Stock - p.Cantidad
@@ -66,8 +65,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	if err := tx.Create(&detallesFactura).Error; err != nil {
 		return Factura{}, fmt.Errorf("error al crear los detalles de la factura: %w", err)
 	}
-	if err := tx.Model(&OperacionStock{}).Where("factura_id IS NULL AND tipo_operacion = 'VENTA'").Update("factura_id", factura.ID).Error; err != nil {
-		tx.Rollback()
+	if err := tx.Model(&OperacionStock{}).Where("factura_id IS NULL AND tipo_operacion = 'VENTA' AND vendedor_id = ?", req.VendedorID).Update("factura_id", factura.ID).Error; err != nil {
 		return Factura{}, fmt.Errorf("error al asociar factura a operaciones de stock: %w", err)
 	}
 
@@ -155,7 +153,16 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 		detallesCompra = append(detallesCompra, DetalleCompra{
 			ProductoID: p.ProductoID, Cantidad: p.Cantidad, PrecioCompraUnitario: p.PrecioCompraUnitario,
 		})
-		if err := tx.Model(&producto).Update("Stock", gorm.Expr("Stock + ?", p.Cantidad)).Error; err != nil {
+
+		nuevoStock := producto.Stock + p.Cantidad
+		op := OperacionStock{
+			UUID: uuid.New().String(), ProductoID: producto.ID, TipoOperacion: "COMPRA",
+			CantidadCambio: p.Cantidad, StockResultante: nuevoStock, VendedorID: 1, Timestamp: time.Now(), // VendedorID 1 como sistema/admin
+		}
+		if err := tx.Create(&op).Error; err != nil {
+			return Compra{}, fmt.Errorf("error creando operación de stock por compra para %s: %w", producto.Nombre, err)
+		}
+		if err := tx.Model(&producto).Update("Stock", nuevoStock).Error; err != nil {
 			return Compra{}, fmt.Errorf("error al actualizar stock por compra para %s: %w", producto.Nombre, err)
 		}
 	}
@@ -177,6 +184,7 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 	}
 
 	go d.syncCompraToRemote(compra.ID)
+	go d.SincronizarOperacionesStock()
 
 	var compraCompleta Compra
 	d.LocalDB.Preload("Proveedor").Preload("Detalles.Producto").First(&compraCompleta, compra.ID)
