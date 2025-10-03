@@ -1,10 +1,7 @@
 <script setup lang="ts">
+import { ref, watch } from "vue";
 import { backend } from "@/../wailsjs/go/models";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import ReciboPOS from "@/components/pos/ReciboPOS.vue";
 import { Printer } from "lucide-vue-next";
@@ -13,11 +10,28 @@ const props = defineProps<{
   factura: backend.Factura | null;
 }>();
 
-// El v-model:open se manejará directamente en el template
 const emit = defineEmits(["update:open"]);
 
+const isOpen = ref(false);
+
+watch(
+  () => props.factura,
+  (newFactura) => {
+    if (newFactura) {
+      isOpen.value = true;
+    }
+  }
+);
+
+watch(isOpen, (newIsOpenValue) => {
+  if (!newIsOpenValue) {
+    setTimeout(() => {
+      emit("update:open", false);
+    }, 300);
+  }
+});
+
 function handlePrint() {
-  // Pequeño truco para asegurar que el DOM está listo antes de imprimir
   setTimeout(() => {
     window.print();
   }, 100);
@@ -25,16 +39,12 @@ function handlePrint() {
 </script>
 
 <template>
-  <Dialog
-    :open="!!props.factura"
-    @update:open="(val) => !val && emit('update:open', false)"
-  >
+  <Dialog v-model:open="isOpen">
     <DialogContent class="max-w-xs md:max-w-md print-area p-2">
-      <ReciboPOS :factura="props.factura" />
+      <ReciboPOS v-if="props.factura" :factura="props.factura" />
+
       <DialogFooter class="print:hidden">
-        <Button variant="outline" @click="emit('update:open', false)"
-          >Cerrar</Button
-        >
+        <Button variant="outline" @click="isOpen = false">Cerrar</Button>
         <Button @click="handlePrint">
           <Printer class="w-4 h-4 mr-2" />
           Imprimir
