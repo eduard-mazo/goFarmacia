@@ -5,12 +5,21 @@ import (
 	"time"
 
 	"github.com/google/gousb"
+	"golang.org/x/text/encoding/charmap"
 )
 
 const (
 	vendorID  gousb.ID = 0x0416
 	productID gousb.ID = 0x5011
+	// Code Page 16: PC858 (Euro) - Común para Español y Euro.
+	// El comando es ESC t n, donde n=16.
+	// \x1B\x74\x10 es el comando de inicialización de la función ImprimirRecibo
+	// CODE_PAGE_PC858_N byte = 0x10 // n=16
+	CODE_PAGE_PC858_N byte = 0x02 // n=2
 )
+
+// Encoder para el Code Page 858 (Latin-1 / Euro)
+var encoder = charmap.CodePage858.NewEncoder()
 
 func (d *Db) VerificarImpresora() bool {
 	ctx := gousb.NewContext()
@@ -24,6 +33,19 @@ func (d *Db) VerificarImpresora() bool {
 	defer dev.Close()
 	d.Log.Info("Verificación de impresora exitosa: Dispositivo encontrado.")
 	return true
+}
+
+// Función de ayuda para codificar texto.
+func encodeText(text string) ([]byte, error) {
+	// Codifica la cadena de UTF-8 al Code Page 858.
+	// Esto resuelve problemas con tildes (á, é, í, ó, ú, ñ)
+	return encoder.Bytes([]byte(text))
+}
+
+// NUEVA FUNCIÓN: Envía el comando para seleccionar el Code Page
+func selectCodePage(n byte) []byte {
+	// Comando: ESC t n
+	return []byte{0x1B, 0x74, n}
 }
 
 func (d *Db) ImprimirRecibo(factura Factura) error {
@@ -55,55 +77,180 @@ func (d *Db) ImprimirRecibo(factura Factura) error {
 	if err := send([]byte("\x1B@")); err != nil {
 		return err
 	}
-	if err := send([]byte("\x1B\x74\x10")); err != nil {
+
+	if err := send(selectCodePage(CODE_PAGE_PC858_N)); err != nil {
 		return err
 	}
-	if err := send(center("DROGUERIA LUNA")); err != nil {
+
+	sendEncoded := func(text string) error {
+		data, err := encodeText(text)
+		if err != nil {
+			return fmt.Errorf("error al codificar texto '%s': %w", text, err)
+		}
+		if _, err := epOut.Write(data); err != nil {
+			return fmt.Errorf("error al escribir datos codificados: %w", err)
+		}
+		return nil
+	}
+	if err := send(center()); err != nil {
 		return err
 	}
-	if err := send(center("NIT: 70.120.237")); err != nil {
-		return err
-	}
-	if err := send(center("Medellin, Antioquia")); err != nil {
+	if err := sendEncoded("DROGUERIA LUNA"); err != nil {
 		return err
 	}
 	if err := send(lineBreak()); err != nil {
 		return err
 	}
 
-	if err := send(left(fmt.Sprintf("Factura: %s", factura.NumeroFactura))); err != nil {
+	if err := send(center()); err != nil {
 		return err
 	}
+	if err := sendEncoded("NIT: 70.120.237"); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	if err := send(center()); err != nil {
+		return err
+	}
+	if err := sendEncoded("Medellín, Antioquia"); err != nil {
+		return err
+	} // Nótese la tilde en "Medellín"
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	if err := send(center()); err != nil {
+		return err
+	}
+	if err := sendEncoded("Cel: 3054456781"); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	if err := send(center()); err != nil {
+		return err
+	}
+	if err := sendEncoded("Calle 94 # 48-33"); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	if err := send(left()); err != nil {
+		return err
+	}
+	if err := sendEncoded(fmt.Sprintf("Factura: %s", factura.NumeroFactura)); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
 	fecha, _ := time.Parse(time.RFC3339, factura.FechaEmision.Format(time.RFC3339))
-	if err := send(left(fmt.Sprintf("Fecha: %s", fecha.Format("02/01/2006 03:04 PM")))); err != nil {
+	if err := send(left()); err != nil {
 		return err
 	}
-	if err := send(left(fmt.Sprintf("Cliente: %s %s", factura.Cliente.NumeroID, factura.Cliente.Apellido))); err != nil {
-		return err
-	}
-	if err := send(left(fmt.Sprintf("Vendedor: %s", factura.Vendedor.Nombre))); err != nil {
+	if err := sendEncoded(fmt.Sprintf("Fecha: %s", fecha.Format("02/01/2006 03:04 PM"))); err != nil {
 		return err
 	}
 	if err := send(lineBreak()); err != nil {
 		return err
 	}
 
-	if err := send([]byte("Cant | Producto   |   Total\n")); err != nil {
+	if err := send(left()); err != nil {
 		return err
 	}
-	if err := send([]byte("--------------------------------\n")); err != nil {
+	if err := sendEncoded(fmt.Sprintf("Cliente: %s %s", factura.Cliente.NumeroID, factura.Cliente.Apellido)); err != nil {
 		return err
 	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	if err := send(left()); err != nil {
+		return err
+	}
+	if err := sendEncoded(fmt.Sprintf("Vendedor: %s", factura.Vendedor.Nombre)); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	// Encabezado de la tabla de productos
+	if err := send(left()); err != nil {
+		return err
+	}
+	if err := sendEncoded("Cant | Producto      |    Total"); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	// 4. Corrección de la línea separadora: Ahora usa `sendEncoded`
+	if err := send(left()); err != nil {
+		return err
+	}
+	if err := send(boldOn()); err != nil {
+		return err
+	}
+	if err := sendEncoded("- - - - - - - - - - - - - - - -"); err != nil {
+		return err
+	}
+	if err := send(boldOff()); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
+	// Detalles
 	for _, item := range factura.Detalles {
 		linea := formatItemLine(item.Cantidad, item.Producto.Nombre, item.PrecioTotal)
-		if err := send([]byte(linea)); err != nil {
+		if err := send(left()); err != nil {
 			return err
 		}
+		if err := sendEncoded(linea); err != nil {
+			return err
+		}
+		if err := send(lineBreak()); err != nil {
+			return err
+		} // El salto de línea se quita de formatItemLine y se pone aquí.
 	}
-	if err := send([]byte("--------------------------------\n")); err != nil {
+
+	// Línea separadora final
+	if err := send(left()); err != nil {
+		return err
+	}
+	if err := send(boldOn()); err != nil {
+		return err
+	}
+	if err := sendEncoded("- - - - - - - - - - - - - - - -"); err != nil {
+		return err
+	}
+	if err := send(boldOff()); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
 		return err
 	}
 
+	// Total:
 	totalStr := fmt.Sprintf("TOTAL: %s", formatCurrency(factura.Total))
 	if err := send(boldOn()); err != nil {
 		return err
@@ -111,9 +258,17 @@ func (d *Db) ImprimirRecibo(factura Factura) error {
 	if err := send(doubleHeightOn()); err != nil {
 		return err
 	}
-	if err := send(right(totalStr)); err != nil {
+
+	if err := send(right()); err != nil {
 		return err
 	}
+	if err := sendEncoded(totalStr); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
+		return err
+	}
+
 	if err := send(doubleHeightOff()); err != nil {
 		return err
 	}
@@ -124,11 +279,21 @@ func (d *Db) ImprimirRecibo(factura Factura) error {
 		return err
 	}
 
-	if err := send(center("Gracias por su compra")); err != nil {
+	// Mensaje final:
+	// El caracter especial al inicio probablemente era un error de codificación de la '¡' o de un caracter invisible.
+	// Al usar `sendEncoded` y el nuevo `center()`, esto debería corregirse.
+	if err := send(center()); err != nil {
+		return err
+	}
+	if err := sendEncoded("¡Gracias por su compra!"); err != nil {
+		return err
+	}
+	if err := send(lineBreak()); err != nil {
 		return err
 	}
 
-	if err := send([]byte("\n\n\n\n")); err != nil {
+	// Salto de papel y corte
+	if err := send([]byte("\n\n\n")); err != nil {
 		return err
 	}
 	if err := send([]byte("\x1D\x56\x42\x00")); err != nil {
@@ -189,23 +354,18 @@ func formatItemLine(qty int, name string, total float64) string {
 
 	totalStr := formatCurrency(total)
 
-	// Une las partes con el espaciado correcto. Ancho total: 32 chars.
-	// Ej: "1   Producto largo...   $10.000"
-	line := fmt.Sprintf("%-4s%-20s%8s\n", qtyStr, name, totalStr)
+	line := fmt.Sprintf("%-4s%-20s%8s", qtyStr, name, totalStr)
 	return line
 }
 
 func formatCurrency(val float64) string {
-	// Formateo simple para la impresora, sin decimales.
 	return fmt.Sprintf("$%d", int(val))
 }
-
-// Comandos de formato
-func center(text string) []byte { return []byte("\x1B\x61\x01" + text + "\n") }
-func left(text string) []byte   { return []byte("\x1B\x61\x00" + text + "\n") }
-func right(text string) []byte  { return []byte("\x1B\x61\x02" + text + "\n") }
-func lineBreak() []byte         { return []byte("\n") }
-func boldOn() []byte            { return []byte("\x1B\x45\x01") }
-func boldOff() []byte           { return []byte("\x1B\x45\x00") }
-func doubleHeightOn() []byte    { return []byte("\x1D\x21\x01") }
-func doubleHeightOff() []byte   { return []byte("\x1D\x21\x00") }
+func center() []byte          { return []byte("\x1B\x61\x01") }
+func left() []byte            { return []byte("\x1B\x61\x00") }
+func right() []byte           { return []byte("\x1B\x61\x02") }
+func lineBreak() []byte       { return []byte("\n") }
+func boldOn() []byte          { return []byte("\x1B\x45\x01") }
+func boldOff() []byte         { return []byte("\x1B\x45\x00") }
+func doubleHeightOn() []byte  { return []byte("\x1D\x21\x01") }
+func doubleHeightOff() []byte { return []byte("\x1D\x21\x00") }

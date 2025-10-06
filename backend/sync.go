@@ -41,14 +41,23 @@ func (d *Db) SincronizacionInteligente() {
 		d.Log.Info("Recalculando stock de todos los productos locales tras la sincronización.")
 		var productosLocales []Producto
 		d.LocalDB.Find(&productosLocales)
+		tx := d.LocalDB.Begin()
+		if tx.Error != nil {
+			d.Log.Errorf("Error al iniciar la transacción para el recálculo de stock: %v", tx.Error)
+			return
+		}
+		defer tx.Rollback()
+
 		for _, p := range productosLocales {
-			tx := d.LocalDB.Begin()
-			RecalcularYActualizarStock(tx, p.ID)
-			tx.Commit()
+			if err := RecalcularYActualizarStock(tx, p.ID); err != nil {
+				d.Log.Errorf("Error al recalcular el stock para el producto ID %d: %v", p.ID, err)
+			}
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			d.Log.Errorf("Error al confirmar la transacción de recálculo de stock: %v", err)
 		}
 	}
-
-	// 4. Finalmente, sincronizamos las transacciones maestras (Facturas y Compras).
 	d.sincronizarTransaccionesHaciaLocal()
 
 	d.Log.Infof("[FIN]: Sincronización Inteligente")

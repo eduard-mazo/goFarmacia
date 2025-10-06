@@ -13,6 +13,10 @@ import (
 // RecalcularYActualizarStock se convierte en la única función responsable de actualizar la columna 'stock'.
 // Calcula el total desde la tabla de operaciones y lo escribe en la tabla de productos.
 func RecalcularYActualizarStock(tx *gorm.DB, productoID uint) error {
+	if tx.Error != nil {
+		return tx.Error
+	}
+
 	var stockResultante int
 	// Calcula el stock SUMANDO todas las operaciones para ese producto.
 	err := tx.Model(&OperacionStock{}).
