@@ -21,39 +21,54 @@ type VendedorRendimiento struct {
 }
 
 type DashboardData struct {
-	TotalVentasHoy     float64             `json:"totalVentasHoy"`
-	NumeroVentasHoy    int64               `json:"numeroVentasHoy"`
-	TicketPromedioHoy  float64             `json:"ticketPromedioHoy"`
-	VentasIndividuales []VentaIndividual   `json:"ventasIndividuales"`
-	TopProductos       []ProductoVendido   `json:"topProductos"`
-	ProductosSinStock  []Producto          `json:"productosSinStock"`
-	TopVendedor        VendedorRendimiento `json:"topVendedor"`
+	TotalVentasDia     float64                  `json:"totalVentasDia"`
+	NumeroVentasDia    int64                    `json:"numeroVentasDia"`
+	TicketPromedioDia  float64                  `json:"ticketPromedioDia"`
+	VentasIndividuales []VentaIndividual        `json:"ventasIndividuales"`
+	TopProductos       []ProductoVendido        `json:"topProductos"`
+	ProductosSinStock  []Producto               `json:"productosSinStock"`
+	TopVendedor        VendedorRendimiento      `json:"topVendedor"`
+	MetodosPago        []map[string]interface{} `json:"metodosPago"`
 }
 
-func (d *Db) ObtenerDatosDashboard() (DashboardData, error) {
+func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	var data DashboardData
-	now := time.Now()
-	inicioDelDia := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	var err error
+
+	var fechaSeleccionada time.Time
+	if fechaStr == "" {
+		fechaSeleccionada = time.Now()
+	} else {
+		fechaSeleccionada, err = time.Parse("2006-01-02", fechaStr)
+		if err != nil {
+			return data, fmt.Errorf("formato de fecha inválido: %w", err)
+		}
+	}
+
+	location := fechaSeleccionada.Location()
+	inicioDelDia := time.Date(fechaSeleccionada.Year(), fechaSeleccionada.Month(), fechaSeleccionada.Day(), 0, 0, 0, 0, location)
 	finDelDia := inicioDelDia.Add(24*time.Hour - 1*time.Nanosecond)
+
 	data.VentasIndividuales = make([]VentaIndividual, 0)
 	data.TopProductos = make([]ProductoVendido, 0)
 	data.ProductosSinStock = make([]Producto, 0)
+	data.MetodosPago = make([]map[string]interface{}, 0)
 
 	var totalVentas struct {
 		Total  float64
 		Numero int64
 	}
-	err := d.LocalDB.Model(&Factura{}).
+	err = d.LocalDB.Model(&Factura{}).
 		Select("COALESCE(SUM(total), 0) as total, COUNT(id) as numero").
 		Where("fecha_emision BETWEEN ? AND ?", inicioDelDia, finDelDia).
 		Scan(&totalVentas).Error
 	if err != nil {
 		return data, fmt.Errorf("error al obtener total de ventas: %w", err)
 	}
-	data.TotalVentasHoy = totalVentas.Total
-	data.NumeroVentasHoy = totalVentas.Numero
-	if data.NumeroVentasHoy > 0 {
-		data.TicketPromedioHoy = data.TotalVentasHoy / float64(data.NumeroVentasHoy)
+	data.TotalVentasDia = totalVentas.Total
+	data.NumeroVentasDia = totalVentas.Numero
+	if data.NumeroVentasDia > 0 {
+		data.TicketPromedioDia = data.TotalVentasDia / float64(data.NumeroVentasDia)
 	}
 
 	err = d.LocalDB.Model(&Factura{}).
@@ -78,6 +93,15 @@ func (d *Db) ObtenerDatosDashboard() (DashboardData, error) {
 		return data, fmt.Errorf("error al obtener top productos: %w", err)
 	}
 
+	err = d.LocalDB.Model(&Factura{}).
+		Select("metodo_pago, COUNT(*) as count").
+		Where("fecha_emision BETWEEN ? AND ?", inicioDelDia, finDelDia).
+		Group("metodo_pago").
+		Scan(&data.MetodosPago).Error
+	if err != nil {
+		return data, fmt.Errorf("error al obtener métodos de pago: %w", err)
+	}
+
 	err = d.LocalDB.Where("stock <= 0").Order("nombre ASC").Limit(5).Find(&data.ProductosSinStock).Error
 	if err != nil {
 		return data, fmt.Errorf("error al obtener productos sin stock: %w", err)
@@ -99,4 +123,16 @@ func (d *Db) ObtenerDatosDashboard() (DashboardData, error) {
 	}
 
 	return data, nil
+}
+
+func (d *Db) ObtenerFechasConVentas() ([]string, error) {
+	var fechas []string
+	err := d.LocalDB.Model(&Factura{}).
+		Distinct().
+		Pluck("strftime('%Y-%m-%d', fecha_emision)", &fechas).
+		Error
+	if err != nil {
+		return nil, fmt.Errorf("error al obtener fechas con ventas: %w", err)
+	}
+	return fechas, nil
 }

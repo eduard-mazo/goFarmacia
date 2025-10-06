@@ -1,8 +1,24 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
-import { ObtenerDatosDashboard } from "@/../wailsjs/go/backend/Db";
+import { shallowRef, onMounted, watch, computed, ref } from "vue";
+import {
+  ObtenerDatosDashboard,
+  ObtenerFechasConVentas,
+} from "@/../wailsjs/go/backend/Db";
 import { backend } from "@/../wailsjs/go/models";
+import { CalendarDate, today, getLocalTimeZone } from "@internationalized/date";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
 import SalesTrendChart from "@/components/dashboard/SalesTrendChart.vue";
+import PaymentMethodsChart from "@/components/dashboard/PaymentMethodsChart.vue";
 import {
   DollarSign,
   ShoppingBag,
@@ -11,22 +27,43 @@ import {
   PackageX,
   TrendingUp,
   AlertCircle,
+  Wallet,
+  Calendar as CalendarIcon,
 } from "lucide-vue-next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-type DashboardData = {
-  totalVentasHoy: number;
-  numeroVentasHoy: number;
-  ticketPromedioHoy: number;
-  ventasIndividuales: { timestamp: string; total: number }[];
-  topProductos: { nombre: string; cantidad: number }[];
-  productosSinStock: backend.Producto[];
-  topVendedor: { nombreCompleto: string; totalVendido: number };
-};
+// Definición de tipos
+type DashboardData = backend.DashboardData;
 
+// --- ESTADO REACTIVO ---
+// Los refs normales están bien para datos primitivos y objetos planos
 const dashboardData = ref<DashboardData | null>(null);
 const isLoading = ref(true);
 const error = ref<string | null>(null);
+const fechasConVentas = ref<string[]>([]);
+
+// Usamos shallowRef para mantener la instancia de CalendarDate intacta.
+const date = shallowRef<CalendarDate>(today(getLocalTimeZone()));
+
+// --- PROPIEDADES COMPUTADAS ---
+// El resto del script no necesita cambios, ya que operan sobre la instancia correcta.
+const formattedButtonDate = computed(() => {
+  if (!date.value) return "Selecciona una fecha";
+  return format(date.value.toDate(getLocalTimeZone()), "PPP", { locale: es });
+});
+
+const formattedTitleDate = computed(() => {
+  const selectedDate = date.value.toDate(getLocalTimeZone());
+  const todayDate = new Date();
+
+  selectedDate.setHours(0, 0, 0, 0);
+  todayDate.setHours(0, 0, 0, 0);
+
+  if (selectedDate.getTime() === todayDate.getTime()) {
+    return "Hoy";
+  }
+  return format(selectedDate, "d 'de' MMMM 'de' yyyy", { locale: es });
+});
 
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat("es-CO", {
@@ -36,31 +73,97 @@ const formatCurrency = (value: number) => {
   }).format(value);
 };
 
-// Se mantiene la lógica de carga robusta
-async function loadDashboardData() {
+// --- LÓGICA DE CARGA DE DATOS ---
+async function loadDashboardData(fecha: CalendarDate) {
   isLoading.value = true;
   error.value = null;
+  dashboardData.value = null;
 
   try {
-    const response = await ObtenerDatosDashboard();
+    const fechaStr = fecha.toString();
+    const response = await ObtenerDatosDashboard(fechaStr);
     dashboardData.value = response;
-  } catch (err) {
+  } catch (err: any) {
     console.error("Error al cargar datos del dashboard:", err);
-    error.value =
-      "No se pudieron cargar los datos. Revisa la conexión o intenta más tarde.";
+    error.value = "No se pudieron cargar los datos. " + err;
   } finally {
     isLoading.value = false;
   }
 }
 
-onMounted(loadDashboardData);
+async function loadFechasConVentas() {
+  try {
+    fechasConVentas.value = await ObtenerFechasConVentas();
+  } catch (err) {
+    console.error("Error al cargar fechas con ventas:", err);
+  }
+}
+
+// --- HOOKS DEL CICLO DE VIDA ---
+onMounted(() => {
+  loadFechasConVentas();
+  loadDashboardData(date.value);
+});
+
+watch(date, (newDate) => {
+  if (newDate) {
+    loadDashboardData(newDate);
+  }
+});
 </script>
 
 <template>
-  <div class="p-4 md:p-6 lg:p-8">
-    <h1 class="text-3xl font-bold mb-6">Dashboard de Hoy</h1>
+  <div class="p-4 md:p-6 lg:p-8 space-y-6">
+    <div
+      class="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+    >
+      <h1 class="text-3xl font-bold">
+        Dashboard de <span class="text-primary">{{ formattedTitleDate }}</span>
+      </h1>
 
-    <div v-if="isLoading" class="text-center py-10">Cargando métricas...</div>
+      <Popover>
+        <PopoverTrigger as-child>
+          <Button
+            variant="outline"
+            class="w-[280px] justify-start text-left font-normal"
+          >
+            <CalendarIcon class="mr-2 h-4 w-4" />
+            <span>{{ formattedButtonDate }}</span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent class="w-auto p-0">
+          <Calendar v-model="date">
+            <template #day-cell="{ date: day }">
+              <div class="relative">
+                {{ day.day }}
+                <span
+                  v-if="fechasConVentas.includes(day.toString())"
+                  class="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-emerald-500"
+                ></span>
+              </div>
+            </template>
+          </Calendar>
+        </PopoverContent>
+      </Popover>
+    </div>
+
+    <div
+      v-if="isLoading"
+      class="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
+    >
+      <Card v-for="i in 4" :key="i" class="animate-pulse">
+        <CardHeader
+          class="flex flex-row items-center justify-between space-y-0 pb-2"
+        >
+          <div class="h-4 bg-muted rounded w-3/5"></div>
+          <div class="h-4 w-4 bg-muted rounded-full"></div>
+        </CardHeader>
+        <CardContent>
+          <div class="h-8 bg-muted rounded w-4/5 mb-2"></div>
+          <div class="h-3 bg-muted rounded w-full"></div>
+        </CardContent>
+      </Card>
+    </div>
 
     <div
       v-if="error"
@@ -71,25 +174,21 @@ onMounted(loadDashboardData);
     </div>
 
     <div
-      v-if="dashboardData"
+      v-if="!isLoading && dashboardData"
       class="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
     >
       <Card>
         <CardHeader
           class="flex flex-row items-center justify-between space-y-0 pb-2"
         >
-          <CardTitle class="text-sm font-medium"
-            >Total Ventas del Día</CardTitle
-          >
+          <CardTitle class="text-sm font-medium">Total Ventas</CardTitle>
           <DollarSign class="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
           <div class="text-2xl font-bold">
-            {{ formatCurrency(dashboardData.totalVentasHoy) }}
+            {{ formatCurrency(dashboardData.totalVentasDia) }}
           </div>
-          <p class="text-xs text-muted-foreground">
-            Ventas totales registradas hoy
-          </p>
+          <p class="text-xs text-muted-foreground">Ventas totales del día</p>
         </CardContent>
       </Card>
 
@@ -102,11 +201,9 @@ onMounted(loadDashboardData);
         </CardHeader>
         <CardContent>
           <div class="text-2xl font-bold">
-            {{ dashboardData.numeroVentasHoy }}
+            {{ dashboardData.numeroVentasDia }}
           </div>
-          <p class="text-xs text-muted-foreground">
-            Transacciones completadas hoy
-          </p>
+          <p class="text-xs text-muted-foreground">Transacciones completadas</p>
         </CardContent>
       </Card>
 
@@ -119,7 +216,7 @@ onMounted(loadDashboardData);
         </CardHeader>
         <CardContent>
           <div class="text-2xl font-bold">
-            {{ formatCurrency(dashboardData.ticketPromedioHoy) }}
+            {{ formatCurrency(dashboardData.ticketPromedioDia) }}
           </div>
           <p class="text-xs text-muted-foreground">
             Valor promedio por transacción
@@ -147,10 +244,29 @@ onMounted(loadDashboardData);
 
       <Card class="md:col-span-2 lg:col-span-2">
         <CardHeader>
-          <CardTitle>Flujo de Ventas del Día</CardTitle>
+          <CardTitle>Flujo de Ventas por Hora</CardTitle>
         </CardHeader>
         <CardContent class="h-[300px]">
           <SalesTrendChart :chart-data="dashboardData.ventasIndividuales" />
+        </CardContent>
+      </Card>
+
+      <Card class="md:col-span-2 lg:col-span-2">
+        <CardHeader>
+          <CardTitle class="flex items-center gap-2"
+            ><Wallet class="h-5 w-5" /> Métodos de Pago</CardTitle
+          >
+        </CardHeader>
+        <CardContent class="h-[300px] flex items-center justify-center">
+          <PaymentMethodsChart
+            v-if="
+              dashboardData.metodosPago && dashboardData.metodosPago.length > 0
+            "
+            :chart-data="dashboardData.metodosPago"
+          />
+          <p v-else class="text-sm text-muted-foreground">
+            No hay datos de pago para este día.
+          </p>
         </CardContent>
       </Card>
 
@@ -161,7 +277,12 @@ onMounted(loadDashboardData);
           >
         </CardHeader>
         <CardContent>
-          <ul class="space-y-3 text-sm">
+          <ul
+            class="space-y-3 text-sm"
+            v-if="
+              dashboardData.topProductos && dashboardData.topProductos.length
+            "
+          >
             <li
               v-for="p in dashboardData.topProductos"
               :key="p.nombre"
@@ -173,13 +294,10 @@ onMounted(loadDashboardData);
                 >{{ p.cantidad }} uds</span
               >
             </li>
-            <li
-              v-if="!dashboardData.topProductos.length"
-              class="text-muted-foreground text-xs"
-            >
-              Aún no hay ventas registradas hoy.
-            </li>
           </ul>
+          <p v-else class="text-sm text-muted-foreground">
+            No se vendieron productos este día.
+          </p>
         </CardContent>
       </Card>
 
@@ -190,7 +308,13 @@ onMounted(loadDashboardData);
           >
         </CardHeader>
         <CardContent>
-          <ul class="space-y-3 text-sm">
+          <ul
+            class="space-y-3 text-sm"
+            v-if="
+              dashboardData.productosSinStock &&
+              dashboardData.productosSinStock.length
+            "
+          >
             <li
               v-for="p in dashboardData.productosSinStock"
               :key="p.id"
@@ -201,13 +325,10 @@ onMounted(loadDashboardData);
                 p.Codigo
               }}</span>
             </li>
-            <li
-              v-if="!dashboardData.productosSinStock.length"
-              class="text-muted-foreground text-xs"
-            >
-              ¡Todo en orden! No hay faltantes.
-            </li>
           </ul>
+          <p v-else class="text-sm text-muted-foreground">
+            ¡Todo en orden! No hay faltantes.
+          </p>
         </CardContent>
       </Card>
     </div>

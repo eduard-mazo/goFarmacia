@@ -10,7 +10,7 @@ import {
   LinearScale,
 } from "chart.js";
 import type { PropType } from "vue";
-import { computed } from "vue"; // Se importa 'computed' para mejorar la reactividad
+import { computed } from "vue";
 
 ChartJS.register(
   Title,
@@ -43,17 +43,10 @@ const chartOptions = {
     tooltip: {
       callbacks: {
         title: function (context: any) {
-          if (context[0] && props.chartData) {
-            const date = new Date(
-              props.chartData[context[0].dataIndex]!.timestamp
-            );
-            return `Venta a las ${date.toLocaleTimeString("es-CO", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            })}`;
-          }
-          return "";
+          const hour = context[0].label;
+          return `Ventas entre ${hour} y las ${String(
+            parseInt(hour.split(":")[0]) + 1
+          ).padStart(2, "0")}:00`;
         },
         label: function (context: any) {
           let label = "Total: ";
@@ -83,9 +76,8 @@ const chartOptions = {
       },
     },
     x: {
-      ticks: {
-        maxRotation: 70,
-        minRotation: 70,
+      grid: {
+        display: false, // Oculta la rejilla vertical para un look más limpio
       },
     },
   },
@@ -93,35 +85,33 @@ const chartOptions = {
 
 const formattedChartData = computed(() => {
   if (!props.chartData || props.chartData.length === 0) {
-    return {
-      labels: [],
-      datasets: [
-        {
-          label: "Venta",
-          backgroundColor: "#10b981",
-          borderColor: "#059669",
-          borderWidth: 1,
-          data: [],
-        },
-      ],
-    };
+    return { labels: [], datasets: [] };
   }
 
-  // Si hay datos, los formatea como antes
+  const hourlySales = Array(24).fill(0);
+
+  // Agrupa las ventas por hora
+  props.chartData.forEach((sale) => {
+    const hour = new Date(sale.timestamp).getHours();
+    hourlySales[hour] += sale.total;
+  });
+
+  // Crea las etiquetas para el eje X (e.g., "00:00", "01:00", ...)
+  const labels = Array.from(
+    { length: 24 },
+    (_, i) => `${String(i).padStart(2, "0")}:00`
+  );
+
   return {
-    labels: props.chartData.map((d) =>
-      new Date(d.timestamp).toLocaleTimeString("es-CO", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    ),
+    labels: labels,
     datasets: [
       {
-        label: "Venta",
+        label: "Ventas por Hora",
         backgroundColor: "#10b981",
         borderColor: "#059669",
+        borderRadius: 4,
         borderWidth: 1,
-        data: props.chartData.map((d) => d.total),
+        data: hourlySales,
       },
     ],
   };
@@ -130,6 +120,15 @@ const formattedChartData = computed(() => {
 
 <template>
   <div class="h-full w-full">
-    <Bar :data="formattedChartData" :options="chartOptions" />
+    <Bar
+      v-if="chartData.length > 0"
+      :data="formattedChartData"
+      :options="chartOptions"
+    />
+    <div v-else class="flex items-center justify-center h-full">
+      <p class="text-sm text-muted-foreground">
+        No hay ventas registradas para mostrar.
+      </p>
+    </div>
   </div>
 </template>
