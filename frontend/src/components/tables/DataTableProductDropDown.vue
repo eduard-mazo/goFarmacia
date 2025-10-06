@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { backend } from "@/../wailsjs/go/models";
+import HistorialStockModal from "@/components/modals/HistorialStockModal.vue";
 
 // --- Props and Emits ---
 const props = defineProps<{
@@ -49,6 +50,7 @@ const editableProduct = ref<backend.Producto>(
 
 const isEditDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
+const isHistoryDialogOpen = ref(false);
 
 // --- Handlers ---
 function openEditDialog() {
@@ -59,6 +61,11 @@ function openEditDialog() {
 function openDeleteDialog() {
   editableProduct.value = backend.Producto.createFrom(props.producto);
   isDeleteDialogOpen.value = true;
+}
+
+function openHistoryDialog() {
+  editableProduct.value = backend.Producto.createFrom(props.producto);
+  isHistoryDialogOpen.value = true;
 }
 
 function handleSaveChanges() {
@@ -85,6 +92,9 @@ function handleDeleteConfirm() {
       <DropdownMenuSeparator />
       <DropdownMenuItem @click="openEditDialog">
         <span>Editar producto</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem @click="openHistoryDialog">
+        <span>Historial</span>
       </DropdownMenuItem>
       <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
         <span>Eliminar producto</span>
@@ -165,4 +175,8 @@ function handleDeleteConfirm() {
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>
+  <HistorialStockModal
+    v-model:open="isHistoryDialogOpen"
+    :producto="editableProduct"
+  />
 </template>

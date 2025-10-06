@@ -224,6 +224,7 @@ async function handleDelete(producto: backend.Producto) {
     toast.error("Error al eliminar el producto", { description: `${error}` });
   }
 }
+
 function handleProductCreated() {
   cargarProductos();
 }

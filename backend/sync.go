@@ -31,11 +31,61 @@ func (d *Db) SincronizacionInteligente() {
 	d.sincronizarModelo(&[]Proveedor{}, "Proveedores")
 	d.sincronizarModelo(&[]Producto{}, "Productos")
 
-	d.SincronizarOperacionesStock()
+	// --- ORDEN DE SINCRONIZACIÓN CORREGIDO ---
+	// 1. Primero, enviamos nuestras operaciones locales al servidor.
+	d.SincronizarOperacionesStockHaciaRemoto()
 
+	// 2. Segundo, descargamos las operaciones de otros clientes que no tengamos.
+	if err := d.sincronizarOperacionesHaciaLocal(); err == nil {
+		// 3. Si se descargaron operaciones, es crucial recalcular el stock local.
+		d.Log.Info("Recalculando stock de todos los productos locales tras la sincronización.")
+		var productosLocales []Producto
+		d.LocalDB.Find(&productosLocales)
+		for _, p := range productosLocales {
+			tx := d.LocalDB.Begin()
+			RecalcularYActualizarStock(tx, p.ID)
+			tx.Commit()
+		}
+	}
+
+	// 4. Finalmente, sincronizamos las transacciones maestras (Facturas y Compras).
 	d.sincronizarTransaccionesHaciaLocal()
 
 	d.Log.Infof("[FIN]: Sincronización Inteligente")
+}
+
+func (d *Db) sincronizarOperacionesHaciaLocal() error {
+	if !d.isRemoteDBAvailable() {
+		return nil // No hacer nada si estamos offline
+	}
+	d.Log.Info("[SINCRONIZANDO]: Operaciones de Stock desde Remoto -> Local")
+
+	var localUUIDs []string
+	if err := d.LocalDB.Model(&OperacionStock{}).Pluck("uuid", &localUUIDs).Error; err != nil {
+		d.Log.Errorf("Error obteniendo UUIDs locales: %v", err)
+		return err
+	}
+
+	var nuevasOperaciones []OperacionStock
+	query := d.RemoteDB.Model(&OperacionStock{})
+	if len(localUUIDs) > 0 {
+		query = query.Where("uuid NOT IN ?", localUUIDs)
+	}
+	if err := query.Find(&nuevasOperaciones).Error; err != nil {
+		d.Log.Errorf("Error buscando nuevas operaciones en remoto: %v", err)
+		return err
+	}
+
+	if len(nuevasOperaciones) > 0 {
+		d.Log.Infof("Descargando %d nueva(s) operaciones de stock...", len(nuevasOperaciones))
+		if err := d.LocalDB.Create(&nuevasOperaciones).Error; err != nil {
+			d.Log.Errorf("Error insertando nuevas operaciones en local: %v", err)
+			return err
+		}
+	} else {
+		d.Log.Info("No se encontraron nuevas operaciones de stock en el servidor.")
+	}
+	return nil
 }
 
 func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
@@ -259,19 +309,22 @@ func (d *Db) actualizarLoteEnRemoto(db *gorm.DB, nombreModelo string, lote []int
 	}
 }
 
-func (d *Db) SincronizarOperacionesStock() {
+func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 	if !d.isRemoteDBAvailable() {
 		return
 	}
+	d.Log.Info("[SINCRONIZANDO]: Operaciones de Stock desde Local -> Remoto")
 
 	var ops []OperacionStock
 	if err := d.LocalDB.Where("sincronizado = ?", false).Find(&ops).Error; err != nil {
-		log.Printf("Error loading pending operaciones de stock: %v", err)
+		log.Printf("Error cargando operaciones de stock pendientes: %v", err)
 		return
 	}
 	if len(ops) == 0 {
 		return
 	}
+
+	log.Printf("Enviando %d operación(es) de stock al servidor remoto...", len(ops))
 
 	uniqueMap := make(map[string]OperacionStock)
 	for _, op := range ops {
@@ -287,19 +340,17 @@ func (d *Db) SincronizarOperacionesStock() {
 		finalOps = append(finalOps, op)
 	}
 
-	log.Printf("Enviando %d operación(es) de stock al servidor remoto...", len(finalOps))
-
 	tx := d.RemoteDB.Begin()
 	if tx.Error != nil {
-		log.Printf("Error iniciando transacción en remoto para operaciones de stock: %v", tx.Error)
+		log.Printf("Error iniciando transacción remota para operaciones de stock: %v", tx.Error)
 		return
 	}
 
 	if err := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "uuid"}},
-		UpdateAll: true,
+		DoNothing: true, // Usamos DoNothing para no sobreescribir si ya existe
 	}).Create(&finalOps).Error; err != nil {
-		log.Printf("Error en batch upsert operaciones de stock: %v", err)
+		log.Printf("Error en batch upsert de operaciones de stock: %v", err)
 		tx.Rollback()
 		return
 	}
@@ -308,15 +359,20 @@ func (d *Db) SincronizarOperacionesStock() {
 	for _, op := range finalOps {
 		productoIDs[op.ProductoID] = true
 	}
+
+	// ¡CRÍTICO! Recalcular el stock en el remoto usando los datos DEL REMOTO.
 	for id := range productoIDs {
-		stock := d.calcularStockRealLocal(id)
-		if err := tx.Model(&Producto{}).Where("id = ?", id).Update("stock", stock).Error; err != nil {
+		var stockRemoto int
+		tx.Model(&OperacionStock{}).Where("producto_id = ?", id).Select("COALESCE(SUM(cantidad_cambio), 0)").Row().Scan(&stockRemoto)
+		if err := tx.Model(&Producto{}).Where("id = ?", id).Update("stock", stockRemoto).Error; err != nil {
 			log.Printf("Error actualizando stock remoto para producto %d: %v", id, err)
+			tx.Rollback()
+			return
 		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		log.Printf("Error confirmando transacción en remoto para operaciones de stock: %v", err)
+		log.Printf("Error confirmando transacción remota para operaciones de stock: %v", err)
 		return
 	}
 

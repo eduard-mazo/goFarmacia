@@ -6,49 +6,88 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// --- VENTAS (FACTURAS) ---
+// RecalcularYActualizarStock se convierte en la única función responsable de actualizar la columna 'stock'.
+// Calcula el total desde la tabla de operaciones y lo escribe en la tabla de productos.
+func RecalcularYActualizarStock(tx *gorm.DB, productoID uint) error {
+	var stockResultante int
+	// Calcula el stock SUMANDO todas las operaciones para ese producto.
+	err := tx.Model(&OperacionStock{}).
+		Where("producto_id = ?", productoID).
+		Select("COALESCE(SUM(cantidad_cambio), 0)").
+		Row().Scan(&stockResultante)
+	if err != nil {
+		return fmt.Errorf("error al calcular la suma de stock para el producto %d: %w", productoID, err)
+	}
+
+	// Actualiza la columna 'stock' en la tabla de productos con el valor recalculado.
+	if err := tx.Model(&Producto{}).Where("id = ?", productoID).Update("stock", stockResultante).Error; err != nil {
+		return fmt.Errorf("error al actualizar la columna stock para el producto %d: %w", productoID, err)
+	}
+	return nil
+}
 
 func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	tx := d.LocalDB.Begin()
 	defer tx.Rollback()
 
 	factura := Factura{
-		FechaEmision: time.Now(), VendedorID: req.VendedorID, ClienteID: req.ClienteID,
-		Estado: "Pagada", MetodoPago: req.MetodoPago,
+		FechaEmision: time.Now(),
+		VendedorID:   req.VendedorID,
+		ClienteID:    req.ClienteID,
+		Estado:       "Pagada",
+		MetodoPago:   req.MetodoPago,
 	}
 
 	var subtotal float64
 	var detallesFactura []DetalleFactura
+	var opsParaActualizar []*OperacionStock
 
 	for _, p := range req.Productos {
 		var producto Producto
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&producto, p.ID).Error; err != nil {
 			return Factura{}, fmt.Errorf("producto con ID %d no encontrado", p.ID)
 		}
-		if producto.Stock < p.Cantidad {
-			return Factura{}, fmt.Errorf("stock insuficiente para %s. Disponible: %d, Solicitado: %d", producto.Nombre, producto.Stock, p.Cantidad)
+
+		// VERIFICACIÓN DE STOCK CONTRA LA FUENTE DE VERDAD
+		stockActual := d.calcularStockRealLocal(p.ID)
+		if stockActual < p.Cantidad {
+			return Factura{}, fmt.Errorf("stock insuficiente para %s. Disponible: %d, Solicitado: %d", producto.Nombre, stockActual, p.Cantidad)
 		}
 
-		nuevoStock := producto.Stock - p.Cantidad
-		op := OperacionStock{
-			UUID: uuid.New().String(), ProductoID: producto.ID, TipoOperacion: "VENTA",
-			CantidadCambio: -p.Cantidad, StockResultante: nuevoStock, VendedorID: req.VendedorID, Timestamp: time.Now(),
+		// 1. Registrar la operación de stock
+		op := &OperacionStock{
+			UUID:           uuid.New().String(),
+			ProductoID:     producto.ID,
+			TipoOperacion:  "VENTA",
+			CantidadCambio: -p.Cantidad,
+			VendedorID:     req.VendedorID,
+			Timestamp:      time.Now(),
 		}
-		if err := tx.Create(&op).Error; err != nil {
+		if err := tx.Create(op).Error; err != nil {
 			return Factura{}, fmt.Errorf("error creando operación de stock para %s: %w", producto.Nombre, err)
 		}
+		opsParaActualizar = append(opsParaActualizar, op)
 
-		if err := tx.Model(&producto).Update("Stock", nuevoStock).Error; err != nil {
-			return Factura{}, fmt.Errorf("error al actualizar el stock de %s: %w", producto.Nombre, err)
+		// 2. Recalcular el stock total desde la fuente de verdad (operaciones)
+		if err := RecalcularYActualizarStock(tx, producto.ID); err != nil {
+			return Factura{}, fmt.Errorf("error al recalcular el stock de %s: %w", producto.Nombre, err)
 		}
+
+		var stockResultante int
+		tx.Model(&OperacionStock{}).Where("producto_id = ?", producto.ID).Select("COALESCE(SUM(cantidad_cambio), 0)").Row().Scan(&stockResultante)
+		op.StockResultante = stockResultante
 
 		precioTotalProducto := p.PrecioUnitario * float64(p.Cantidad)
 		subtotal += precioTotalProducto
 		detallesFactura = append(detallesFactura, DetalleFactura{
-			ProductoID: producto.ID, Cantidad: p.Cantidad, PrecioUnitario: p.PrecioUnitario, PrecioTotal: precioTotalProducto,
+			ProductoID:     producto.ID,
+			Cantidad:       p.Cantidad,
+			PrecioUnitario: p.PrecioUnitario,
+			PrecioTotal:    precioTotalProducto,
 		})
 	}
 
@@ -65,8 +104,16 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	if err := tx.Create(&detallesFactura).Error; err != nil {
 		return Factura{}, fmt.Errorf("error al crear los detalles de la factura: %w", err)
 	}
-	if err := tx.Model(&OperacionStock{}).Where("factura_id IS NULL AND tipo_operacion = 'VENTA' AND vendedor_id = ?", req.VendedorID).Update("factura_id", factura.ID).Error; err != nil {
-		return Factura{}, fmt.Errorf("error al asociar factura a operaciones de stock: %w", err)
+
+	// Asociar la factura a las operaciones de stock creadas en esta transacción.
+	for _, op := range opsParaActualizar {
+		if err := tx.Model(op).Update("factura_id", factura.ID).Error; err != nil {
+			return Factura{}, fmt.Errorf("error al asociar factura a operación de stock: %w", err)
+		}
+		// También actualizamos el stock resultante ahora que lo sabemos
+		if err := tx.Model(op).Update("stock_resultante", op.StockResultante).Error; err != nil {
+			return Factura{}, fmt.Errorf("error al actualizar stock resultante en operación: %w", err)
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -74,7 +121,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	go d.syncVentaToRemote(factura.ID)
-	go d.SincronizarOperacionesStock()
+	go d.SincronizarOperacionesStockHaciaRemoto() // Nombre actualizado
 	return d.ObtenerDetalleFactura(factura.ID)
 }
 
@@ -130,14 +177,14 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	return factura, err
 }
 
-// --- COMPRAS ---
-
 func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 	tx := d.LocalDB.Begin()
 	defer tx.Rollback()
 
 	compra := Compra{
-		Fecha: time.Now(), ProveedorID: req.ProveedorID, FacturaNumero: req.FacturaNumero,
+		Fecha:         time.Now(),
+		ProveedorID:   req.ProveedorID,
+		FacturaNumero: req.FacturaNumero,
 	}
 
 	var totalCompra float64
@@ -151,18 +198,24 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 		precioTotalProducto := p.PrecioCompraUnitario * float64(p.Cantidad)
 		totalCompra += precioTotalProducto
 		detallesCompra = append(detallesCompra, DetalleCompra{
-			ProductoID: p.ProductoID, Cantidad: p.Cantidad, PrecioCompraUnitario: p.PrecioCompraUnitario,
+			ProductoID:           p.ProductoID,
+			Cantidad:             p.Cantidad,
+			PrecioCompraUnitario: p.PrecioCompraUnitario,
 		})
 
-		nuevoStock := producto.Stock + p.Cantidad
 		op := OperacionStock{
-			UUID: uuid.New().String(), ProductoID: producto.ID, TipoOperacion: "COMPRA",
-			CantidadCambio: p.Cantidad, StockResultante: nuevoStock, VendedorID: 1, Timestamp: time.Now(), // VendedorID 1 como sistema/admin
+			UUID:           uuid.New().String(),
+			ProductoID:     producto.ID,
+			TipoOperacion:  "COMPRA",
+			CantidadCambio: p.Cantidad,
+			VendedorID:     1, // VendedorID 1 como sistema/admin
+			Timestamp:      time.Now(),
 		}
 		if err := tx.Create(&op).Error; err != nil {
 			return Compra{}, fmt.Errorf("error creando operación de stock por compra para %s: %w", producto.Nombre, err)
 		}
-		if err := tx.Model(&producto).Update("Stock", nuevoStock).Error; err != nil {
+
+		if err := RecalcularYActualizarStock(tx, producto.ID); err != nil {
 			return Compra{}, fmt.Errorf("error al actualizar stock por compra para %s: %w", producto.Nombre, err)
 		}
 	}
@@ -184,7 +237,7 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 	}
 
 	go d.syncCompraToRemote(compra.ID)
-	go d.SincronizarOperacionesStock()
+	go d.SincronizarOperacionesStockHaciaRemoto() // Nombre actualizado
 
 	var compraCompleta Compra
 	d.LocalDB.Preload("Proveedor").Preload("Detalles.Producto").First(&compraCompleta, compra.ID)

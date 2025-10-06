@@ -41,7 +41,7 @@ import {
   ObtenerDetalleFactura,
 } from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
-import ReciboPOS from "@/components/pos/ReciboPOS.vue";
+import ReciboVentaModal from "@/components/modals/ReciboVentaModal.vue";
 
 interface ObtenerFacturasPaginadoResponse {
   Records: backend.Factura[];
@@ -52,11 +52,10 @@ const listaFacturas = ref<backend.Factura[]>([]);
 const totalFacturas = ref(0);
 const busqueda = ref("");
 const sorting = ref<SortingState>([]);
-// Se cambia el valor por defecto a 10 para mostrar consistencia
 const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 10 });
 const isModalOpen = ref(false);
-const facturaSeleccionada = ref<backend.Factura | null>(null);
 const loadingFacturaId = ref<number | null>(null);
+const facturaParaRecibo = ref<backend.Factura | null>(new backend.Factura());
 
 const cargarFacturas = async () => {
   try {
@@ -199,7 +198,7 @@ async function verDetalleFactura(factura: backend.Factura) {
   loadingFacturaId.value = factura.id;
   try {
     const facturaCompleta = await ObtenerDetalleFactura(factura.id);
-    facturaSeleccionada.value = facturaCompleta;
+    facturaParaRecibo.value = facturaCompleta;
     isModalOpen.value = true;
   } catch (error) {
     toast.error("Error al cargar detalles", { description: `${error}` });
@@ -229,15 +228,10 @@ watch(busqueda, () => {
 </script>
 
 <template>
-  <Dialog v-model:open="isModalOpen">
-    <DialogContent
-      class="w-[116mm] max-w-full p-0 bg-transparent border-0 shadow-none"
-    >
-      <div class="max-h-[85vh] overflow-y-auto bg-white rounded-md">
-        <ReciboPOS :factura="facturaSeleccionada" />
-      </div>
-    </DialogContent>
-  </Dialog>
+  <ReciboVentaModal
+    :factura="facturaParaRecibo"
+    @update:open="facturaParaRecibo = null"
+  />
   <div class="w-full">
     <div class="flex items-center py-4">
       <Input
