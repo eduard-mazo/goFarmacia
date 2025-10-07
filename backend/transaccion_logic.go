@@ -85,7 +85,10 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		}
 
 		var stockResultante int
-		tx.Model(&OperacionStock{}).Where("producto_id = ?", producto.ID).Select("COALESCE(SUM(cantidad_cambio), 0)").Row().Scan(&stockResultante)
+		row := tx.Model(&OperacionStock{}).Where("producto_id = ?", producto.ID).Select("COALESCE(SUM(cantidad_cambio), 0)").Row()
+		if err := row.Scan(&stockResultante); err != nil {
+			return Factura{}, fmt.Errorf("error al obtener el stock resultante para %s: %w", producto.Nombre, err)
+		}
 		op.StockResultante = stockResultante
 
 		precioTotalProducto := p.PrecioUnitario * float64(p.Cantidad)

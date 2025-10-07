@@ -178,3 +178,40 @@ func (d *Db) ObtenerHistorialStock(productoID uint) ([]OperacionStock, error) {
 	err := d.LocalDB.Where("producto_id = ?", productoID).Order("timestamp desc").Find(&historial).Error
 	return historial, err
 }
+
+func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error) {
+	tx := d.LocalDB.Begin()
+	defer tx.Rollback()
+
+	for _, ajuste := range ajustes {
+		stockRealActual := d.calcularStockRealLocal(ajuste.ProductoID)
+
+		cantidadCambio := ajuste.NuevoStock - stockRealActual
+		if cantidadCambio != 0 {
+			op := OperacionStock{
+				UUID:           uuid.New().String(),
+				ProductoID:     ajuste.ProductoID,
+				TipoOperacion:  "AJUSTE",
+				CantidadCambio: cantidadCambio,
+				VendedorID:     1, // ID 1 para "Sistema" o "Admin"
+				Timestamp:      time.Now(),
+				Sincronizado:   false,
+			}
+			if err := tx.Create(&op).Error; err != nil {
+				return "", fmt.Errorf("error al crear operación de ajuste para producto ID %d: %w", ajuste.ProductoID, err)
+			}
+
+			if err := RecalcularYActualizarStock(tx, ajuste.ProductoID); err != nil {
+				return "", fmt.Errorf("error final al recalcular stock para producto ID %d: %w", ajuste.ProductoID, err)
+			}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return "", fmt.Errorf("error al confirmar la transacción de actualización masiva: %w", err)
+	}
+
+	go d.SincronizarOperacionesStockHaciaRemoto()
+
+	return "Stock actualizado masivamente.", nil
+}

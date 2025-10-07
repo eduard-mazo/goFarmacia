@@ -38,6 +38,11 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+type AjusteStockRequest struct {
+	ProductoID uint `json:"producto_id"`
+	NuevoStock int  `json:"nuevo_stock"`
+}
+
 type LoginResponse struct {
 	MFARequired bool     `json:"mfa_required"`
 	Token       string   `json:"token"` // Será un token temporal si MFA es requerido

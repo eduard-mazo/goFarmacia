@@ -2,6 +2,7 @@ package backend
 
 import (
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,48 +32,42 @@ func (d *Db) SincronizacionInteligente() {
 	d.sincronizarModelo(&[]Proveedor{}, "Proveedores")
 	d.sincronizarModelo(&[]Producto{}, "Productos")
 
-	// --- ORDEN DE SINCRONIZACIÓN CORREGIDO ---
-	// 1. Primero, enviamos nuestras operaciones locales al servidor.
 	d.SincronizarOperacionesStockHaciaRemoto()
 
-	// 2. Segundo, descargamos las operaciones de otros clientes que no tengamos.
-	if err := d.sincronizarOperacionesHaciaLocal(); err == nil {
-		// 3. Si se descargaron operaciones, es crucial recalcular el stock local.
-		d.Log.Info("Recalculando stock de todos los productos locales tras la sincronización.")
-		var productosLocales []Producto
-		d.LocalDB.Find(&productosLocales)
-		tx := d.LocalDB.Begin()
-		if tx.Error != nil {
-			d.Log.Errorf("Error al iniciar la transacción para el recálculo de stock: %v", tx.Error)
-			return
-		}
-		defer tx.Rollback()
+	if affectedProductIDs, err := d.sincronizarOperacionesHaciaLocal(); err == nil && len(affectedProductIDs) > 0 {
+		d.Log.Infof("Recalculando stock de %d producto(s) locales tras la sincronización.", len(affectedProductIDs))
 
-		for _, p := range productosLocales {
-			if err := RecalcularYActualizarStock(tx, p.ID); err != nil {
-				d.Log.Errorf("Error al recalcular el stock para el producto ID %d: %v", p.ID, err)
+		for _, productoID := range affectedProductIDs {
+			tx := d.LocalDB.Begin()
+			if tx.Error != nil {
+				d.Log.Errorf("Error al iniciar transacción para recálculo local del producto ID %d: %v", productoID, tx.Error)
+				continue // Saltar al siguiente producto
+			}
+
+			if err := RecalcularYActualizarStock(tx, productoID); err != nil {
+				d.Log.Errorf("Error al recalcular stock para producto local ID %d: %v. Revirtiendo transacción.", productoID, err)
+				tx.Rollback() // Revertir en caso de error
+			} else {
+				tx.Commit() // Confirmar solo si no hay error
 			}
 		}
-
-		if err := tx.Commit().Error; err != nil {
-			d.Log.Errorf("Error al confirmar la transacción de recálculo de stock: %v", err)
-		}
 	}
+
 	d.sincronizarTransaccionesHaciaLocal()
 
 	d.Log.Infof("[FIN]: Sincronización Inteligente")
 }
 
-func (d *Db) sincronizarOperacionesHaciaLocal() error {
+func (d *Db) sincronizarOperacionesHaciaLocal() ([]uint, error) {
 	if !d.isRemoteDBAvailable() {
-		return nil // No hacer nada si estamos offline
+		return nil, nil
 	}
 	d.Log.Info("[SINCRONIZANDO]: Operaciones de Stock desde Remoto -> Local")
 
 	var localUUIDs []string
 	if err := d.LocalDB.Model(&OperacionStock{}).Pluck("uuid", &localUUIDs).Error; err != nil {
 		d.Log.Errorf("Error obteniendo UUIDs locales: %v", err)
-		return err
+		return nil, err
 	}
 
 	var nuevasOperaciones []OperacionStock
@@ -82,43 +77,49 @@ func (d *Db) sincronizarOperacionesHaciaLocal() error {
 	}
 	if err := query.Find(&nuevasOperaciones).Error; err != nil {
 		d.Log.Errorf("Error buscando nuevas operaciones en remoto: %v", err)
-		return err
+		return nil, err
 	}
 
+	affectedProductIDs := make(map[uint]bool)
 	if len(nuevasOperaciones) > 0 {
 		d.Log.Infof("Descargando %d nueva(s) operaciones de stock...", len(nuevasOperaciones))
 		if err := d.LocalDB.Create(&nuevasOperaciones).Error; err != nil {
 			d.Log.Errorf("Error insertando nuevas operaciones en local: %v", err)
-			return err
+			return nil, err
+		}
+		// Recolectar IDs de productos afectados
+		for _, op := range nuevasOperaciones {
+			affectedProductIDs[op.ProductoID] = true
 		}
 	} else {
 		d.Log.Info("No se encontraron nuevas operaciones de stock en el servidor.")
 	}
-	return nil
+
+	// Convertir el mapa de IDs a un slice para devolverlo
+	keys := make([]uint, 0, len(affectedProductIDs))
+	for k := range affectedProductIDs {
+		keys = append(keys, k)
+	}
+	return keys, nil
 }
 
 func (d *Db) sincronizarModelo(modeloSlice interface{}, nombreModelo string) {
 	d.Log.Infof("[SINCRONIZANDO]:\t%s\n", nombreModelo)
 
-	// --- INICIO DE LA MODIFICACIÓN ---
-	// Usamos Unscoped() para incluir registros con borrado lógico en la comparación
 	if err := d.LocalDB.Unscoped().Find(modeloSlice).Error; err != nil {
 		d.Log.Errorf("Cargando %s desde LOCAL: %v", nombreModelo, err)
 		return
 	}
-	// --- FIN DE LA MODIFICACIÓN ---
 	localRecords := sliceToInterfaceSlice(modeloSlice)
 	if localRecords == nil {
 		d.Log.Warnf("Sin registros en LOCAL para %s", nombreModelo)
 	}
 
-	// --- INICIO DE LA MODIFICACIÓN ---
-	// Usamos Unscoped() también para la base de datos remota
 	if err := d.RemoteDB.Unscoped().Find(modeloSlice).Error; err != nil {
 		d.Log.Errorf("Cargando %s desde REMOTO: %v", nombreModelo, err)
 		return
 	}
-	// --- FIN DE LA MODIFICACIÓN ---
+
 	remoteRecords := sliceToInterfaceSlice(modeloSlice)
 	if remoteRecords == nil {
 		d.Log.Infof("Warning: no remoteRecords parsed for %s", nombreModelo)
@@ -363,16 +364,26 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		tx.Rollback()
 		return
 	}
-
-	productoIDs := make(map[uint]bool)
+	productoIDsMap := make(map[uint]bool)
 	for _, op := range finalOps {
-		productoIDs[op.ProductoID] = true
+		productoIDsMap[op.ProductoID] = true
 	}
 
-	// ¡CRÍTICO! Recalcular el stock en el remoto usando los datos DEL REMOTO.
-	for id := range productoIDs {
+	productoIDs := make([]int, 0, len(productoIDsMap))
+	for id := range productoIDsMap {
+		productoIDs = append(productoIDs, int(id))
+	}
+	sort.Ints(productoIDs)
+
+	for _, idInt := range productoIDs {
+		id := uint(idInt)
 		var stockRemoto int
-		tx.Model(&OperacionStock{}).Where("producto_id = ?", id).Select("COALESCE(SUM(cantidad_cambio), 0)").Row().Scan(&stockRemoto)
+		if err := tx.Model(&OperacionStock{}).Where("producto_id = ?", id).Select("COALESCE(SUM(cantidad_cambio), 0)").Row().Scan(&stockRemoto); err != nil {
+			log.Printf("Error calculando stock remoto para producto %d: %v", id, err)
+			tx.Rollback()
+			return
+		}
+
 		if err := tx.Model(&Producto{}).Where("id = ?", id).Update("stock", stockRemoto).Error; err != nil {
 			log.Printf("Error actualizando stock remoto para producto %d: %v", id, err)
 			tx.Rollback()
