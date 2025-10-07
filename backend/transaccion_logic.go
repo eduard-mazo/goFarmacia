@@ -16,21 +16,24 @@ func RecalcularYActualizarStock(tx *gorm.DB, productoID uint) error {
 	if tx.Error != nil {
 		return tx.Error
 	}
+	var stockCalculado int64
 
-	var stockResultante int
-	// Calcula el stock SUMANDO todas las operaciones para ese producto.
+	// 1. Calcular el stock real desde la fuente de la verdad (operacion_stocks)
 	err := tx.Model(&OperacionStock{}).
 		Where("producto_id = ?", productoID).
 		Select("COALESCE(SUM(cantidad_cambio), 0)").
-		Row().Scan(&stockResultante)
+		Row().
+		Scan(&stockCalculado)
+
 	if err != nil {
-		return fmt.Errorf("error al calcular la suma de stock para el producto %d: %w", productoID, err)
+		return fmt.Errorf("error al calcular la suma de stock para el producto ID %d: %w", productoID, err)
 	}
 
-	// Actualiza la columna 'stock' en la tabla de productos con el valor recalculado.
-	if err := tx.Model(&Producto{}).Where("id = ?", productoID).Update("stock", stockResultante).Error; err != nil {
-		return fmt.Errorf("error al actualizar la columna stock para el producto %d: %w", productoID, err)
+	// 2. Actualizar el valor en caché en la tabla de productos
+	if err := tx.Model(&Producto{}).Where("id = ?", productoID).Update("stock", stockCalculado).Error; err != nil {
+		return fmt.Errorf("error al actualizar el stock en caché para el producto ID %d: %w", productoID, err)
 	}
+
 	return nil
 }
 

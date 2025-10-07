@@ -66,43 +66,69 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 
 func (d *Db) ActualizarProducto(p Producto) (string, error) {
 	if p.ID == 0 {
-		return "", errors.New("se requiere un ID de producto válido")
+		return "", errors.New("se requiere un ID de producto válido para actualizar")
 	}
-	tx := d.LocalDB.Begin()
-	defer tx.Rollback()
 
+	tx := d.LocalDB.Begin()
+	if tx.Error != nil {
+		return "", fmt.Errorf("error al iniciar la transacción: %w", tx.Error)
+	}
+	defer tx.Rollback() // Se revierte si algo falla
+
+	// Paso 1: Obtener el stock real actual ANTES de hacer cambios
+	var stockRealActual int
+	var sumaActual int64
 	var cur Producto
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cur, p.ID).Error; err != nil {
 		return "", err
 	}
+	err := tx.Model(&OperacionStock{}).Where("producto_id = ?", p.ID).Select("COALESCE(SUM(cantidad_cambio), 0)").Scan(&sumaActual).Error
+	if err != nil {
+		return "", fmt.Errorf("error al obtener stock real para producto %d: %w", p.ID, err)
+	}
+	stockRealActual = int(sumaActual)
 
-	if err := tx.Model(&Producto{}).Where("id = ?", p.ID).Updates(map[string]interface{}{"nombre": p.Nombre, "precio_venta": p.PrecioVenta}).Error; err != nil {
-		return "", err
+	// Paso 2: Actualizar detalles del producto (excepto el stock)
+	updates := map[string]interface{}{
+		"nombre":       p.Nombre,
+		"precio_venta": p.PrecioVenta,
+		"updated_at":   time.Now(),
+	}
+	if err := tx.Model(&Producto{}).Where("id = ?", p.ID).Updates(updates).Error; err != nil {
+		return "", fmt.Errorf("error al actualizar detalles del producto: %w", err)
 	}
 
-	// Si el stock enviado en la UI es diferente al stock real calculado, se crea un ajuste.
-	stockReal := d.calcularStockRealLocal(p.ID)
-	if cantidadCambio := p.Stock - stockReal; cantidadCambio != 0 {
+	// Paso 3: Crear operación de AJUSTE si el stock ha cambiado
+	cantidadCambio := p.Stock - stockRealActual
+	if cantidadCambio != 0 {
+		d.Log.Infof("Ajuste de stock para producto ID %d. Stock real: %d, Stock deseado: %d, Cambio: %d", p.ID, stockRealActual, p.Stock, cantidadCambio)
 		op := OperacionStock{
-			UUID: uuid.New().String(), ProductoID: p.ID, TipoOperacion: "AJUSTE",
-			CantidadCambio: cantidadCambio, VendedorID: 1, Timestamp: time.Now(),
+			UUID:           uuid.New().String(),
+			ProductoID:     p.ID,
+			TipoOperacion:  "AJUSTE",
+			CantidadCambio: cantidadCambio,
+			VendedorID:     1, // ID 1 para "Sistema" o "Admin"
+			Timestamp:      time.Now(),
+			Sincronizado:   false,
 		}
 		if err := tx.Create(&op).Error; err != nil {
 			return "", fmt.Errorf("error al crear operación de ajuste: %w", err)
 		}
 	}
 
-	// Siempre recalcular desde la fuente de verdad.
+	// Paso 4: Usar la función centralizada para recalcular y actualizar el stock
 	if err := RecalcularYActualizarStock(tx, p.ID); err != nil {
-		return "", fmt.Errorf("error al recalcular stock en ajuste: %w", err)
+		return "", fmt.Errorf("error final al recalcular stock: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		return "", fmt.Errorf("error al confirmar transacción: %w", err)
+		return "", fmt.Errorf("error al confirmar la transacción de actualización: %w", err)
 	}
+
 	go d.syncProductoToRemote(p.ID)
 	go d.SincronizarOperacionesStockHaciaRemoto()
-	return "Producto actualizado localmente. Sincronizando...", nil
+
+	return "Producto actualizado correctamente.", nil
 }
 
 func (d *Db) EliminarProducto(id uint) (string, error) {
