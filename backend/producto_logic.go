@@ -1,217 +1,114 @@
 package backend
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-// RegistrarProducto crea un nuevo producto o restaura uno eliminado.
-func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
-	tx := d.LocalDB.Begin()
-	defer tx.Rollback()
+// CrearProducto inserta un nuevo producto en la base de datos local.
+func (d *Db) CrearProducto(producto *Producto) error {
+	producto.CreatedAt = time.Now()
+	producto.UpdatedAt = time.Now()
 
-	var existente Producto
-	err := tx.Unscoped().Where("codigo = ?", producto.Codigo).First(&existente).Error
+	query := `
+		INSERT INTO productos (codigo, nombre, precio_venta, stock, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`
 
-	if err == nil {
-		if existente.DeletedAt.Valid {
-			d.Log.Infof("Restaurando producto eliminado con ID: %d", existente.ID)
-			existente.Nombre = producto.Nombre
-			existente.PrecioVenta = producto.PrecioVenta
-			// El stock se pone en 0 y se crea una operación inicial.
-			existente.Stock = 0
-			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
-			if err := tx.Unscoped().Save(&existente).Error; err != nil {
-				return Producto{}, fmt.Errorf("error al restaurar producto: %w", err)
-			}
-			producto = existente
-		} else {
-			return Producto{}, errors.New("el código del producto ya está en uso")
-		}
-	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		if err := tx.Create(&producto).Error; err != nil {
-			return Producto{}, fmt.Errorf("error al registrar nuevo producto: %w", err)
-		}
-	} else {
-		return Producto{}, err
-	}
-
-	// Crear operación de stock INICIAL
-	op := OperacionStock{
-		UUID: uuid.New().String(), ProductoID: producto.ID, TipoOperacion: "INICIAL",
-		CantidadCambio: producto.Stock, VendedorID: 1, Timestamp: time.Now(),
-	}
-	if err := tx.Create(&op).Error; err != nil {
-		return Producto{}, fmt.Errorf("error al crear operación de stock inicial: %w", err)
-	}
-
-	// Recalcular el stock para asegurar consistencia desde el principio.
-	if err := RecalcularYActualizarStock(tx, producto.ID); err != nil {
-		return Producto{}, fmt.Errorf("error al calcular stock inicial: %w", err)
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return Producto{}, fmt.Errorf("error al confirmar transacción: %w", err)
-	}
-	go d.syncProductoToRemote(producto.ID)
-	go d.SincronizarOperacionesStockHaciaRemoto()
-	return producto, nil
-}
-
-func (d *Db) ActualizarProducto(p Producto) (string, error) {
-	if p.ID == 0 {
-		return "", errors.New("se requiere un ID de producto válido para actualizar")
-	}
-
-	tx := d.LocalDB.Begin()
-	if tx.Error != nil {
-		return "", fmt.Errorf("error al iniciar la transacción: %w", tx.Error)
-	}
-	defer tx.Rollback() // Se revierte si algo falla
-
-	// Paso 1: Obtener el stock real actual ANTES de hacer cambios
-	var stockRealActual int
-	var sumaActual int64
-	var cur Producto
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cur, p.ID).Error; err != nil {
-		return "", err
-	}
-	err := tx.Model(&OperacionStock{}).Where("producto_id = ?", p.ID).Select("COALESCE(SUM(cantidad_cambio), 0)").Scan(&sumaActual).Error
+	_, err := d.LocalDB.Exec(query,
+		producto.Codigo, producto.Nombre, producto.PrecioVenta, producto.Stock,
+		producto.CreatedAt, producto.UpdatedAt,
+	)
 	if err != nil {
-		return "", fmt.Errorf("error al obtener stock real para producto %d: %w", p.ID, err)
-	}
-	stockRealActual = int(sumaActual)
-
-	// Paso 2: Actualizar detalles del producto (excepto el stock)
-	updates := map[string]interface{}{
-		"nombre":       p.Nombre,
-		"precio_venta": p.PrecioVenta,
-		"updated_at":   time.Now(),
-	}
-	if err := tx.Model(&Producto{}).Where("id = ?", p.ID).Updates(updates).Error; err != nil {
-		return "", fmt.Errorf("error al actualizar detalles del producto: %w", err)
+		return fmt.Errorf("error al insertar producto: %w", err)
 	}
 
-	// Paso 3: Crear operación de AJUSTE si el stock ha cambiado
-	cantidadCambio := p.Stock - stockRealActual
-	if cantidadCambio != 0 {
-		d.Log.Infof("Ajuste de stock para producto ID %d. Stock real: %d, Stock deseado: %d, Cambio: %d", p.ID, stockRealActual, p.Stock, cantidadCambio)
-		op := OperacionStock{
-			UUID:           uuid.New().String(),
-			ProductoID:     p.ID,
-			TipoOperacion:  "AJUSTE",
-			CantidadCambio: cantidadCambio,
-			VendedorID:     1, // ID 1 para "Sistema" o "Admin"
-			Timestamp:      time.Now(),
-			Sincronizado:   false,
-		}
-		if err := tx.Create(&op).Error; err != nil {
-			return "", fmt.Errorf("error al crear operación de ajuste: %w", err)
-		}
-	}
-
-	// Paso 4: Usar la función centralizada para recalcular y actualizar el stock
-	if err := RecalcularYActualizarStock(tx, p.ID); err != nil {
-		return "", fmt.Errorf("error final al recalcular stock: %w", err)
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return "", fmt.Errorf("error al confirmar la transacción de actualización: %w", err)
-	}
-
-	go d.syncProductoToRemote(p.ID)
-	go d.SincronizarOperacionesStockHaciaRemoto()
-
-	return "Producto actualizado correctamente.", nil
+	go d.SincronizacionInteligente()
+	return nil
 }
 
-func (d *Db) EliminarProducto(id uint) (string, error) {
-	if err := d.LocalDB.Delete(&Producto{}, id).Error; err != nil {
-		return "", err
-	}
-	go d.syncProductoToRemote(id)
-	return "Producto eliminado localmente. Sincronizando...", nil
-}
-
-func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
+// ObtenerProductosPaginado recupera una lista paginada de productos con búsqueda.
+func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var productos []Producto
-	var total int64
-	query := d.LocalDB.Model(&Producto{})
+
+	baseQuery := "FROM productos WHERE deleted_at IS NULL"
+	var whereClause string
+	var args []interface{}
+
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		query = query.Where("LOWER(nombre) LIKE ? OR LOWER(codigo) LIKE ?", searchTerm, searchTerm)
+		whereClause = " AND (LOWER(nombre) LIKE ? OR LOWER(codigo) LIKE ?)"
+		args = append(args, searchTerm, searchTerm)
 	}
 
-	allowedSortBy := map[string]string{"Nombre": "nombre", "Codigo": "codigo", "PrecioVenta": "precio_venta", "Stock": "stock"}
-	if col, ok := allowedSortBy[sortBy]; ok {
-		order := "asc"
-		if strings.ToLower(sortOrder) == "desc" {
-			order = "desc"
-		}
-		query = query.Order(fmt.Sprintf("%s %s", col, order))
-	} else {
-		query = query.Order("nombre asc")
+	var total int64
+	countQuery := "SELECT COUNT(id) " + baseQuery + whereClause
+	err := d.LocalDB.QueryRow(countQuery, args...).Scan(&total)
+	if err != nil {
+		return PaginatedResult{}, fmt.Errorf("error al contar productos: %w", err)
 	}
 
-	query.Count(&total)
 	offset := (page - 1) * pageSize
-	err := query.Limit(pageSize).Offset(offset).Find(&productos).Error
+	paginationClause := fmt.Sprintf("ORDER BY nombre ASC LIMIT %d OFFSET %d", pageSize, offset)
 
-	// Es seguro mantener este recálculo aquí. Garantiza que la UI siempre muestre
-	// el valor más actualizado posible desde la BD local.
-	for i := range productos {
-		productos[i].Stock = d.calcularStockRealLocal(productos[i].ID)
+	selectQuery := "SELECT id, codigo, nombre, precio_venta, stock " + baseQuery + whereClause + paginationClause
+	rows, err := d.LocalDB.Query(selectQuery, args...)
+	if err != nil {
+		return PaginatedResult{}, fmt.Errorf("error al obtener productos paginados: %w", err)
 	}
+	defer rows.Close()
 
-	return PaginatedResult{Records: productos, TotalRecords: total}, err
-}
-
-// --- NUEVA FUNCIÓN PARA EL FRONTEND ---
-func (d *Db) ObtenerHistorialStock(productoID uint) ([]OperacionStock, error) {
-	var historial []OperacionStock
-	err := d.LocalDB.Where("producto_id = ?", productoID).Order("timestamp desc").Find(&historial).Error
-	return historial, err
-}
-
-func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error) {
-	tx := d.LocalDB.Begin()
-	defer tx.Rollback()
-
-	for _, ajuste := range ajustes {
-		stockRealActual := d.calcularStockRealLocal(ajuste.ProductoID)
-
-		cantidadCambio := ajuste.NuevoStock - stockRealActual
-		if cantidadCambio != 0 {
-			op := OperacionStock{
-				UUID:           uuid.New().String(),
-				ProductoID:     ajuste.ProductoID,
-				TipoOperacion:  "AJUSTE",
-				CantidadCambio: cantidadCambio,
-				VendedorID:     1, // ID 1 para "Sistema" o "Admin"
-				Timestamp:      time.Now(),
-				Sincronizado:   false,
-			}
-			if err := tx.Create(&op).Error; err != nil {
-				return "", fmt.Errorf("error al crear operación de ajuste para producto ID %d: %w", ajuste.ProductoID, err)
-			}
-
-			if err := RecalcularYActualizarStock(tx, ajuste.ProductoID); err != nil {
-				return "", fmt.Errorf("error final al recalcular stock para producto ID %d: %w", ajuste.ProductoID, err)
-			}
+	for rows.Next() {
+		var p Producto
+		if err := rows.Scan(&p.ID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock); err != nil {
+			return PaginatedResult{}, fmt.Errorf("error al escanear producto: %w", err)
 		}
+		productos = append(productos, p)
 	}
 
-	if err := tx.Commit().Error; err != nil {
-		return "", fmt.Errorf("error al confirmar la transacción de actualización masiva: %w", err)
+	return PaginatedResult{Records: productos, TotalRecords: total}, nil
+}
+
+// ObtenerProductoPorID busca un producto por su ID.
+func (d *Db) ObtenerProductoPorID(id uint) (Producto, error) {
+	var p Producto
+	query := "SELECT id, codigo, nombre, precio_venta, stock FROM productos WHERE id = ? AND deleted_at IS NULL"
+
+	err := d.LocalDB.QueryRow(query, id).Scan(&p.ID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock)
+	if err != nil {
+		return Producto{}, fmt.Errorf("error al buscar producto por ID %d: %w", id, err)
 	}
 
-	go d.SincronizarOperacionesStockHaciaRemoto()
+	return p, nil
+}
 
-	return "Stock actualizado masivamente.", nil
+// ActualizarProducto modifica los datos de un producto existente.
+func (d *Db) ActualizarProducto(producto *Producto) error {
+	producto.UpdatedAt = time.Now()
+
+	query := "UPDATE productos SET codigo = ?, nombre = ?, precio_venta = ?, updated_at = ? WHERE id = ?"
+
+	_, err := d.LocalDB.Exec(query,
+		producto.Codigo, producto.Nombre, producto.PrecioVenta,
+		producto.UpdatedAt, producto.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("error al actualizar producto: %w", err)
+	}
+
+	go d.SincronizacionInteligente()
+	return nil
+}
+
+// EliminarProducto realiza un borrado lógico (soft delete) de un producto.
+func (d *Db) EliminarProducto(id uint) error {
+	query := "UPDATE productos SET deleted_at = ? WHERE id = ?"
+
+	_, err := d.LocalDB.Exec(query, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("error al eliminar producto: %w", err)
+	}
+
+	go d.SincronizacionInteligente()
+	return nil
 }

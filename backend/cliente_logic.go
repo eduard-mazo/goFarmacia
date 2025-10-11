@@ -1,104 +1,127 @@
 package backend
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"gorm.io/gorm"
 )
 
-// RegistrarCliente crea un nuevo cliente o restaura uno eliminado.
-func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
-	tx := d.LocalDB.Begin()
-	defer tx.Rollback()
+// CrearCliente inserta un nuevo cliente en la base de datos local.
+func (d *Db) CrearCliente(cliente *Cliente) error {
+	cliente.CreatedAt = time.Now()
+	cliente.UpdatedAt = time.Now()
 
-	var existente Cliente
-	err := tx.Unscoped().Where("numero_id = ?", cliente.NumeroID).First(&existente).Error
+	query := `
+		INSERT INTO clientes (tipo_id, numero_id, nombre, direccion, telefono, email, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
-	if err == nil {
-		if existente.DeletedAt.Valid {
-			d.Log.Infof("Restaurando cliente eliminado con ID: %d", existente.ID)
-			existente.Nombre = cliente.Nombre
-			existente.Apellido = cliente.Apellido
-			existente.TipoID = cliente.TipoID
-			existente.Telefono = cliente.Telefono
-			existente.Email = cliente.Email
-			existente.Direccion = cliente.Direccion
-			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
-			if err := tx.Unscoped().Save(&existente).Error; err != nil {
-				return Cliente{}, fmt.Errorf("error al restaurar cliente: %w", err)
-			}
-			cliente = existente
-		} else {
-			return Cliente{}, errors.New("el número de identificación ya está registrado")
-		}
-	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		if err := tx.Create(&cliente).Error; err != nil {
-			return Cliente{}, fmt.Errorf("error al registrar nuevo cliente: %w", err)
-		}
-	} else {
-		return Cliente{}, err
+	_, err := d.LocalDB.Exec(query,
+		cliente.TipoID, cliente.NumeroID, cliente.Nombre, cliente.Direccion, cliente.Telefono, cliente.Email,
+		cliente.CreatedAt, cliente.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("error al insertar cliente: %w", err)
 	}
 
-	if err := tx.Commit().Error; err != nil {
-		return Cliente{}, fmt.Errorf("error al confirmar transacción: %w", err)
-	}
+	// Disparamos una sincronización en segundo plano.
+	go d.SincronizacionInteligente()
 
-	go d.syncClienteToRemote(cliente.ID)
-	return cliente, nil
+	return nil
 }
 
-// ActualizarCliente actualiza los datos de un cliente.
-func (d *Db) ActualizarCliente(cliente Cliente) (string, error) {
-	if cliente.ID == 0 {
-		return "", errors.New("se requiere un ID de cliente válido")
-	}
-	if err := d.LocalDB.Save(&cliente).Error; err != nil {
-		return "", err
-	}
-	go d.syncClienteToRemote(cliente.ID)
-	return "Cliente actualizado localmente. Sincronizando...", nil
-}
-
-// EliminarCliente realiza un borrado lógico de un cliente.
-func (d *Db) EliminarCliente(id uint) (string, error) {
-	if err := d.LocalDB.Delete(&Cliente{}, id).Error; err != nil {
-		return "", err
-	}
-	go d.syncClienteToRemote(id)
-	return "Cliente eliminado localmente. Sincronizando...", nil
-}
-
-// ObtenerClientesPaginado retorna una lista paginada de clientes.
-func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
+// ObtenerClientesPaginado recupera una lista paginada de clientes con opción de búsqueda.
+func (d *Db) ObtenerClientesPaginado(page, pageSize int, search string) (PaginatedResult, error) {
 	var clientes []Cliente
-	var total int64
-	query := d.LocalDB.Model(&Cliente{})
 
+	// Base de la query
+	baseQuery := "FROM clientes WHERE deleted_at IS NULL"
+
+	// Construcción de la cláusula WHERE para la búsqueda
+	var whereClause string
+	var args []interface{}
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		query = query.Where("LOWER(nombre) LIKE ? OR LOWER(apellido) LIKE ? OR numero_id LIKE ?", searchTerm, searchTerm, searchTerm)
+		whereClause = " AND (LOWER(nombre) LIKE ? OR LOWER(numero_id) LIKE ? OR LOWER(email) LIKE ?)"
+		args = append(args, searchTerm, searchTerm, searchTerm)
 	}
 
-	if sortBy != "" && (sortBy == "Nombre" || sortBy == "Documento" || sortBy == "Email") {
-		col := "nombre"
-		switch sortBy {
-		case "Documento":
-			col = "numero_id"
-		case "Email":
-			col = "email"
-		}
-		order := "asc"
-		if strings.ToLower(sortOrder) == "desc" {
-			order = "desc"
-		}
-		query = query.Order(fmt.Sprintf("%s %s", col, order))
+	// Obtener el total de registros que coinciden
+	var total int64
+	countQuery := "SELECT COUNT(id) " + baseQuery + whereClause
+	err := d.LocalDB.QueryRow(countQuery, args...).Scan(&total)
+	if err != nil {
+		return PaginatedResult{}, fmt.Errorf("error al contar clientes: %w", err)
 	}
 
-	query.Count(&total)
+	// Paginación
 	offset := (page - 1) * pageSize
-	err := query.Limit(pageSize).Offset(offset).Find(&clientes).Error
-	return PaginatedResult{Records: clientes, TotalRecords: total}, err
+	paginationClause := fmt.Sprintf("ORDER BY nombre ASC LIMIT %d OFFSET %d", pageSize, offset)
+
+	// Query final para obtener los registros de la página actual
+	selectQuery := "SELECT id, tipo_id, numero_id, nombre, direccion, telefono, email " + baseQuery + whereClause + paginationClause
+
+	rows, err := d.LocalDB.Query(selectQuery, args...)
+	if err != nil {
+		return PaginatedResult{}, fmt.Errorf("error al obtener clientes paginados: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var c Cliente
+		if err := rows.Scan(&c.ID, &c.TipoID, &c.NumeroID, &c.Nombre, &c.Direccion, &c.Telefono, &c.Email); err != nil {
+			return PaginatedResult{}, fmt.Errorf("error al escanear cliente: %w", err)
+		}
+		clientes = append(clientes, c)
+	}
+
+	return PaginatedResult{Records: clientes, TotalRecords: total}, nil
+}
+
+// ObtenerClientePorID busca un cliente por su ID.
+func (d *Db) ObtenerClientePorID(id uint) (Cliente, error) {
+	var c Cliente
+	query := "SELECT id, tipo_id, numero_id, nombre, direccion, telefono, email FROM clientes WHERE id = ? AND deleted_at IS NULL"
+
+	err := d.LocalDB.QueryRow(query, id).Scan(&c.ID, &c.TipoID, &c.NumeroID, &c.Nombre, &c.Direccion, &c.Telefono, &c.Email)
+	if err != nil {
+		return Cliente{}, fmt.Errorf("error al buscar cliente por ID %d: %w", id, err)
+	}
+
+	return c, nil
+}
+
+// ActualizarCliente modifica los datos de un cliente existente.
+func (d *Db) ActualizarCliente(cliente *Cliente) error {
+	cliente.UpdatedAt = time.Now()
+
+	query := `
+		UPDATE clientes
+		SET tipo_id = ?, numero_id = ?, nombre = ?, direccion = ?, telefono = ?, email = ?, updated_at = ?
+		WHERE id = ?`
+
+	_, err := d.LocalDB.Exec(query,
+		cliente.TipoID, cliente.NumeroID, cliente.Nombre, cliente.Direccion, cliente.Telefono, cliente.Email,
+		cliente.UpdatedAt, cliente.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("error al actualizar cliente: %w", err)
+	}
+
+	go d.SincronizacionInteligente()
+
+	return nil
+}
+
+// EliminarCliente realiza un borrado lógico (soft delete) de un cliente.
+func (d *Db) EliminarCliente(id uint) error {
+	query := "UPDATE clientes SET deleted_at = ? WHERE id = ?"
+
+	_, err := d.LocalDB.Exec(query, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("error al eliminar cliente: %w", err)
+	}
+
+	go d.SincronizacionInteligente()
+
+	return nil
 }
