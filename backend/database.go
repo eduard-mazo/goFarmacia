@@ -338,7 +338,7 @@ func (d *Db) AutoMigrate() error {
 			nombre TEXT UNIQUE NOT NULL,
 			apellido TEXT,
 			tipo_id TEXT,
-			numero_id TEXT,
+			numero_id TEXT UNIQUE NOT NULL,
 			telefono TEXT,
 			email TEXT,
 			direccion TEXT
@@ -357,9 +357,17 @@ func (d *Db) AutoMigrate() error {
 			stock INTEGER, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, deleted_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS operacion_stocks (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT UNIQUE NOT NULL, producto_id INTEGER NOT NULL, tipo_operacion TEXT,
-			cantidad_cambio INTEGER, stock_resultante INTEGER, vendedor_id INTEGER, factura_id INTEGER,
-			timestamp DATETIME, sincronizado BOOLEAN DEFAULT false, FOREIGN KEY (producto_id) REFERENCES productos (id)
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			uuid TEXT UNIQUE NOT NULL,
+			producto_id INTEGER NOT NULL,
+			tipo_operacion TEXT,
+			cantidad_cambio INTEGER,
+			stock_resultante INTEGER,
+			vendedor_id INTEGER,
+			factura_id INTEGER,
+			timestamp DATETIME,
+			sincronizado BOOLEAN DEFAULT false,
+			FOREIGN KEY (producto_id) REFERENCES productos (id)
 		);
 		CREATE TABLE IF NOT EXISTS facturas (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, numero_factura TEXT UNIQUE NOT NULL, fecha_emision DATETIME, vendedor_id INTEGER,

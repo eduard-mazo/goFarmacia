@@ -28,23 +28,25 @@ func (d *Db) SincronizacionInteligente() {
 	}
 	d.Log.Info("[INICIO]: Sincronización Inteligente")
 
+	d.Log.Info("Iniciando sincronización de datos maestros...")
 	g, ctx := errgroup.WithContext(d.ctx)
 
-	// Sincronizar modelos maestros en paralelo
 	g.Go(func() error { return d.sincronizarTablaMaestra(ctx, "vendedors") })
 	g.Go(func() error { return d.sincronizarTablaMaestra(ctx, "clientes") })
-	// g.Go(func() error { return d.sincronizarTablaMaestra(ctx, "proveedors") })
-	// g.Go(func() error { return d.sincronizarTablaMaestra(ctx, "productos") })
+	g.Go(func() error { return d.sincronizarTablaMaestra(ctx, "proveedors") })
+	g.Go(func() error { return d.sincronizarTablaMaestra(ctx, "productos") })
+	g.Go(func() error { return d.sincronizarTablaMaestra(ctx, "opereacion_stocks") })
 
 	if err := g.Wait(); err != nil {
-		d.Log.Errorf("Error durante la sincronización de modelos maestros: %v", err)
+		d.Log.Errorf("Error crítico durante la sincronización de modelos maestros: %v. La sincronización se detendrá.", err)
 		return
 	}
+	d.Log.Info("Sincronización de datos maestros completada exitosamente.")
 
-	// Sincronizar operaciones y transacciones
 	if err := d.SincronizarOperacionesStockHaciaRemoto(); err != nil {
 		d.Log.Errorf("Error sincronizando operaciones de stock hacia el remoto: %v", err)
 	}
+
 	if err := d.sincronizarTransaccionesHaciaLocal(); err != nil {
 		d.Log.Errorf("Error sincronizando transacciones hacia local: %v", err)
 	}
@@ -74,6 +76,8 @@ func (d *Db) sincronizarTablaMaestra(ctx context.Context, tableName string) erro
 		return d.syncGenericModel(ctx, tableName, "nombre", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "telefono", "email"})
 	case "productos":
 		return d.syncGenericModel(ctx, tableName, "codigo", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "codigo", "precio_venta", "stock"})
+	case "opereacion_stocks":
+		return d.syncGenericModel(ctx, tableName, "uuid", []string{"uuid", "producto_id", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_id", "factura_id", "timestamp", "sincronizado"})
 	default:
 		return fmt.Errorf("sincronización no implementada para la tabla: %s", tableName)
 	}
