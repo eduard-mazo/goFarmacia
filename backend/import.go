@@ -244,17 +244,18 @@ func (d *Db) insertBatch(batch []interface{}, modelName string, progressChan cha
 	// --- FIN DE LA CORRECCIÓN ---
 
 	// Ahora pasamos el `typedSlice` a GORM en lugar del `batch` original.
-	err := d.LocalDB.Clauses(clause.OnConflict{
-		Columns:   getUniqueColumns(modelName),
-		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(modelName)),
-	}).CreateInBatches(typedSlice, len(batch)).Error
-
-	if err != nil {
-		d.Log.Errorf("Error al insertar lote para el modelo %s: %v", modelName, err)
-		log.AddBatchError(len(batch), err)
-	} else {
-		log.AddBatchSuccess(len(batch))
-	}
+	//	err := d.LocalDB.Clauses(clause.OnConflict{
+	//		Columns:   getUniqueColumns(modelName),
+	//		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(modelName)),
+	//	}).CreateInBatches(typedSlice, len(batch)).Error
+	//
+	//	if err != nil {
+	//		d.Log.Errorf("Error al insertar lote para el modelo %s: %v", modelName, err)
+	//		log.AddBatchError(len(batch), err)
+	//	} else {
+	//		log.AddBatchSuccess(len(batch))
+	//	}
+	fmt.Print(typedSlice)
 }
 
 // mapRowToStruct convierte un mapa de (header -> valor) a un struct específico.

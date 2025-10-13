@@ -1,68 +1,114 @@
 package backend
 
 import (
-	"errors"
 	"fmt"
+	"strings"
 	"time"
-
-	"gorm.io/gorm"
 )
 
-// RegistrarProveedor crea un nuevo proveedor o restaura uno eliminado.
-func (d *Db) RegistrarProveedor(proveedor Proveedor) (string, error) {
-	tx := d.LocalDB.Begin()
-	defer tx.Rollback()
+// CrearProveedor inserta un nuevo proveedor en la base de datos local.
+func (d *Db) CrearProveedor(proveedor *Proveedor) error {
+	proveedor.CreatedAt = time.Now()
+	proveedor.UpdatedAt = time.Now()
 
-	var existente Proveedor
-	err := tx.Unscoped().Where("nombre = ?", proveedor.Nombre).First(&existente).Error
+	query := `
+		INSERT INTO proveedors (nombre, contacto, telefono, direccion, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`
 
-	var finalID uint
-	if err == nil {
-		if existente.DeletedAt.Valid {
-			d.Log.Infof("Restaurando proveedor eliminado con ID: %d", existente.ID)
-			existente.Telefono = proveedor.Telefono
-			existente.Email = proveedor.Email
-			existente.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
-			if err := tx.Unscoped().Save(&existente).Error; err != nil {
-				return "", fmt.Errorf("error al restaurar proveedor: %w", err)
-			}
-			finalID = existente.ID
-		} else {
-			return "", errors.New("el nombre del proveedor ya está en uso")
-		}
-	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		if err := tx.Create(&proveedor).Error; err != nil {
-			return "", fmt.Errorf("error al registrar nuevo proveedor: %w", err)
-		}
-		finalID = proveedor.ID
-	} else {
-		return "", err
+	_, err := d.LocalDB.Exec(query,
+		proveedor.Nombre, proveedor.Telefono, proveedor.Email, proveedor.CreatedAt, proveedor.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("error al insertar proveedor: %w", err)
 	}
 
-	if err := tx.Commit().Error; err != nil {
-		return "", fmt.Errorf("error al confirmar transacción: %w", err)
-	}
-	go d.syncProveedorToRemote(finalID)
-	return "Proveedor registrado localmente. Sincronizando...", nil
+	go d.SincronizacionInteligente()
+	return nil
 }
 
-// ActualizarProveedor actualiza los datos de un proveedor.
-func (d *Db) ActualizarProveedor(proveedor Proveedor) (string, error) {
-	if proveedor.ID == 0 {
-		return "", errors.New("se requiere un ID de proveedor válido")
+// ObtenerProveedoresPaginado recupera una lista paginada de proveedores.
+func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+	var proveedores []Proveedor
+
+	baseQuery := "FROM proveedors WHERE deleted_at IS NULL"
+	var whereClause string
+	var args []interface{}
+	if search != "" {
+		searchTerm := "%" + strings.ToLower(search) + "%"
+		whereClause = " AND (LOWER(nombre) LIKE ? OR LOWER(contacto) LIKE ?)"
+		args = append(args, searchTerm, searchTerm)
 	}
-	if err := d.LocalDB.Save(&proveedor).Error; err != nil {
-		return "", err
+
+	var total int64
+	countQuery := "SELECT COUNT(id) " + baseQuery + whereClause
+	err := d.LocalDB.QueryRow(countQuery, args...).Scan(&total)
+	if err != nil {
+		return PaginatedResult{}, fmt.Errorf("error al contar proveedores: %w", err)
 	}
-	go d.syncProveedorToRemote(proveedor.ID)
-	return "Proveedor actualizado localmente. Sincronizando...", nil
+
+	offset := (page - 1) * pageSize
+	paginationClause := fmt.Sprintf("ORDER BY nombre ASC LIMIT %d OFFSET %d", pageSize, offset)
+
+	selectQuery := "SELECT id, nombre, contacto, telefono, direccion " + baseQuery + whereClause + paginationClause
+	rows, err := d.LocalDB.Query(selectQuery, args...)
+	if err != nil {
+		return PaginatedResult{}, fmt.Errorf("error al obtener proveedores paginados: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p Proveedor
+		if err := rows.Scan(&p.ID, &p.Nombre, &p.Telefono, &p.Email); err != nil {
+			return PaginatedResult{}, fmt.Errorf("error al escanear proveedor: %w", err)
+		}
+		proveedores = append(proveedores, p)
+	}
+
+	return PaginatedResult{Records: proveedores, TotalRecords: total}, nil
 }
 
-// EliminarProveedor realiza un borrado lógico de un proveedor.
-func (d *Db) EliminarProveedor(id uint) (string, error) {
-	if err := d.LocalDB.Delete(&Proveedor{}, id).Error; err != nil {
-		return "", err
+// ObtenerProveedorPorID busca un proveedor por su ID.
+func (d *Db) ObtenerProveedorPorID(id uint) (Proveedor, error) {
+	var p Proveedor
+	query := "SELECT id, nombre, contacto, telefono, direccion FROM proveedors WHERE id = ? AND deleted_at IS NULL"
+
+	err := d.LocalDB.QueryRow(query, id).Scan(&p.ID, &p.Nombre, &p.Email, &p.Telefono)
+	if err != nil {
+		return Proveedor{}, fmt.Errorf("error al buscar proveedor por ID %d: %w", id, err)
 	}
-	go d.syncProveedorToRemote(id)
-	return "Proveedor eliminado localmente. Sincronizando...", nil
+
+	return p, nil
+}
+
+// ActualizarProveedor modifica los datos de un proveedor existente.
+func (d *Db) ActualizarProveedor(proveedor *Proveedor) error {
+	proveedor.UpdatedAt = time.Now()
+
+	query := `
+		UPDATE proveedors
+		SET nombre = ?, contacto = ?, telefono = ?, direccion = ?, updated_at = ?
+		WHERE id = ?`
+
+	_, err := d.LocalDB.Exec(query,
+		proveedor.Nombre, proveedor.Telefono, proveedor.Email, proveedor.UpdatedAt, proveedor.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("error al actualizar proveedor: %w", err)
+	}
+
+	go d.SincronizacionInteligente()
+	return nil
+}
+
+// EliminarProveedor realiza un borrado lógico (soft delete) de un proveedor.
+func (d *Db) EliminarProveedor(id uint) error {
+	query := "UPDATE proveedors SET deleted_at = ? WHERE id = ?"
+
+	_, err := d.LocalDB.Exec(query, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("error al eliminar proveedor: %w", err)
+	}
+
+	go d.SincronizacionInteligente()
+	return nil
 }

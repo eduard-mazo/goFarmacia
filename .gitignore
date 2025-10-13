@@ -45,6 +45,8 @@ desktop.ini
 
 #db
 *.db
+*.db-shm
+*.db-wal
 
 # package
 package.json.md5

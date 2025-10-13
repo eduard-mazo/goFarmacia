@@ -3,6 +3,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"image/png"
@@ -41,10 +42,18 @@ func (d *Db) GenerateJWT(vendedor Vendedor) (string, error) {
 }
 
 func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
-	// --- LÓGICA MODIFICADA ---
 	var vendedor Vendedor
-	if err := d.LocalDB.Where("email = ?", email).First(&vendedor).Error; err != nil {
-		return MFASetupResponse{}, errors.New("vendedor no encontrado")
+
+	// Buscar vendedor en SQLite
+	err := d.LocalDB.QueryRow(
+		"SELECT id, email FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		email,
+	).Scan(&vendedor.ID, &vendedor.Email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return MFASetupResponse{}, errors.New("vendedor no encontrado")
+		}
+		return MFASetupResponse{}, err
 	}
 
 	key, err := totp.Generate(totp.GenerateOpts{
@@ -56,22 +65,27 @@ func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 	}
 
 	vendedor.MFASecret = key.Secret()
-	if err := d.LocalDB.Save(&vendedor).Error; err != nil {
+	_, err = d.LocalDB.Exec(
+		"UPDATE vendedors SET mfa_secret = ?, updated_at = ? WHERE id = ?",
+		vendedor.MFASecret, time.Now(), vendedor.ID,
+	)
+	if err != nil {
 		return MFASetupResponse{}, errors.New("no se pudo guardar la clave MFA")
 	}
 
 	if d.isRemoteDBAvailable() {
 		go d.syncVendedorToRemote(vendedor.ID)
 	}
-
 	var buf bytes.Buffer
 	img, err := key.Image(200, 200)
 	if err != nil {
 		return MFASetupResponse{}, errors.New("no se pudo generar la imagen QR")
 	}
+
 	if err := png.Encode(&buf, img); err != nil {
 		return MFASetupResponse{}, errors.New("no se pudo codificar la imagen QR")
 	}
+
 	imgBase64Str := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
 	return MFASetupResponse{
@@ -112,22 +126,32 @@ func (d *Db) AuthMiddleware(next http.Handler) http.Handler {
 
 func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 	var vendedor Vendedor
-	if err := d.LocalDB.Where("email = ?", email).First(&vendedor).Error; err != nil {
-		return false, errors.New("usuario no encontrado")
+
+	err := d.LocalDB.QueryRow(
+		"SELECT id, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		email,
+	).Scan(&vendedor.ID, &vendedor.MFASecret)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, errors.New("usuario no encontrado")
+		}
+		return false, err
 	}
 
 	if vendedor.MFASecret == "" {
 		return false, errors.New("el secreto MFA no ha sido generado aún")
 	}
 
-	valid := totp.Validate(code, vendedor.MFASecret)
-	if !valid {
+	if !totp.Validate(code, vendedor.MFASecret) {
 		return false, errors.New("el código de verificación es incorrecto")
 	}
 
-	// Actualizamos el estado de MFA en el objeto
-	vendedor.MFAEnabled = true
-	if err := d.LocalDB.Save(&vendedor).Error; err != nil {
+	// Habilitar MFA
+	_, err = d.LocalDB.Exec(
+		"UPDATE vendedors SET mfa_enabled = 1, updated_at = ? WHERE id = ?",
+		time.Now(), vendedor.ID,
+	)
+	if err != nil {
 		return false, errors.New("no se pudo habilitar MFA")
 	}
 
@@ -150,15 +174,22 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 	}
 
 	var vendedor Vendedor
-	if err := d.LocalDB.Where("email = ?", claims.Email).First(&vendedor).Error; err != nil {
-		return response, errors.New("usuario no encontrado")
+	err = d.LocalDB.QueryRow(
+		"SELECT id, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		claims.Email,
+	).Scan(&vendedor.ID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.MFAEnabled, &vendedor.MFASecret)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return response, errors.New("usuario no encontrado")
+		}
+		return response, err
 	}
 
 	if !vendedor.MFAEnabled || vendedor.MFASecret == "" {
 		return response, errors.New("MFA no está habilitado para este usuario")
 	}
-	valid := totp.Validate(code, vendedor.MFASecret)
-	if !valid {
+
+	if !totp.Validate(code, vendedor.MFASecret) {
 		return response, errors.New("código MFA incorrecto")
 	}
 
