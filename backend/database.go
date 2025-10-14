@@ -24,7 +24,7 @@ type OperacionStock struct {
 	StockResultante int       `json:"stock_resultante"`
 	VendedorID      uint      `json:"vendedor_id"`
 	FacturaID       *uint     `json:"factura_id"`
-	Timestamp       time.Time `json:"timestamp"`
+	Timestamp       time.Time `json:"timestamp" ts_type:"string"`
 	Sincronizado    bool      `json:"sincronizado"`
 }
 
@@ -55,9 +55,9 @@ type MFASetupResponse struct {
 
 type Vendedor struct {
 	ID         uint       `json:"id"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	DeletedAt  *time.Time `json:"deleted_at"`
+	CreatedAt  time.Time  `json:"created_at" ts_type:"string"`
+	UpdatedAt  time.Time  `json:"updated_at" ts_type:"string"`
+	DeletedAt  *time.Time `json:"deleted_at" ts_type:"string"`
 	Nombre     string     `json:"Nombre"`
 	Apellido   string     `json:"Apellido"`
 	Cedula     string     `json:"Cedula"`
@@ -69,9 +69,9 @@ type Vendedor struct {
 
 type Cliente struct {
 	ID        uint       `json:"id"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	DeletedAt *time.Time `json:"deleted_at"`
+	CreatedAt time.Time  `json:"created_at" ts_type:"string"`
+	UpdatedAt time.Time  `json:"updated_at" ts_type:"string"`
+	DeletedAt *time.Time `json:"deleted_at" ts_type:"string"`
 	Nombre    string     `json:"Nombre"`
 	Apellido  string     `json:"Apellido"`
 	TipoID    string     `json:"TipoID"`
@@ -83,9 +83,9 @@ type Cliente struct {
 
 type Producto struct {
 	ID          uint       `json:"id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	DeletedAt   *time.Time `json:"deleted_at"`
+	CreatedAt   time.Time  `json:"created_at" ts_type:"string"`
+	UpdatedAt   time.Time  `json:"updated_at" ts_type:"string"`
+	DeletedAt   *time.Time `json:"deleted_at" ts_type:"string"`
 	Nombre      string     `json:"Nombre"`
 	Codigo      string     `json:"Codigo"`
 	PrecioVenta float64    `json:"PrecioVenta"`
@@ -94,11 +94,11 @@ type Producto struct {
 
 type Factura struct {
 	ID            uint             `json:"id"`
-	CreatedAt     time.Time        `json:"created_at"`
-	UpdatedAt     time.Time        `json:"updated_at"`
-	DeletedAt     *time.Time       `json:"deleted_at"`
+	CreatedAt     time.Time        `json:"created_at" ts_type:"string"`
+	UpdatedAt     time.Time        `json:"updated_at" ts_type:"string"`
+	DeletedAt     *time.Time       `json:"deleted_at" ts_type:"string"`
 	NumeroFactura string           `json:"NumeroFactura"`
-	FechaEmision  time.Time        `json:"fecha_emision"`
+	FechaEmision  time.Time        `json:"fecha_emision"  ts_type:"string"`
 	VendedorID    uint             `json:"VendedorID"`
 	Vendedor      Vendedor         `json:"Vendedor"`
 	ClienteID     uint             `json:"ClienteID"`
@@ -113,9 +113,9 @@ type Factura struct {
 
 type DetalleFactura struct {
 	ID             uint       `json:"id"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	DeletedAt      *time.Time `json:"deleted_at"`
+	CreatedAt      time.Time  `json:"created_at" ts_type:"string"`
+	UpdatedAt      time.Time  `json:"updated_at" ts_type:"string"`
+	DeletedAt      *time.Time `json:"deleted_at" ts_type:"string"`
 	FacturaID      uint       `json:"FacturaID"`
 	ProductoID     uint       `json:"ProductoID"`
 	Producto       Producto   `json:"Producto"`
@@ -126,9 +126,9 @@ type DetalleFactura struct {
 
 type Proveedor struct {
 	ID        uint       `json:"id"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	DeletedAt *time.Time `json:"deleted_at"`
+	CreatedAt time.Time  `json:"created_at" ts_type:"string"`
+	UpdatedAt time.Time  `json:"updated_at" ts_type:"string"`
+	DeletedAt *time.Time `json:"deleted_at" ts_type:"string"`
 	Nombre    string     `json:"Nombre"`
 	Telefono  string     `json:"Telefono"`
 	Email     string     `json:"Email"`
@@ -136,10 +136,10 @@ type Proveedor struct {
 
 type Compra struct {
 	ID            uint            `json:"id"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	DeletedAt     *time.Time      `json:"deleted_at"`
-	Fecha         time.Time       `json:"Fecha"`
+	CreatedAt     time.Time       `json:"created_at" ts_type:"string"`
+	UpdatedAt     time.Time       `json:"updated_at" ts_type:"string"`
+	DeletedAt     *time.Time      `json:"deleted_at" ts_type:"string"`
+	Fecha         time.Time       `json:"Fecha" ts_type:"string"`
 	ProveedorID   uint            `json:"ProveedorID"`
 	Proveedor     Proveedor       `json:"Proveedor"`
 	FacturaNumero string          `json:"FacturaNumero"`
