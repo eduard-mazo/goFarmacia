@@ -249,7 +249,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 
 	// Paginación
 	offset := (page - 1) * pageSize
-	paginationClause := fmt.Sprintf("LIMIT %d OFFSET %d", pageSize, offset)
+	paginationClause := fmt.Sprintf(" LIMIT %d OFFSET %d", pageSize, offset)
 
 	// Query final para obtener los registros
 	selectQuery := `

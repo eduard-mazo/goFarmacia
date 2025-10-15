@@ -182,8 +182,9 @@ func (d *Db) ActualizarProducto(p Producto) (string, error) {
 	return "Producto actualizado correctamente.", nil
 }
 
-func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (PaginatedResult, error) {
+func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
 	var productos []Producto
+	var total int64
 
 	baseQuery := "FROM productos WHERE deleted_at IS NULL"
 	var whereClause string
@@ -191,22 +192,35 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search string) (Pagina
 
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		whereClause = " AND (LOWER(nombre) LIKE ? OR LOWER(codigo) LIKE ?)"
+		whereClause = " AND (LOWER(nombre) LIKE ? OR LOWER(codigo) LIKE ?)" // Espacio al inicio
 		args = append(args, searchTerm, searchTerm)
 	}
 
-	var total int64
 	countQuery := "SELECT COUNT(id) " + baseQuery + whereClause
-	err := d.LocalDB.QueryRow(countQuery, args...).Scan(&total)
-	if err != nil {
+	if err := d.LocalDB.QueryRowContext(d.ctx, countQuery, args...).Scan(&total); err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al contar productos: %w", err)
 	}
 
-	offset := (page - 1) * pageSize
-	paginationClause := fmt.Sprintf("ORDER BY nombre ASC LIMIT %d OFFSET %d", pageSize, offset)
+	selectQuery := "SELECT id, codigo, nombre, precio_venta, stock " + baseQuery + whereClause
 
-	selectQuery := "SELECT id, codigo, nombre, precio_venta, stock " + baseQuery + whereClause + paginationClause
-	rows, err := d.LocalDB.Query(selectQuery, args...)
+	if sortBy != "" {
+		order := "ASC"
+		if strings.ToLower(sortOrder) == "desc" {
+			order = "DESC"
+		}
+		// Validar columnas para evitar inyección SQL
+		allowedSortBy := map[string]string{"Nombre": "nombre", "Codigo": "codigo", "PrecioVenta": "precio_venta", "Stock": "stock"}
+		if col, ok := allowedSortBy[sortBy]; ok {
+			selectQuery += fmt.Sprintf(" ORDER BY %s %s", col, order)
+		}
+	} else {
+		selectQuery += " ORDER BY nombre ASC" // Orden por defecto
+	}
+
+	offset := (page - 1) * pageSize
+	selectQuery += fmt.Sprintf(" LIMIT %d OFFSET %d", pageSize, offset)
+
+	rows, err := d.LocalDB.QueryContext(d.ctx, selectQuery, args...)
 	if err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al obtener productos paginados: %w", err)
 	}
@@ -260,6 +274,7 @@ func (d *Db) ObtenerHistorialStock(productoID uint) ([]OperacionStock, error) {
 	for rows.Next() {
 		var op OperacionStock
 		var facturaID sql.NullInt64
+		var stockResultante sql.NullInt64
 
 		err := rows.Scan(
 			&op.ID,
@@ -267,7 +282,7 @@ func (d *Db) ObtenerHistorialStock(productoID uint) ([]OperacionStock, error) {
 			&op.ProductoID,
 			&op.TipoOperacion,
 			&op.CantidadCambio,
-			&op.StockResultante,
+			&stockResultante,
 			&op.VendedorID,
 			&facturaID,
 			&op.Timestamp,
@@ -277,6 +292,10 @@ func (d *Db) ObtenerHistorialStock(productoID uint) ([]OperacionStock, error) {
 		if err != nil {
 			d.Log.Errorf("Error al escanear una fila del historial de stock: %v", err)
 			continue // Opcional: podrías devolver el error si prefieres que la operación falle por completo.
+		}
+
+		if stockResultante.Valid {
+			op.StockResultante = int(stockResultante.Int64)
 		}
 
 		if facturaID.Valid {

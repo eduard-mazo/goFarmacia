@@ -116,9 +116,10 @@ const fetchHistorial = async (productoId: number) => {
   isLoading.value = true;
   error.value = "";
   try {
-    historial.value = await ObtenerHistorialStock(productoId);
+    historial.value = (await ObtenerHistorialStock(productoId)) || [];
   } catch (err: any) {
     error.value = `No se pudo cargar el historial: ${err}`;
+    historial.value = [];
   } finally {
     isLoading.value = false;
   }

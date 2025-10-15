@@ -242,10 +242,17 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 	for rows.Next() {
 		var op OperacionStock
 		var localID int64
-		if err := rows.Scan(&localID, &op.UUID, &op.ProductoID, &op.TipoOperacion, &op.CantidadCambio, &op.StockResultante, &op.VendedorID, &op.FacturaID, &op.Timestamp); err != nil {
+		var stockResultante sql.NullInt64
+
+		if err := rows.Scan(&localID, &op.UUID, &op.ProductoID, &op.TipoOperacion, &op.CantidadCambio, &stockResultante, &op.VendedorID, &op.FacturaID, &op.Timestamp); err != nil {
 			d.Log.Errorf("Error al escanear operación de stock local: %v", err)
 			continue
 		}
+
+		if stockResultante.Valid {
+			op.StockResultante = int(stockResultante.Int64)
+		}
+
 		ops = append(ops, op)
 		localIDsToUpdate = append(localIDsToUpdate, localID)
 		productosAfectados[op.ProductoID] = true
@@ -896,7 +903,6 @@ func (d *Db) sanitizeRow(tableName string, cols []string, values []interface{}) 
 
 	// Asignar valores por defecto para campos comunes
 	setDefault("created_at", now)
-	setDefault("updated_at", now)
 	setDefault("nombre", "SIN NOMBRE")
 
 	// Asignar valores por defecto específicos de la tabla
