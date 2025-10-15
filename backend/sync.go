@@ -85,6 +85,8 @@ func (d *Db) sincronizarTablaMaestra(ctx context.Context, tableName string) erro
 func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, cols []string) error {
 	d.Log.Infof("[%s] Inicio syncGenericModel (unique: %s)", tableName, uniqueCol)
 
+	syncStartTime := time.Now().UTC() // <-- NUEVO: Marcar el inicio de la sincronización
+
 	// 1) Obtener last_sync_timestamp
 	var lastSync time.Time
 	err := d.LocalDB.QueryRowContext(ctx, `SELECT last_sync_timestamp FROM sync_log WHERE model_name = ?`, tableName).Scan(&lastSync)
@@ -164,8 +166,8 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 
 	// --- Parte 2: Subir cambios del Local al Remoto (CON BATCH) ---
 
-	localQuery := fmt.Sprintf("SELECT %s FROM %s WHERE updated_at > ?", strings.Join(cols, ","), tableName)
-	localRows, err := txLocal.QueryContext(ctx, localQuery, lastSync)
+	localQuery := fmt.Sprintf("SELECT %s FROM %s WHERE updated_at > ? AND updated_at < ?", strings.Join(cols, ","), tableName)
+	localRows, err := txLocal.QueryContext(ctx, localQuery, lastSync, syncStartTime)
 	if err != nil {
 		return fmt.Errorf("[%s] error consultando locales para push: %w", tableName, err)
 	}
@@ -208,8 +210,7 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	// --- FIN DEL CAMBIO CLAVE ---
 
 	// 5) Actualizar sync_log con el timestamp actual
-	now := time.Now().UTC()
-	_, err = txLocal.ExecContext(ctx, "INSERT INTO sync_log(model_name, last_sync_timestamp) VALUES (?, ?) ON CONFLICT(model_name) DO UPDATE SET last_sync_timestamp = ?", tableName, now, now)
+	_, err = txLocal.ExecContext(ctx, "INSERT INTO sync_log(model_name, last_sync_timestamp) VALUES (?, ?) ON CONFLICT(model_name) DO UPDATE SET last_sync_timestamp = ?", tableName, syncStartTime, syncStartTime)
 	if err != nil {
 		d.Log.Errorf("[%s] Error actualizando sync_log local: %v", tableName, err)
 	}
@@ -315,15 +316,19 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 
 	// --- Sincronizar Facturas ---
 	var ultimaFacturaLocal time.Time
-	var ultimaFacturaNull sql.NullTime
+	var ultimaFacturaStr sql.NullString
 
-	err = tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM facturas").Scan(&ultimaFacturaNull)
+	err = tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM facturas").Scan(&ultimaFacturaStr)
 	if err != nil {
 		return fmt.Errorf("error al obtener la última factura local: %w", err)
 	}
 
-	if ultimaFacturaNull.Valid {
-		ultimaFacturaLocal = ultimaFacturaNull.Time
+	if ultimaFacturaStr.Valid && ultimaFacturaStr.String != "" {
+		parsedTime, parseErr := parseFlexibleTime(ultimaFacturaStr.String)
+		if parseErr != nil {
+			return fmt.Errorf("error al parsear fecha de última factura local '%s': %w", ultimaFacturaStr.String, parseErr)
+		}
+		ultimaFacturaLocal = parsedTime
 	} else {
 		ultimaFacturaLocal = time.Unix(0, 0)
 	}
@@ -361,15 +366,19 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 
 	// --- Sincronizar Compras ---
 	var ultimaCompraLocal time.Time
-	var ultimaCompraNull sql.NullTime
+	var ultimaCompraStr sql.NullString
 
-	err = tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM compras").Scan(&ultimaCompraNull)
+	err = tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM compras").Scan(&ultimaCompraStr)
 	if err != nil {
 		return fmt.Errorf("error al obtener la última compra local: %w", err)
 	}
 
-	if ultimaCompraNull.Valid {
-		ultimaCompraLocal = ultimaCompraNull.Time
+	if ultimaCompraStr.Valid && ultimaCompraStr.String != "" {
+		parsedTime, parseErr := parseFlexibleTime(ultimaCompraStr.String)
+		if parseErr != nil {
+			return fmt.Errorf("error al parsear fecha de última factura local '%s': %w", ultimaFacturaStr.String, parseErr)
+		}
+		ultimaCompraLocal = parsedTime
 	} else {
 		ultimaCompraLocal = time.Unix(0, 0)
 	}
@@ -897,4 +906,23 @@ func (d *Db) sanitizeRow(tableName string, cols []string, values []interface{}) 
 	}
 
 	return nil
+}
+
+func parseFlexibleTime(dateStr string) (time.Time, error) {
+	layouts := []string{
+		"2006-01-02 15:04:05.999999-07:00", // Formato de SQLite con zona horaria
+		"2006-01-02 15:04:05.999999Z07:00", // Formato común de PostgreSQL (UTC)
+		"2006-01-02 15:04:05",              // Formato sin microsegundos ni zona horaria
+		time.RFC3339,
+		time.RFC3339Nano,
+	}
+
+	for _, layout := range layouts {
+		parsedTime, err := time.Parse(layout, dateStr)
+		if err == nil {
+			return parsedTime, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("no se pudo parsear la fecha '%s' con ninguno de los formatos conocidos", dateStr)
 }
