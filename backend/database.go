@@ -370,15 +370,34 @@ func (d *Db) AutoMigrate() error {
 			FOREIGN KEY (producto_id) REFERENCES productos (id)
 		);
 		CREATE TABLE IF NOT EXISTS facturas (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, numero_factura TEXT UNIQUE NOT NULL, fecha_emision DATETIME, vendedor_id INTEGER,
-			cliente_id INTEGER, subtotal REAL, iva REAL, total REAL, estado TEXT, metodo_pago TEXT,
-			created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL,
-			FOREIGN KEY (vendedor_id) REFERENCES vendedors (id), FOREIGN KEY (cliente_id) REFERENCES clientes (id)
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			numero_factura TEXT UNIQUE NOT NULL,
+			fecha_emision DATETIME,
+			vendedor_id INTEGER,
+			cliente_id INTEGER,
+			subtotal REAL,
+			iva REAL,
+			total REAL,
+			estado TEXT,
+			metodo_pago TEXT,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			FOREIGN KEY (vendedor_id) REFERENCES vendedors (id),
+			FOREIGN KEY (cliente_id) REFERENCES clientes (id)
 		);
 		CREATE TABLE IF NOT EXISTS detalle_facturas (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, factura_id INTEGER, producto_id INTEGER, cantidad INTEGER,
-			precio_unitario REAL, precio_total REAL,
-			FOREIGN KEY (factura_id) REFERENCES facturas (id), FOREIGN KEY (producto_id) REFERENCES productos (id)
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			deleted_at DATETIME,
+			factura_id INTEGER,
+			producto_id INTEGER,
+			cantidad INTEGER,
+			precio_unitario REAL,
+			precio_total REAL,
+			FOREIGN KEY (factura_id) REFERENCES facturas (id),
+			FOREIGN KEY (producto_id) REFERENCES productos (id),
+			UNIQUE (factura_id, producto_id)
 		);
 		CREATE TABLE IF NOT EXISTS compras (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, fecha DATETIME, proveedor_id INTEGER, factura_numero TEXT,

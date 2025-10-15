@@ -128,11 +128,11 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		})
 	}
 	factura.Subtotal, factura.IVA, factura.Total = subtotal, 0, subtotal
-
 	// 3. Insertar la factura y obtener el ID.
-	res, err := tx.Exec(
-		"INSERT INTO facturas (numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		factura.NumeroFactura, factura.FechaEmision, factura.VendedorID, factura.ClienteID, factura.Subtotal, factura.IVA, factura.Total, factura.Estado, factura.MetodoPago,
+	var timestamp = time.Now()
+	res, err := tx.ExecContext(d.ctx,
+		"INSERT INTO facturas (numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		factura.NumeroFactura, factura.FechaEmision, factura.VendedorID, factura.ClienteID, factura.Subtotal, factura.IVA, factura.Total, factura.Estado, factura.MetodoPago, timestamp, timestamp,
 	)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error al crear la factura: %w", err)
@@ -144,13 +144,13 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	factura.ID = uint(facturaID)
 
 	// 4. Insertar masivamente los detalles y las operaciones de stock.
-	stmtDetalles, err := tx.Prepare("INSERT INTO detalle_facturas (factura_id, producto_id, cantidad, precio_unitario, precio_total) VALUES (?, ?, ?, ?, ?)")
+	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return Factura{}, err
 	}
 	defer stmtDetalles.Close()
 	for _, detalle := range detallesFactura {
-		_, err := stmtDetalles.Exec(factura.ID, detalle.ProductoID, detalle.Cantidad, detalle.PrecioUnitario, detalle.PrecioTotal)
+		_, err := stmtDetalles.ExecContext(d.ctx, factura.ID, detalle.ProductoID, detalle.Cantidad, detalle.PrecioUnitario, detalle.PrecioTotal, timestamp, timestamp)
 		if err != nil {
 			return Factura{}, fmt.Errorf("error al crear detalle de factura: %w", err)
 		}

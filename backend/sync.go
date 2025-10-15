@@ -371,6 +371,47 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 		d.Log.Infof("Sincronizadas %d nuevas facturas a local.", facturaCount)
 	}
 
+	var ultimoDetalleFacturaLocal time.Time
+	var ultimoDetalleFacturaStr sql.NullString
+	if err := tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM detalle_facturas").Scan(&ultimoDetalleFacturaStr); err != nil {
+		return fmt.Errorf("error al obtener el último detalle de factura local: %w", err)
+	}
+	if ultimoDetalleFacturaStr.Valid && ultimoDetalleFacturaStr.String != "" {
+		if parsedTime, parseErr := parseFlexibleTime(ultimoDetalleFacturaStr.String); parseErr == nil {
+			ultimoDetalleFacturaLocal = parsedTime
+		}
+	}
+
+	detallesFacturaQuery := `SELECT id, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at FROM detalle_facturas WHERE created_at > $1`
+	detalleFacturaRows, err := d.RemoteDB.Query(ctx, detallesFacturaQuery, ultimoDetalleFacturaLocal)
+	if err != nil {
+		return fmt.Errorf("error obteniendo detalles de factura remotos: %w", err)
+	}
+	defer detalleFacturaRows.Close()
+
+	detalleFacturaStmt, err := tx.PrepareContext(ctx, `INSERT INTO detalle_facturas (id, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
+	if err != nil {
+		return fmt.Errorf("error al preparar statement de detalles de factura: %w", err)
+	}
+	defer detalleFacturaStmt.Close()
+
+	detalleFacturaCount := 0
+	for detalleFacturaRows.Next() {
+		var df DetalleFactura
+		if err := detalleFacturaRows.Scan(&df.ID, &df.FacturaID, &df.ProductoID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
+			d.Log.Errorf("Error al escanear detalle de factura remoto: %v", err)
+			continue
+		}
+		if _, err := detalleFacturaStmt.ExecContext(ctx, df.ID, df.FacturaID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt); err != nil {
+			d.Log.Errorf("Error al insertar detalle de factura local: %v", err)
+			continue
+		}
+		detalleFacturaCount++
+	}
+	if detalleFacturaCount > 0 {
+		d.Log.Infof("Sincronizados %d nuevos detalles de factura a local.", detalleFacturaCount)
+	}
+
 	// --- Sincronizar Compras ---
 	var ultimaCompraLocal time.Time
 	var ultimaCompraStr sql.NullString
@@ -587,18 +628,36 @@ func (d *Db) syncVentaToRemote(id uint) {
 	}
 	// Reinsertar detalles
 	if len(f.Detalles) > 0 {
-		_, err := rtx.CopyFrom(d.ctx,
-			pgx.Identifier{"detalle_facturas"},
-			[]string{"factura_id", "producto_id", "cantidad", "precio_unitario", "precio_total"},
-			pgx.CopyFromSlice(len(f.Detalles), func(i int) ([]interface{}, error) {
-				det := f.Detalles[i]
-				return []interface{}{int64(f.ID), int64(det.ProductoID), det.Cantidad, det.PrecioUnitario, det.PrecioTotal}, nil
-			}),
-		)
-		if err != nil {
-			d.Log.Errorf("syncVentaToRemote: error reinsertando detalles en remoto: %v", err)
-			return
+		batch := &pgx.Batch{}
+		upsertDetalleSQL := `
+			INSERT INTO detalle_facturas (factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (factura_id, producto_id) DO UPDATE SET
+				cantidad = EXCLUDED.cantidad,
+				precio_unitario = EXCLUDED.precio_unitario,
+				precio_total = EXCLUDED.precio_total,
+				updated_at = EXCLUDED.updated_at;
+		`
+
+		for _, det := range f.Detalles {
+			createdAt := det.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = f.CreatedAt
+			} // Fallback a la fecha de la factura
+			updatedAt := det.UpdatedAt
+			if updatedAt.IsZero() {
+				updatedAt = f.UpdatedAt
+			} // Fallback a la fecha de la factura
+
+			batch.Queue(upsertDetalleSQL, f.ID, det.ProductoID, det.Cantidad, det.PrecioUnitario, det.PrecioTotal, createdAt, updatedAt)
 		}
+
+		br := rtx.SendBatch(d.ctx, batch)
+		if err := br.Close(); err != nil {
+			d.Log.Errorf("syncVentaToRemote: error ejecutando batch de detalles para factura %d: %v", f.ID, err)
+			return // Detenemos la sincronización si los detalles fallan
+		}
+		d.Log.Infof("syncVentaToRemote: Batch de %d detalles procesado para factura %d.", len(f.Detalles), f.ID)
 	}
 
 	// Sincronizar las operaciones de stock asociadas (si existen) desde local -> remoto
