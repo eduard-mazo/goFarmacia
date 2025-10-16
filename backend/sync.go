@@ -227,7 +227,7 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 	d.Log.Info("[SINCRONIZANDO]: Operaciones de Stock desde Local -> Remoto")
 	query := `SELECT id, uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp
-              FROM operacion_stocks WHERE sincronizado = 0 AND factura_id IS NULL`
+              FROM operacion_stocks WHERE sincronizado = 0`
 
 	rows, err := d.LocalDB.QueryContext(d.ctx, query)
 	if err != nil {
@@ -263,13 +263,13 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 		return nil
 	}
 
-	tx, err := d.RemoteDB.Begin(d.ctx)
+	rtx, err := d.RemoteDB.Begin(d.ctx)
 	if err != nil {
 		return fmt.Errorf("no se pudo iniciar la transacción remota: %w", err)
 	}
-	defer tx.Rollback(d.ctx)
+	defer rtx.Rollback(d.ctx)
 
-	_, err = tx.CopyFrom(d.ctx,
+	_, err = rtx.CopyFrom(d.ctx,
 		pgx.Identifier{"operacion_stocks"},
 		[]string{"uuid", "producto_id", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_id", "factura_id", "timestamp"},
 		pgx.CopyFromSlice(len(ops), func(i int) ([]interface{}, error) {
@@ -277,10 +277,11 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 			return []interface{}{o.UUID, o.ProductoID, o.TipoOperacion, o.CantidadCambio, o.StockResultante, o.VendedorID, o.FacturaID, o.Timestamp}, nil
 		}),
 	)
-	if err != nil && !strings.Contains(err.Error(), "duplicate key value") {
+	if err != nil && !strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
 		return fmt.Errorf("error en inserción masiva de operaciones de stock: %w", err)
 	}
 
+	// Forzar la recalculación del stock en el servidor remoto para los productos afectados.
 	idsAfectados := make([]uint, 0, len(productosAfectados))
 	for id := range productosAfectados {
 		idsAfectados = append(idsAfectados, id)
@@ -295,20 +296,21 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 		UPDATE productos p SET stock = sc.nuevo_stock
 		FROM stock_calculado sc WHERE p.id = sc.producto_id;`
 
-	if _, err := tx.Exec(d.ctx, updateStockCacheSQL, idsAfectados); err != nil {
+	if _, err := rtx.Exec(d.ctx, updateStockCacheSQL, idsAfectados); err != nil {
 		return fmt.Errorf("error al actualizar la caché de stock remota: %w", err)
 	}
 
-	if err := tx.Commit(d.ctx); err != nil {
+	if err := rtx.Commit(d.ctx); err != nil {
 		return fmt.Errorf("error al confirmar la transacción de operaciones de stock remotas: %w", err)
 	}
 
+	// Marcar las operaciones como sincronizadas en la base de datos local
 	updateLocalSQL := fmt.Sprintf("UPDATE operacion_stocks SET sincronizado = 1 WHERE id IN (%s)", joinInt64s(localIDsToUpdate))
 	if _, err := d.LocalDB.ExecContext(d.ctx, updateLocalSQL); err != nil {
 		return fmt.Errorf("error al marcar operaciones como sincronizadas localmente: %w", err)
 	}
 
-	d.Log.Infof("Sincronizadas %d operaciones de stock hacia el remoto. Stock remoto actualizado para %d productos.", len(ops), len(idsAfectados))
+	d.Log.Infof("Sincronizadas %d operaciones de stock. Stock remoto actualizado para %d productos.", len(ops), len(idsAfectados))
 	return nil
 }
 
@@ -546,12 +548,13 @@ func (d *Db) syncProductoToRemote(id uint) {
 			precio_venta = EXCLUDED.precio_venta,
 			updated_at = EXCLUDED.updated_at, 
 			deleted_at = EXCLUDED.deleted_at;`
+
 	_, err = d.RemoteDB.Exec(d.ctx, upsertSQL, p.ID, p.CreatedAt, p.UpdatedAt, p.DeletedAt, p.Nombre, p.Codigo, p.PrecioVenta)
 	if err != nil {
-		d.Log.Errorf("Error en UPSERT de producto (sin stock) remoto ID %d: %v", id, err)
+		d.Log.Errorf("Error en UPSERT de datos maestros del producto remoto ID %d: %v", id, err)
 		return
 	}
-	d.Log.Infof("Sincronizado datos maestros del producto ID %d hacia el remoto. El stock se sincronizará por separado.", id)
+	d.Log.Infof("Sincronizado datos maestros del producto ID %d. El stock se calculará por separado.", id)
 }
 
 func (d *Db) syncProveedorToRemote(id uint) {
