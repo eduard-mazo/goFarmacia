@@ -170,7 +170,10 @@ func (d *Db) ImprimirRecibo(factura Factura) error {
 	if err := send(left()); err != nil {
 		return err
 	}
-	if err := sendEncoded(fmt.Sprintf("Cliente: %s %s", factura.Cliente.NumeroID, factura.Cliente.Apellido)); err != nil {
+	if err := sendEncoded(fmt.Sprintf("Cliente: %s %s", factura.Cliente.Nombre, factura.Cliente.Apellido)); err != nil {
+		return err
+	}
+	if err := sendEncoded(fmt.Sprintf("Documento: %s", factura.Cliente.NumeroID)); err != nil {
 		return err
 	}
 	if err := send(lineBreak()); err != nil {
