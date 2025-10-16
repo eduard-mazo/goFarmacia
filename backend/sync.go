@@ -227,7 +227,7 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 	d.Log.Info("[SINCRONIZANDO]: Operaciones de Stock desde Local -> Remoto")
 	query := `SELECT id, uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp
-              FROM operacion_stocks WHERE sincronizado = 0`
+              FROM operacion_stocks WHERE sincronizado = 0 AND factura_id IS NULL`
 
 	rows, err := d.LocalDB.QueryContext(d.ctx, query)
 	if err != nil {
@@ -531,26 +531,27 @@ func (d *Db) syncProductoToRemote(id uint) {
 		return
 	}
 	var p Producto
-	query := `SELECT id, created_at, updated_at, deleted_at, nombre, codigo, precio_venta, stock FROM productos WHERE id = ?`
-	err := d.LocalDB.QueryRowContext(d.ctx, query, id).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.Nombre, &p.Codigo, &p.PrecioVenta, &p.Stock)
+	query := `SELECT id, created_at, updated_at, deleted_at, nombre, codigo, precio_venta FROM productos WHERE id = ?`
+	err := d.LocalDB.QueryRowContext(d.ctx, query, id).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.Nombre, &p.Codigo, &p.PrecioVenta)
 	if err != nil {
 		d.Log.Errorf("syncProductoToRemote: no se encontró producto local ID %d: %v", id, err)
 		return
 	}
 
 	upsertSQL := `
-		INSERT INTO productos (id, created_at, updated_at, deleted_at, nombre, codigo, precio_venta, stock)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO productos (id, created_at, updated_at, deleted_at, nombre, codigo, precio_venta)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (codigo) DO UPDATE SET
-			nombre = EXCLUDED.nombre, precio_venta = EXCLUDED.precio_venta, stock = EXCLUDED.stock,
-			updated_at = EXCLUDED.updated_at, deleted_at = EXCLUDED.deleted_at;`
-
-	_, err = d.RemoteDB.Exec(d.ctx, upsertSQL, p.ID, p.CreatedAt, p.UpdatedAt, p.DeletedAt, p.Nombre, p.Codigo, p.PrecioVenta, p.Stock)
+			nombre = EXCLUDED.nombre, 
+			precio_venta = EXCLUDED.precio_venta,
+			updated_at = EXCLUDED.updated_at, 
+			deleted_at = EXCLUDED.deleted_at;`
+	_, err = d.RemoteDB.Exec(d.ctx, upsertSQL, p.ID, p.CreatedAt, p.UpdatedAt, p.DeletedAt, p.Nombre, p.Codigo, p.PrecioVenta)
 	if err != nil {
-		d.Log.Errorf("Error en UPSERT de producto remoto ID %d: %v", id, err)
+		d.Log.Errorf("Error en UPSERT de producto (sin stock) remoto ID %d: %v", id, err)
 		return
 	}
-	d.Log.Infof("Sincronizado producto individual ID %d hacia el remoto.", id)
+	d.Log.Infof("Sincronizado datos maestros del producto ID %d hacia el remoto. El stock se sincronizará por separado.", id)
 }
 
 func (d *Db) syncProveedorToRemote(id uint) {
