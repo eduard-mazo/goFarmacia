@@ -2,7 +2,6 @@ package backend
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -35,128 +34,24 @@ func (d *Db) ResetearTodaLaData() (string, error) {
 }
 
 func (d *Db) NormalizarStockMasivo() (string, error) {
-	d.Log.Info("INICIANDO: Proceso de Normalización Masiva de Stock.")
+	d.Log.Info("INICIANDO: Proceso de Normalización Masiva (Remoto es la Verdad).")
 
-	// --- PASO 1: NORMALIZACIÓN LOCAL ---
-	d.Log.Info("[Paso 1/4] Realizando normalización en la base de datos local...")
-	ctx := d.ctx
-	tx, err := d.LocalDB.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("error al iniciar la transacción local: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Obtener todos los productos para asegurar que todos sean procesados.
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM productos WHERE deleted_at IS NULL")
-	if err != nil {
-		return "", fmt.Errorf("error al obtener IDs de productos: %w", err)
-	}
-
-	var productoIDs []uint
-	for rows.Next() {
-		var id uint
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return "", fmt.Errorf("error al escanear ID de producto: %w", err)
-		}
-		productoIDs = append(productoIDs, id)
-	}
-	rows.Close() // Es importante cerrar las filas antes de continuar con la transacción.
-
-	d.Log.Infof("Se normalizará el stock local para %d productos.", len(productoIDs))
-
-	for _, id := range productoIDs {
-		// Esta función ya calcula la suma de 'operacion_stocks' y actualiza 'productos.stock'.
-		if err := RecalcularYActualizarStock(tx, id); err != nil {
-			return "", fmt.Errorf("error al recalcular stock local para el producto ID %d: %w", id, err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("error al confirmar la transacción de normalización local: %w", err)
-	}
-	d.Log.Info("[Paso 1/4] Normalización local completada con éxito.")
-
-	// --- PASO 2: SINCRONIZAR FACTURAS (NUEVO Y CRÍTICO) ---
-	d.Log.Info("[Paso 2/4] Sincronizando todas las facturas para resolver dependencias...")
-	if err := d.sincronizarTodasLasFacturasHaciaRemoto(); err != nil {
-		return "", fmt.Errorf("falló la sincronización de facturas: %w", err)
-	}
-	d.Log.Info("[Paso 2/4] Sincronización de facturas completada.")
-
-	// --- PASO 3: FORZAR SINCRONIZACIÓN DE OPERACIONES ---
-	d.Log.Info("[Paso 3/4] Forzando sincronización de TODAS las operaciones de stock hacia el remoto...")
-	if err := d.SincronizarTodasLasOperacionesHaciaRemoto(); err != nil {
-		return "", fmt.Errorf("falló la sincronización forzada de operaciones: %w", err)
-	}
-	d.Log.Info("[Paso 3/4] Sincronización de operaciones completada.")
-
-	// --- PASO 4: FORZAR RECALCULACIÓN REMOTA ---
-	d.Log.Info("[Paso 4/4] Forzando recálculo de stock en el servidor remoto...")
+	// --- PASO 1: RECALCULAR TODO EN EL REMOTO ---
+	d.Log.Info("[Paso 1/2] Forzando recálculo de stock en el servidor remoto...")
 	if err := d.RecalcularStockRemotoParaTodosLosProductos(); err != nil {
 		return "", fmt.Errorf("falló la recalculación remota del stock: %w", err)
 	}
-	d.Log.Info("[Paso 4/4] Recálculo remoto completado.")
+	d.Log.Info("[Paso 1/2] Recálculo remoto completado.")
+
+	// --- PASO 2: FORZAR A LA BD LOCAL A SER UN ESPEJO DEL REMOTO ---
+	d.Log.Info("[Paso 2/2] Borrando datos locales y descargando el estado correcto desde el remoto...")
+	if err := d.ForzarResincronizacionLocalDesdeRemoto(); err != nil {
+		return "", fmt.Errorf("falló la resincronización forzada local: %w", err)
+	}
+	d.Log.Info("[Paso 2/2] Resincronización local completada.")
 
 	d.Log.Info("ÉXITO: Normalización Masiva de Stock completada.")
-	return "Stock normalizado y sincronizado con éxito.", nil
-}
-
-func (d *Db) sincronizarTodasLasFacturasHaciaRemoto() error {
-	if !d.isRemoteDBAvailable() {
-		return errors.New("base de datos remota no disponible")
-	}
-
-	rows, err := d.LocalDB.QueryContext(d.ctx, `
-		SELECT id, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at
-		FROM facturas
-	`)
-	if err != nil {
-		return fmt.Errorf("error al leer facturas locales: %w", err)
-	}
-	defer rows.Close()
-
-	var facturas []Factura
-	for rows.Next() {
-		var f Factura
-		if err := rows.Scan(&f.ID, &f.NumeroFactura, &f.FechaEmision, &f.VendedorID, &f.ClienteID, &f.Subtotal, &f.IVA, &f.Total, &f.Estado, &f.MetodoPago, &f.CreatedAt, &f.UpdatedAt); err != nil {
-			d.Log.Warnf("Omitiendo factura con error de escaneo: %v", err)
-			continue
-		}
-		facturas = append(facturas, f)
-	}
-
-	if len(facturas) == 0 {
-		return nil
-	}
-
-	rtx, err := d.RemoteDB.Begin(d.ctx)
-	if err != nil {
-		return err
-	}
-	defer rtx.Rollback(d.ctx)
-
-	batch := &pgx.Batch{}
-	upsertSQL := `
-		INSERT INTO facturas (id, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		ON CONFLICT (id) DO UPDATE SET
-			numero_factura = EXCLUDED.numero_factura,
-			fecha_emision = EXCLUDED.fecha_emision,
-			total = EXCLUDED.total,
-			estado = EXCLUDED.estado,
-			updated_at = EXCLUDED.updated_at;
-	`
-	for _, f := range facturas {
-		batch.Queue(upsertSQL, f.ID, f.NumeroFactura, f.FechaEmision, f.VendedorID, f.ClienteID, f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt)
-	}
-
-	br := rtx.SendBatch(d.ctx, batch)
-	if err := br.Close(); err != nil {
-		return fmt.Errorf("error en batch de upsert de facturas: %w", err)
-	}
-
-	return rtx.Commit(d.ctx)
+	return "Stock normalizado. La base de datos local ahora es un espejo del servidor.", nil
 }
 
 // NUEVA FUNCIÓN DE AYUDA para forzar la subida de TODAS las operaciones

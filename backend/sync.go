@@ -42,9 +42,8 @@ func (d *Db) SincronizacionInteligente() {
 	}
 	d.Log.Info("Sincronización de datos maestros completada exitosamente.")
 
-	// Sincronizar operaciones de stock (fuente de verdad)
-	if err := d.SincronizarOperacionesStockHaciaRemoto(); err != nil {
-		d.Log.Errorf("Error sincronizando operaciones de stock hacia el remoto: %v", err)
+	if err := d.sincronizarOperacionesStockHaciaLocal(); err != nil {
+		d.Log.Errorf("Error sincronizando operaciones de stock hacia local: %v", err)
 	}
 
 	// Sincronizar transacciones
@@ -118,7 +117,11 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	if err != nil {
 		return fmt.Errorf("[%s] error iniciando tx local: %w", tableName, err)
 	}
-	defer txLocal.Rollback()
+	defer func() {
+		if err := txLocal.Rollback(); err != nil && err != sql.ErrTxDone {
+			d.Log.Errorf("[%s] error al deshacer la transacción local: %v", tableName, err)
+		}
+	}()
 
 	placeholders := strings.Repeat("?,", len(cols)-1) + "?"
 	updateAssignments := []string{}
@@ -224,14 +227,15 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 }
 
 // SincronizarOperacionesStockHaciaRemoto envía operaciones locales no sincronizadas al remoto.
-func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
+func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 	d.Log.Info("[SINCRONIZANDO]: Operaciones de Stock desde Local -> Remoto")
 	query := `SELECT id, uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp
               FROM operacion_stocks WHERE sincronizado = 0`
 
 	rows, err := d.LocalDB.QueryContext(d.ctx, query)
 	if err != nil {
-		return fmt.Errorf("error al obtener operaciones de stock locales: %w", err)
+		d.Log.Errorf("error al obtener operaciones de stock locales: %v", err)
+		return
 	}
 	defer rows.Close()
 
@@ -260,12 +264,13 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 
 	if len(ops) == 0 {
 		d.Log.Info("No se encontraron nuevas operaciones de stock locales para sincronizar.")
-		return nil
+		return
 	}
 
 	rtx, err := d.RemoteDB.Begin(d.ctx)
 	if err != nil {
-		return fmt.Errorf("no se pudo iniciar la transacción remota: %w", err)
+		d.Log.Errorf("no se pudo iniciar la transacción remota: %v", err)
+		return
 	}
 	defer rtx.Rollback(d.ctx)
 
@@ -278,7 +283,8 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 		}),
 	)
 	if err != nil && !strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
-		return fmt.Errorf("error en inserción masiva de operaciones de stock: %w", err)
+		d.Log.Errorf("error en inserción masiva de operaciones de stock: %v", err)
+		return
 	}
 
 	// Forzar la recalculación del stock en el servidor remoto para los productos afectados.
@@ -297,20 +303,53 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() error {
 		FROM stock_calculado sc WHERE p.id = sc.producto_id;`
 
 	if _, err := rtx.Exec(d.ctx, updateStockCacheSQL, idsAfectados); err != nil {
-		return fmt.Errorf("error al actualizar la caché de stock remota: %w", err)
+		d.Log.Errorf("error al actualizar la caché de stock remota: %v", err)
+		return
 	}
 
 	if err := rtx.Commit(d.ctx); err != nil {
-		return fmt.Errorf("error al confirmar la transacción de operaciones de stock remotas: %w", err)
+		d.Log.Errorf("error al confirmar la transacción de operaciones de stock remotas: %v", err)
+		return
 	}
 
 	// Marcar las operaciones como sincronizadas en la base de datos local
 	updateLocalSQL := fmt.Sprintf("UPDATE operacion_stocks SET sincronizado = 1 WHERE id IN (%s)", joinInt64s(localIDsToUpdate))
 	if _, err := d.LocalDB.ExecContext(d.ctx, updateLocalSQL); err != nil {
-		return fmt.Errorf("error al marcar operaciones como sincronizadas localmente: %w", err)
+		d.Log.Errorf("error al marcar operaciones como sincronizadas localmente: %v", err)
+		return
 	}
 
 	d.Log.Infof("Sincronizadas %d operaciones de stock. Stock remoto actualizado para %d productos.", len(ops), len(idsAfectados))
+}
+
+func (d *Db) ForzarResincronizacionLocalDesdeRemoto() error {
+	tx, err := d.LocalDB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// BORRÓN Y CUENTA NUEVA LOCAL
+	d.Log.Info("Limpiando tablas locales de stock y transacciones...")
+	if _, err := tx.Exec("DELETE FROM operacion_stocks"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM detalle_facturas"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM facturas"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM sync_log"); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Disparar una sincronización inteligente normal, que ahora descargará todo desde cero.
+	d.SincronizacionInteligente()
 	return nil
 }
 
@@ -855,33 +894,133 @@ func (d *Db) syncCompraToRemote(id uint) {
 	d.Log.Infof("Compra ID %d sincronizada correctamente al remoto.", id)
 }
 
-func (d *Db) syncVendedorToLocal(v Vendedor) error {
+func (d *Db) syncVendedorToLocal(v Vendedor) {
 	// upsert pattern for sqlite: try update, if rows affected==0 then insert
 	res, err := d.LocalDB.Exec("UPDATE vendedors SET nombre=?, apellido=?, cedula=?, email=?, contrasena=?, mfa_enabled=?, updated_at=? WHERE id=?", v.Nombre, v.Apellido, v.Cedula, v.Email, v.Contrasena, v.MFAEnabled, time.Now(), v.ID)
 	if err != nil {
-		return err
+		d.Log.Errorf("syncVendedorToLocal: error updating local vendedor ID %d: %v", v.ID, err)
+		return
 	}
 	r, _ := res.RowsAffected()
 	if r == 0 {
 		_, err = d.LocalDB.Exec("INSERT INTO vendedors (id, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", v.ID, v.Nombre, v.Apellido, v.Cedula, v.Email, v.Contrasena, v.MFAEnabled, time.Now(), time.Now())
 		if err != nil {
-			return err
+			d.Log.Errorf("syncVendedorToLocal: error inserting local vendedor ID %d: %v", v.ID, err)
+			return
 		}
 	}
-	return nil
 }
 
-// Helpers:
+func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
+	d.Log.Info("[SINCRONIZANDO]: Descargando nuevas Operaciones de Stock desde Remoto -> Local")
+	ctx := d.ctx
 
-func (d *Db) calcularStockRealLocal(productoID uint) int {
-	var stockCalculado int
-	query := "SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_id = ?"
-	err := d.LocalDB.QueryRowContext(d.ctx, query, productoID).Scan(&stockCalculado)
-	if err != nil {
-		d.Log.Errorf("Error al calcular stock real local para producto ID %d: %v", productoID, err)
-		return 0
+	// 1. Encontrar la operación más reciente que tenemos localmente para saber desde dónde pedir.
+	var lastSync time.Time
+	var lastSyncStr sql.NullString
+	err := d.LocalDB.QueryRowContext(ctx, "SELECT MAX(timestamp) FROM operacion_stocks").Scan(&lastSyncStr)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("error obteniendo el último timestamp local de op. stock: %w", err)
 	}
-	return stockCalculado
+
+	if lastSyncStr.Valid && lastSyncStr.String != "" {
+		// Usamos la función flexible que ya creamos para parsear la fecha de SQLite.
+		if parsedTime, parseErr := parseFlexibleTime(lastSyncStr.String); parseErr == nil {
+			lastSync = parsedTime
+		}
+	}
+	// Si lastSync sigue en su valor cero, se descargarán todas las operaciones.
+
+	// 2. Pedir al remoto (Postgres) todas las operaciones más nuevas que la última que tenemos.
+	remoteOpsQuery := `
+		SELECT uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp 
+		FROM operacion_stocks 
+		WHERE timestamp > $1 
+		ORDER BY timestamp ASC`
+	rows, err := d.RemoteDB.Query(ctx, remoteOpsQuery, lastSync)
+	if err != nil {
+		return fmt.Errorf("error obteniendo operaciones de stock remotas: %w", err)
+	}
+	defer rows.Close()
+
+	var newOps []OperacionStock
+	productosAfectados := make(map[uint]bool)
+
+	for rows.Next() {
+		var op OperacionStock
+		var stockResultante sql.NullInt64
+		var facturaID sql.NullInt64
+
+		err := rows.Scan(
+			&op.UUID,
+			&op.ProductoID,
+			&op.TipoOperacion,
+			&op.CantidadCambio,
+			&stockResultante,
+			&op.VendedorID,
+			&facturaID,
+			&op.Timestamp,
+		)
+		if err != nil {
+			d.Log.Warnf("Error al escanear una operación de stock remota, omitiendo: %v", err)
+			continue
+		}
+
+		if stockResultante.Valid {
+			op.StockResultante = int(stockResultante.Int64)
+		}
+		if facturaID.Valid {
+			id := uint(facturaID.Int64)
+			op.FacturaID = &id
+		}
+
+		newOps = append(newOps, op)
+		productosAfectados[op.ProductoID] = true
+	}
+
+	if len(newOps) == 0 {
+		d.Log.Info("La base de datos local de operaciones de stock ya está actualizada.")
+		return nil
+	}
+
+	// 3. Insertar las nuevas operaciones en la base de datos local (SQLite) en una única transacción.
+	tx, err := d.LocalDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error al iniciar transacción local para op. stock: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO operacion_stocks (uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp, sincronizado)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(uuid) DO NOTHING`)
+	if err != nil {
+		return fmt.Errorf("error al preparar statement local de op. stock: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, op := range newOps {
+		_, err := stmt.ExecContext(ctx, op.UUID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorID, op.FacturaID, op.Timestamp)
+		if err != nil {
+			// Logueamos el error pero intentamos continuar con las demás operaciones.
+			d.Log.Errorf("Error al insertar op. stock local (UUID: %s): %v", op.UUID, err)
+		}
+	}
+
+	// 4. Recalcular el stock local para todos los productos que recibieron nuevos movimientos.
+	d.Log.Infof("Recalculando stock local para %d productos afectados...", len(productosAfectados))
+	for id := range productosAfectados {
+		if err := RecalcularYActualizarStock(tx, id); err != nil {
+			// Este error es importante, si falla el recálculo, el stock local quedará inconsistente.
+			d.Log.Errorf("CRÍTICO: Error al recalcular stock local para producto %d tras sincronización: %v. Se intentará continuar.", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("error al confirmar la transacción de sincronización de op. stock: %w", err)
+	}
+
+	d.Log.Infof("Sincronizadas %d nuevas operaciones de stock desde el remoto. Stock local actualizado.", len(newOps))
+	return nil
 }
 
 func joinInt64s(nums []int64) string {

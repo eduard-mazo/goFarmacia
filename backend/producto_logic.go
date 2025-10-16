@@ -44,7 +44,7 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 			producto.ID = existente.ID
 			producto.Stock = 0
 		} else {
-			return Producto{}, errors.New("el código del producto ya está en uso")
+			return Producto{}, fmt.Errorf("el código del producto ya está en uso")
 		}
 
 	case errors.Is(err, sql.ErrNoRows):
@@ -115,7 +115,7 @@ func (d *Db) EliminarProducto(id uint) error {
 // ActualizarProducto modifica los datos de un producto existente.
 func (d *Db) ActualizarProducto(p Producto) (string, error) {
 	if p.ID == 0 {
-		return "", errors.New("se requiere un ID de producto válido para actualizar")
+		return "", fmt.Errorf("se requiere un ID de producto válido para actualizar")
 	}
 
 	tx, err := d.LocalDB.Begin()
@@ -138,7 +138,7 @@ func (d *Db) ActualizarProducto(p Producto) (string, error) {
 		SET nombre = ?, precio_venta = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`
-	if _, err := tx.Exec(update, p.Nombre, p.PrecioVenta, p.ID); err != nil {
+	if _, err := tx.ExecContext(d.ctx, update, p.Nombre, p.PrecioVenta, p.ID); err != nil {
 		return "", fmt.Errorf("error al actualizar producto: %w", err)
 	}
 

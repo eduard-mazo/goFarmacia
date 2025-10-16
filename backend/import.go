@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -332,34 +331,4 @@ func validateHeaders(modelName string, headerMap map[string]int) error {
 		return fmt.Errorf("el archivo CSV no contiene los encabezados requeridos: [%s]", strings.Join(missingHeaders, ", "))
 	}
 	return nil
-}
-
-func getUniqueColumns(modelName string) []clause.Column {
-	switch modelName {
-	case "Vendedores":
-		return []clause.Column{{Name: "cedula"}}
-	case "Clientes":
-		return []clause.Column{{Name: "numero_id"}}
-	case "Productos":
-		return []clause.Column{{Name: "codigo"}}
-	case "Proveedores":
-		return []clause.Column{{Name: "nombre"}}
-	default:
-		return nil
-	}
-}
-
-func getUpdatableColumns(modelName string) []string {
-	switch modelName {
-	case "Vendedores":
-		return []string{"nombre", "apellido", "email", "contrasena", "updated_at", "deleted_at"}
-	case "Clientes":
-		return []string{"nombre", "apellido", "tipo_id", "telefono", "email", "direccion", "updated_at", "deleted_at"}
-	case "Productos":
-		return []string{"nombre", "precio_venta", "stock", "updated_at", "deleted_at"}
-	case "Proveedores":
-		return []string{"telefono", "email", "updated_at", "deleted_at"}
-	default:
-		return nil
-	}
 }

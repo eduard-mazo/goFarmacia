@@ -236,7 +236,7 @@ func (d *Db) initDB() {
 	d.Log.Info("Conección a la Base de datos local SQLite establecida.")
 
 	if err := d.AutoMigrate(); err != nil {
-		d.Log.Fatalf("Fallo al realizar AutoMigrate en Base de datos local SQLite: %w", err)
+		d.Log.Fatalf("Fallo al realizar AutoMigrate en Base de datos local SQLite: %v", err)
 	}
 	d.Log.Info("Base de datos local SQLite migrada correctamente.")
 	err = godotenv.Load()
@@ -269,7 +269,7 @@ func (d *Db) isRemoteDBAvailable() bool {
 }
 
 func (d *Db) NewLocalDB() (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:farmacia.db?_cache=shared&_journal_mode=WAL&_foreign_keys=1")
+	dsn := "file:farmacia.db?_cache=shared&_journal_mode=WAL&_foreign_keys=1"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
