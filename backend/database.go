@@ -353,8 +353,14 @@ func (d *Db) AutoMigrate() error {
 			email TEXT
 		);
 		CREATE TABLE IF NOT EXISTS productos (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT UNIQUE NOT NULL, nombre TEXT, precio_venta REAL,
-			stock INTEGER, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, deleted_at DATETIME
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			deleted_at DATETIME,
+			nombre TEXT,
+			codigo TEXT UNIQUE NOT NULL,
+			precio_venta REAL,
+			stock INTEGER
 		);
 		CREATE TABLE IF NOT EXISTS operacion_stocks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

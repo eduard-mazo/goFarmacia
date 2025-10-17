@@ -117,21 +117,35 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	if err != nil {
 		return fmt.Errorf("[%s] error iniciando tx local: %w", tableName, err)
 	}
-	defer func() {
-		if err := txLocal.Rollback(); err != nil && err != sql.ErrTxDone {
-			d.Log.Errorf("[%s] error al deshacer la transacción local: %v", tableName, err)
-		}
-	}()
+	defer txLocal.Rollback()
 
-	placeholders := strings.Repeat("?,", len(cols)-1) + "?"
 	updateAssignments := []string{}
-	for _, c := range cols {
-		if c != "id" {
-			updateAssignments = append(updateAssignments, fmt.Sprintf("%s=excluded.%s", c, c))
+	whereConditions := []string{}
+
+	for _, col := range cols {
+		if col != uniqueCol && col != "id" && col != "created_at" && col != "updated_at" {
+			updateAssignments = append(updateAssignments, fmt.Sprintf("%s = excluded.%s", col, col))
+			// Compara el valor actual de la tabla (main.<table>.<col>) con el valor "excluido" que se intentó insertar.
+			whereConditions = append(whereConditions, fmt.Sprintf("main.%s.%s IS NOT excluded.%s", tableName, col, col))
 		}
 	}
-	upsertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT(%s) DO UPDATE SET %s",
-		tableName, strings.Join(cols, ","), placeholders, uniqueCol, strings.Join(updateAssignments, ","))
+	// Siempre intentamos actualizar 'updated_at' si hay otros cambios.
+	updateAssignments = append(updateAssignments, "updated_at = excluded.updated_at")
+
+	placeholders := "?"
+	if len(cols) > 1 {
+		placeholders = strings.Repeat("?,", len(cols)-1) + "?"
+	}
+
+	// Consulta UPSERT con un WHERE condicional para evitar updates innecesarios.
+	upsertSQL := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s) ON CONFLICT(%s) DO UPDATE SET %s WHERE %s`,
+		tableName,
+		strings.Join(cols, ","),
+		placeholders,
+		uniqueCol,
+		strings.Join(updateAssignments, ", "),
+		strings.Join(whereConditions, " OR "), // El UPDATE solo se ejecuta si al menos un campo es diferente.
+	)
 
 	insStmt, err := txLocal.PrepareContext(ctx, upsertSQL)
 	if err != nil {
@@ -142,11 +156,15 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	// Procesar y aplicar cambios remotos a local
 	remoteRowCount := 0
 	for rows.Next() {
-		remoteRowCount++
+
 		rawVals := make([]interface{}, len(cols))
 		valPtrs := make([]interface{}, len(cols))
 		for i := range rawVals {
 			valPtrs[i] = &rawVals[i]
+		}
+
+		if remoteRowCount == 0 && len(rawVals) > 1 { // Loguear solo el primer registro para no inundar la consola
+			d.Log.Debugf("[%s] [LOG-1 Descarga] Procesando registro remoto: ID=%v, UniqueKey=%v, UpdatedAt=%v", tableName, rawVals[0], rawVals[1], rawVals[2])
 		}
 
 		if err := rows.Scan(valPtrs...); err != nil {
@@ -160,10 +178,16 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 			continue // Ignorar fila con datos críticos faltantes
 		}
 
-		if _, err := insStmt.ExecContext(ctx, rawVals...); err != nil {
-			d.Log.Errorf("[%s] Error en upsert de fila remota a local: %v", tableName, err)
+		res, err := insStmt.ExecContext(ctx, rawVals...)
+		if err != nil {
+			d.Log.Errorf("[%s] Error en UPSERT de fila remota a local: %v", tableName, err)
 			continue
 		}
+		if remoteRowCount == 0 {
+			rowsAffected, _ := res.RowsAffected()
+			d.Log.Debugf("[%s] [LOG-2 Resultado UPSERT] Filas afectadas por el primer registro: %d. (1 = Insertado/Actualizado, 0 = Ignorado)", tableName, rowsAffected)
+		}
+		remoteRowCount++
 	}
 	d.Log.Infof("[%s] Se recibieron y procesaron %d registros del servidor remoto.", tableName, remoteRowCount)
 
@@ -187,17 +211,22 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 
 	localChangesCount := 0
 	for localRows.Next() {
-		localChangesCount++
+
 		values := make([]interface{}, len(cols))
 		valPtrs := make([]interface{}, len(cols))
 		for i := range values {
 			valPtrs[i] = &values[i]
 		}
+		if remoteRowCount == 0 {
+			d.Log.Warnf("[%s] [LOG-3 Subida] Se encontró un registro local modificado para subir, lo cual no debería ocurrir en una sincronización inicial. UniqueKey: %v, UpdatedAt: %v", tableName, valPtrs[1], valPtrs[2])
+		}
+
 		if err := localRows.Scan(valPtrs...); err != nil {
 			d.Log.Errorf("[%s] Error escaneando fila local para push: %v", tableName, err)
 			continue
 		}
 		batch.Queue(remoteInsert, values...)
+		localChangesCount++
 	}
 
 	if localChangesCount > 0 {
@@ -228,9 +257,10 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 
 // SincronizarOperacionesStockHaciaRemoto envía operaciones locales no sincronizadas al remoto.
 func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
-	d.Log.Info("[SINCRONIZANDO]: Operaciones de Stock desde Local -> Remoto")
+	d.Log.Info("[SINCRONIZANDO]: Subiendo operaciones locales y recalculando stock remoto...")
+
 	query := `SELECT id, uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp
-              FROM operacion_stocks WHERE sincronizado = 0`
+			  FROM operacion_stocks WHERE sincronizado = 0`
 
 	rows, err := d.LocalDB.QueryContext(d.ctx, query)
 	if err != nil {
@@ -247,19 +277,26 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		var op OperacionStock
 		var localID int64
 		var stockResultante sql.NullInt64
+		var facturaID sql.NullInt64
 
-		if err := rows.Scan(&localID, &op.UUID, &op.ProductoID, &op.TipoOperacion, &op.CantidadCambio, &stockResultante, &op.VendedorID, &op.FacturaID, &op.Timestamp); err != nil {
-			d.Log.Errorf("Error al escanear operación de stock local: %v", err)
+		if err := rows.Scan(&localID, &op.UUID, &op.ProductoID, &op.TipoOperacion, &op.CantidadCambio, &stockResultante, &op.VendedorID, &facturaID, &op.Timestamp); err != nil {
+			d.Log.Warnf("Omitiendo operación de stock con error de escaneo: %v", err)
 			continue
 		}
-
 		if stockResultante.Valid {
 			op.StockResultante = int(stockResultante.Int64)
 		}
-
+		if facturaID.Valid {
+			id := uint(facturaID.Int64)
+			op.FacturaID = &id
+		}
 		ops = append(ops, op)
 		localIDsToUpdate = append(localIDsToUpdate, localID)
 		productosAfectados[op.ProductoID] = true
+	}
+	if err := rows.Err(); err != nil {
+		d.Log.Errorf("error al iterar sobre las operaciones locales: %v", err)
+		return
 	}
 
 	if len(ops) == 0 {
@@ -274,6 +311,7 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 	}
 	defer rtx.Rollback(d.ctx)
 
+	// 1. Subir las nuevas operaciones de stock.
 	_, err = rtx.CopyFrom(d.ctx,
 		pgx.Identifier{"operacion_stocks"},
 		[]string{"uuid", "producto_id", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_id", "factura_id", "timestamp"},
@@ -287,23 +325,23 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		return
 	}
 
-	// Forzar la recalculación del stock en el servidor remoto para los productos afectados.
+	// 2. CAMBIO CLAVE: Forzar la recalculación COMPLETA del stock en el servidor remoto.
 	idsAfectados := make([]uint, 0, len(productosAfectados))
 	for id := range productosAfectados {
 		idsAfectados = append(idsAfectados, id)
 	}
 
 	updateStockCacheSQL := `
-		WITH stock_calculado AS (
-			SELECT producto_id, SUM(cantidad_cambio) as nuevo_stock
-			FROM operacion_stocks
-			WHERE producto_id = ANY($1) GROUP BY producto_id
+		UPDATE productos p
+		SET stock = (
+			SELECT COALESCE(SUM(os.cantidad_cambio), 0)
+			FROM operacion_stocks os
+			WHERE os.producto_id = p.id
 		)
-		UPDATE productos p SET stock = sc.nuevo_stock
-		FROM stock_calculado sc WHERE p.id = sc.producto_id;`
-
+		WHERE p.id = ANY($1);
+	`
 	if _, err := rtx.Exec(d.ctx, updateStockCacheSQL, idsAfectados); err != nil {
-		d.Log.Errorf("error al actualizar la caché de stock remota: %v", err)
+		d.Log.Errorf("error al recalcular el stock remoto: %v", err)
 		return
 	}
 
@@ -312,14 +350,17 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		return
 	}
 
-	// Marcar las operaciones como sincronizadas en la base de datos local
-	updateLocalSQL := fmt.Sprintf("UPDATE operacion_stocks SET sincronizado = 1 WHERE id IN (%s)", joinInt64s(localIDsToUpdate))
-	if _, err := d.LocalDB.ExecContext(d.ctx, updateLocalSQL); err != nil {
-		d.Log.Errorf("error al marcar operaciones como sincronizadas localmente: %v", err)
-		return
+	// 3. Marcar como sincronizado localmente.
+	if len(localIDsToUpdate) > 0 {
+		updateQuery := fmt.Sprintf("UPDATE operacion_stocks SET sincronizado = 1 WHERE id IN (%s)", joinInt64s(localIDsToUpdate))
+		if _, err := d.LocalDB.ExecContext(d.ctx, updateQuery); err != nil {
+			d.Log.Errorf("error al marcar operaciones como sincronizadas: %v", err)
+			return
+		}
 	}
 
-	d.Log.Infof("Sincronizadas %d operaciones de stock. Stock remoto actualizado para %d productos.", len(ops), len(idsAfectados))
+	// 4. Devolver los IDs de los productos cuyo stock fue actualizado.
+	d.Log.Infof("Sincronizadas %d operaciones. IDs de productos actualizados en remoto: %v", len(ops), idsAfectados)
 }
 
 func (d *Db) ForzarResincronizacionLocalDesdeRemoto() error {
