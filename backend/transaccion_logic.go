@@ -282,17 +282,35 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 
 	// 1. Obtener la factura principal y los datos del cliente/vendedor
 	queryFactura := `
-		SELECT f.id, f.numero_factura, f.fecha_emision, f.subtotal, f.iva, f.total, f.estado, f.metodo_pago,
-			f.cliente_id, c.id, c.nombre, c.apellido, c.numero_id,
-			f.vendedor_id, v.id, v.nombre, v.apellido
-		FROM facturas f
-		JOIN clientes c ON f.cliente_id = c.id
-		JOIN vendedors v ON f.vendedor_id = v.id
-		WHERE f.id = ?
+					SELECT
+						f.id,
+						f.uuid,
+						f.numero_factura,
+						f.fecha_emision,
+						f.subtotal,
+						f.iva,
+						f.total,
+						f.estado,
+						f.metodo_pago,
+						f.cliente_id,
+						c.id,
+						c.nombre,
+						c.apellido,
+						c.numero_id,
+						f.vendedor_id,
+						v.id,
+						v.nombre,
+						v.apellido
+					FROM
+						facturas f
+						JOIN clientes c ON f.cliente_id = c.id
+						JOIN vendedors v ON f.vendedor_id = v.id
+					WHERE
+						f.id = ?
 	`
 	// Escaneamos los IDs y también los datos anidados para tener el objeto completo
 	err := d.LocalDB.QueryRow(queryFactura, facturaID).Scan(
-		&factura.ID, &factura.NumeroFactura, &factura.FechaEmision, &factura.Subtotal, &factura.IVA, &factura.Total, &factura.Estado, &factura.MetodoPago,
+		&factura.ID, &factura.UUID, &factura.NumeroFactura, &factura.FechaEmision, &factura.Subtotal, &factura.IVA, &factura.Total, &factura.Estado, &factura.MetodoPago,
 		&factura.ClienteID, &factura.Cliente.ID, &factura.Cliente.Nombre, &factura.Cliente.Apellido, &factura.Cliente.NumeroID,
 		&factura.VendedorID, &factura.Vendedor.ID, &factura.Vendedor.Nombre, &factura.Vendedor.Apellido,
 	)
@@ -305,7 +323,7 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 
 	// 2. Obtener los detalles de la factura (productos)
 	queryDetalles := `
-		SELECT d.id, d.cantidad, d.precio_unitario, d.precio_total,
+		SELECT d.id, d.uuid, d.cantidad, d.precio_unitario, d.precio_total,
 			p.id, p.codigo, p.nombre
 		FROM detalle_facturas d
 		JOIN productos p ON d.producto_id = p.id
@@ -322,7 +340,7 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	for rows.Next() {
 		var detalle DetalleFactura
 		err := rows.Scan(
-			&detalle.ID, &detalle.Cantidad, &detalle.PrecioUnitario, &detalle.PrecioTotal,
+			&detalle.ID, &detalle.UUID, &detalle.Cantidad, &detalle.PrecioUnitario, &detalle.PrecioTotal,
 			&detalle.Producto.ID, &detalle.Producto.Codigo, &detalle.Producto.Nombre,
 		)
 		if err != nil {

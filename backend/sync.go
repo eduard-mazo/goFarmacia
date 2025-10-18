@@ -694,18 +694,15 @@ func (d *Db) syncVentaToRemote(id uint) {
 	}
 	d.Log.Infof("Sincronizando venta individual ID %d hacia el remoto.", id)
 
-	// Obtener factura y detalles desde local
 	f, err := d.ObtenerDetalleFactura(id)
 	if err != nil {
 		d.Log.Errorf("syncVentaToRemote: no se pudo obtener factura local ID %d: %v", id, err)
 		return
 	}
 
-	// Asegurar Vendedor y Cliente en remoto
 	d.syncVendedorToRemote(f.VendedorID)
 	d.syncClienteToRemote(f.ClienteID)
 
-	// Abrir transacción remota
 	rtx, err := d.RemoteDB.Begin(d.ctx)
 	if err != nil {
 		d.Log.Errorf("syncVentaToRemote: no se pudo iniciar tx remota: %v", err)
@@ -720,7 +717,7 @@ func (d *Db) syncVentaToRemote(id uint) {
 			numero_factura = EXCLUDED.numero_factura, fecha_emision = EXCLUDED.fecha_emision, vendedor_id = EXCLUDED.vendedor_id,
 			cliente_id = EXCLUDED.cliente_id, subtotal = EXCLUDED.subtotal, iva = EXCLUDED.iva, total = EXCLUDED.total,
 			estado = EXCLUDED.estado, metodo_pago = EXCLUDED.metodo_pago, updated_at = EXCLUDED.updated_at
-        RETURNING id;
+		RETURNING id;
 	`
 	var remoteFacturaID int64
 	err = rtx.QueryRow(d.ctx, upsertFactura,
@@ -733,12 +730,10 @@ func (d *Db) syncVentaToRemote(id uint) {
 		return
 	}
 
-	// Borrar detalles existentes de esta factura en remoto (usando el ID remoto)
 	if _, err := rtx.Exec(d.ctx, "DELETE FROM detalle_facturas WHERE factura_id = $1", remoteFacturaID); err != nil {
 		d.Log.Errorf("syncVentaToRemote: error borrando detalles remotos: %v", err)
 		return
 	}
-	// Reinsertar detalles
 	if len(f.Detalles) > 0 {
 		batch := &pgx.Batch{}
 		upsertDetalleSQL := `
@@ -755,11 +750,11 @@ func (d *Db) syncVentaToRemote(id uint) {
 			createdAt := det.CreatedAt
 			if createdAt.IsZero() {
 				createdAt = f.CreatedAt
-			} // Fallback a la fecha de la factura
+			}
 			updatedAt := det.UpdatedAt
 			if updatedAt.IsZero() {
 				updatedAt = f.UpdatedAt
-			} // Fallback a la fecha de la factura
+			}
 
 			batch.Queue(upsertDetalleSQL, det.UUID, remoteFacturaID, det.ProductoID, det.Cantidad, det.PrecioUnitario, det.PrecioTotal, createdAt, updatedAt)
 		}
@@ -772,7 +767,6 @@ func (d *Db) syncVentaToRemote(id uint) {
 		d.Log.Infof("syncVentaToRemote: Batch de %d detalles procesado para factura %d.", len(f.Detalles), f.ID)
 	}
 
-	// Sincronizar las operaciones de stock asociadas (si existen) desde local -> remoto
 	opsRows, err := d.LocalDB.QueryContext(d.ctx, "SELECT uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp FROM operacion_stocks WHERE factura_id = ?", id)
 	if err == nil {
 		var localOps []OperacionStock
@@ -808,9 +802,7 @@ func (d *Db) syncVentaToRemote(id uint) {
 			)
 			if err != nil && !strings.Contains(err.Error(), "duplicate key") {
 				d.Log.Errorf("syncVentaToRemote: error copiando operacion_stocks a remoto: %v", err)
-				// no return; intentamos continuar con commit
 			}
-			// actualizar cache stock remoto para producto(s) de la factura
 			productoIDs := uniqueProductoIDsFromDetalles(f.Detalles)
 			if len(productoIDs) > 0 {
 				if _, err := rtx.Exec(d.ctx, `
