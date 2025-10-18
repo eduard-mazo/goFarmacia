@@ -404,123 +404,147 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	defer tx.Rollback()
 
 	// --- Sincronizar Facturas ---
-	var ultimaFacturaLocal time.Time
-	var ultimaFacturaStr sql.NullString
+	var lastFacturaID int64
 
-	err = tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM facturas").Scan(&ultimaFacturaStr)
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM facturas").Scan(&lastFacturaID)
 	if err != nil {
 		return fmt.Errorf("error al obtener la última factura local: %w", err)
 	}
 
-	if ultimaFacturaStr.Valid && ultimaFacturaStr.String != "" {
-		parsedTime, parseErr := parseFlexibleTime(ultimaFacturaStr.String)
-		if parseErr != nil {
-			return fmt.Errorf("error al parsear fecha de última factura local '%s': %w", ultimaFacturaStr.String, parseErr)
-		}
-		ultimaFacturaLocal = parsedTime
-	} else {
-		ultimaFacturaLocal = time.Unix(0, 0)
-	}
-
-	facturasRemotasQuery := `SELECT id, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at FROM facturas WHERE created_at > $1`
-	rows, err := d.RemoteDB.Query(ctx, facturasRemotasQuery, ultimaFacturaLocal)
+	facturasRemotasQuery := `
+		SELECT id, uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at 
+		FROM facturas 
+		WHERE id > $1 
+		ORDER BY id ASC
+	`
+	rows, err := d.RemoteDB.Query(ctx, facturasRemotasQuery, lastFacturaID)
 	if err != nil {
 		return fmt.Errorf("error obteniendo facturas remotas: %w", err)
 	}
 	defer rows.Close()
 
-	facturaStmt, err := tx.PrepareContext(ctx, `INSERT INTO facturas (id, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
+	facturaStmt, err := tx.PrepareContext(ctx, `
+	INSERT INTO
+		facturas (
+			id,
+			uuid,
+			numero_factura,
+			fecha_emision,
+			vendedor_id,
+			cliente_id,
+			subtotal,
+			iva,
+			total,
+			estado,
+			metodo_pago,
+			created_at,
+			updated_at
+		)
+	VALUES
+		(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (uuid) DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("error al preparar statement de facturas: %w", err)
 	}
 	defer facturaStmt.Close()
 
-	facturaCount := 0
+	var facturasParaInsertar []Factura
+	var facturaIDsRemotos []int64
 	for rows.Next() {
 		var f Factura
-		if err := rows.Scan(&f.ID, &f.NumeroFactura, &f.FechaEmision, &f.VendedorID, &f.ClienteID, &f.Subtotal, &f.IVA, &f.Total, &f.Estado, &f.MetodoPago, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		var uuidStr sql.NullString
+		if err := rows.Scan(&f.ID, &uuidStr, &f.NumeroFactura, &f.FechaEmision, &f.VendedorID, &f.ClienteID, &f.Subtotal, &f.IVA, &f.Total, &f.Estado, &f.MetodoPago, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			d.Log.Errorf("Error al escanear factura remota: %v", err)
 			continue
 		}
-		_, err := facturaStmt.ExecContext(ctx, f.ID, f.NumeroFactura, f.FechaEmision, f.VendedorID, f.ClienteID, f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt)
+		if !uuidStr.Valid || uuidStr.String == "" {
+			d.Log.Warnf("Factura remota con ID %d tiene un UUID nulo o vacío y será ignorada.", f.ID)
+			continue
+		}
+		f.UUID = uuidStr.String
+		facturasParaInsertar = append(facturasParaInsertar, f)
+		facturaIDsRemotos = append(facturaIDsRemotos, int64(f.ID))
+	}
+	rows.Close() // Cerrar explícitamente antes de la siguiente consulta
+
+	if len(facturasParaInsertar) > 0 {
+		d.Log.Infof("Se encontraron %d nuevas facturas para sincronizar.", len(facturasParaInsertar))
+		facturaStmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO facturas (id, uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (uuid) DO NOTHING`)
 		if err != nil {
-			d.Log.Errorf("Error al insertar factura local: %v", err)
-			continue
+			return fmt.Errorf("error al preparar statement de facturas: %w", err)
 		}
-		facturaCount++
-	}
-	if facturaCount > 0 {
-		d.Log.Infof("Sincronizadas %d nuevas facturas a local.", facturaCount)
-	}
+		defer facturaStmt.Close()
 
-	var ultimoDetalleFacturaLocal time.Time
-	var ultimoDetalleFacturaStr sql.NullString
-	if err := tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM detalle_facturas").Scan(&ultimoDetalleFacturaStr); err != nil {
-		return fmt.Errorf("error al obtener el último detalle de factura local: %w", err)
-	}
-	if ultimoDetalleFacturaStr.Valid && ultimoDetalleFacturaStr.String != "" {
-		if parsedTime, parseErr := parseFlexibleTime(ultimoDetalleFacturaStr.String); parseErr == nil {
-			ultimoDetalleFacturaLocal = parsedTime
+		for _, f := range facturasParaInsertar {
+			// **LA CORRECCIÓN CLAVE ESTÁ AQUÍ**: Añadimos f.UUID
+			_, err := facturaStmt.ExecContext(ctx, f.ID, f.UUID, f.NumeroFactura, f.FechaEmision, f.VendedorID, f.ClienteID, f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt)
+			if err != nil {
+				d.Log.Errorf("Error al insertar factura local (ID remoto: %d): %v", f.ID, err)
+			}
 		}
-	}
 
-	detallesFacturaQuery := `SELECT id, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at FROM detalle_facturas WHERE created_at > $1`
-	detalleFacturaRows, err := d.RemoteDB.Query(ctx, detallesFacturaQuery, ultimoDetalleFacturaLocal)
+		// --- Ahora obtenemos y sincronizamos los detalles para estas facturas ---
+		detallesFacturaQuery := `
+			SELECT id, uuid, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at 
+			FROM detalle_facturas 
+			WHERE factura_id = ANY($1)`
+		detalleRows, err := d.RemoteDB.Query(ctx, detallesFacturaQuery, facturaIDsRemotos)
+		if err != nil {
+			return fmt.Errorf("error obteniendo detalles de factura remotos: %w", err)
+		}
+		defer detalleRows.Close()
+
+		detalleStmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO detalle_facturas (id, uuid, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) 
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(uuid) DO NOTHING`)
+		if err != nil {
+			return fmt.Errorf("error al preparar statement de detalles de factura: %w", err)
+		}
+		defer detalleStmt.Close()
+
+		detalleCount := 0
+		for detalleRows.Next() {
+			var df DetalleFactura
+			var uuidDetalleStr sql.NullString
+			if err := detalleRows.Scan(&df.ID, &uuidDetalleStr, &df.FacturaID, &df.ProductoID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
+				d.Log.Errorf("Error al escanear detalle de factura remoto: %v", err)
+				continue
+			}
+			if !uuidDetalleStr.Valid || uuidDetalleStr.String == "" {
+				d.Log.Warnf("Detalle de factura remoto con ID %d tiene un UUID nulo o vacío y será ignorado.", df.ID)
+				continue
+			}
+			df.UUID = uuidDetalleStr.String
+			// **LA CORRECCIÓN CLAVE ESTÁ AQUÍ**: Añadimos df.UUID
+			_, err := detalleStmt.ExecContext(ctx, df.ID, df.UUID, df.FacturaID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt)
+			if err != nil {
+				d.Log.Errorf("Error al insertar detalle de factura local (ID remoto: %d): %v", df.ID, err)
+			}
+			detalleCount++
+		}
+		d.Log.Infof("Sincronizados %d nuevos detalles de factura a local.", detalleCount)
+	}
+	var lastCompraID int64
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM compras").Scan(&lastCompraID)
 	if err != nil {
-		return fmt.Errorf("error obteniendo detalles de factura remotos: %w", err)
-	}
-	defer detalleFacturaRows.Close()
-
-	detalleFacturaStmt, err := tx.PrepareContext(ctx, `INSERT INTO detalle_facturas (id, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
-	if err != nil {
-		return fmt.Errorf("error al preparar statement de detalles de factura: %w", err)
-	}
-	defer detalleFacturaStmt.Close()
-
-	detalleFacturaCount := 0
-	for detalleFacturaRows.Next() {
-		var df DetalleFactura
-		if err := detalleFacturaRows.Scan(&df.ID, &df.FacturaID, &df.ProductoID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
-			d.Log.Errorf("Error al escanear detalle de factura remoto: %v", err)
-			continue
-		}
-		if _, err := detalleFacturaStmt.ExecContext(ctx, df.ID, df.FacturaID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt); err != nil {
-			d.Log.Errorf("Error al insertar detalle de factura local: %v", err)
-			continue
-		}
-		detalleFacturaCount++
-	}
-	if detalleFacturaCount > 0 {
-		d.Log.Infof("Sincronizados %d nuevos detalles de factura a local.", detalleFacturaCount)
+		return fmt.Errorf("error al obtener el último ID de compra local: %w", err)
 	}
 
-	// --- Sincronizar Compras ---
-	var ultimaCompraLocal time.Time
-	var ultimaCompraStr sql.NullString
-
-	err = tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM compras").Scan(&ultimaCompraStr)
-	if err != nil {
-		return fmt.Errorf("error al obtener la última compra local: %w", err)
-	}
-
-	if ultimaCompraStr.Valid && ultimaCompraStr.String != "" {
-		parsedTime, parseErr := parseFlexibleTime(ultimaCompraStr.String)
-		if parseErr != nil {
-			return fmt.Errorf("error al parsear fecha de última factura local '%s': %w", ultimaFacturaStr.String, parseErr)
-		}
-		ultimaCompraLocal = parsedTime
-	} else {
-		ultimaCompraLocal = time.Unix(0, 0)
-	}
-
-	comprasRemotasQuery := `SELECT id, fecha, proveedor_id, factura_numero, total, created_at, updated_at FROM compras WHERE created_at > $1`
-	compraRows, err := d.RemoteDB.Query(ctx, comprasRemotasQuery, ultimaCompraLocal)
+	comprasRemotasQuery := `
+		SELECT id, fecha, proveedor_id, factura_numero, total, created_at, updated_at 
+		FROM compras 
+		WHERE id > $1 
+		ORDER BY id ASC`
+	compraRows, err := d.RemoteDB.Query(ctx, comprasRemotasQuery, lastCompraID)
 	if err != nil {
 		return fmt.Errorf("error obteniendo compras remotas: %w", err)
 	}
 	defer compraRows.Close()
 
-	compraStmt, err := tx.PrepareContext(ctx, `INSERT INTO compras (id, fecha, proveedor_id, factura_numero, total, created_at, updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
+	compraStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO compras (id, fecha, proveedor_id, factura_numero, total, created_at, updated_at) 
+		VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("error al preparar statement de compras: %w", err)
 	}
@@ -536,7 +560,6 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 		_, err := compraStmt.ExecContext(ctx, c.ID, c.Fecha, c.ProveedorID, c.FacturaNumero, c.Total, c.CreatedAt, c.UpdatedAt)
 		if err != nil {
 			d.Log.Errorf("Error al insertar compra local: %v", err)
-			continue
 		}
 		compraCount++
 	}

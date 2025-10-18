@@ -13,6 +13,11 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
+
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/database/sqlite3"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
 type OperacionStock struct {
@@ -231,16 +236,18 @@ func (d *Db) Startup(ctx context.Context) {
 
 func (d *Db) initDB() {
 	var err error
-	d.LocalDB, err = d.NewLocalDB()
+
+	localDBPath := "farmacia.db"
+	localDSN := fmt.Sprintf("file:%s?_cache=shared&_journal_mode=WAL&_foreign_keys=1", localDBPath)
+
+	d.LocalDB, err = d.NewLocalDB(localDSN)
 	if err != nil {
 		d.Log.Fatalf("Fallo al conectar la Base de datos local SQLite: %v", err)
 	}
 	d.Log.Info("Conección a la Base de datos local SQLite establecida.")
 
-	if err := d.AutoMigrate(); err != nil {
-		d.Log.Fatalf("Fallo al realizar AutoMigrate en Base de datos local SQLite: %v", err)
-	}
-	d.Log.Info("Base de datos local SQLite migrada correctamente.")
+	d.runMigrations("sqlite3", localDBPath)
+
 	err = godotenv.Load()
 	if err != nil {
 		d.Log.Fatalf("Error al cargar archivo .env: %v", err)
@@ -251,13 +258,19 @@ func (d *Db) initDB() {
 	}
 	d.jwtKey = []byte(secret)
 	d.Log.Info("Clave secreta JWT cargada exitosamente.")
-	d.RemoteDB, err = d.NewRemoteDB(os.Getenv("DATABASE_URL"))
 
-	if err != nil {
-		d.Log.Warnf("No se pudo conectar a la Base de datos remota PostgreSQL se trabajará OFFLINE: %v", err)
-		d.RemoteDB = nil
+	remoteDSN := os.Getenv("DATABASE_URL")
+	if remoteDSN != "" {
+		d.RemoteDB, err = d.NewRemoteDB(remoteDSN)
+		if err != nil {
+			d.Log.Warnf("No se pudo conectar a la Base de datos remota PostgreSQL, se trabajará OFFLINE: %v", err)
+			d.RemoteDB = nil
+		} else {
+			d.Log.Info("Base de datos remota PostgreSQL conectada exitosamente.")
+			d.runMigrations("postgres", remoteDSN)
+		}
 	} else {
-		d.Log.Info("Base de datos remota PostgreSQL conectada exitosamente.")
+		d.Log.Warn("DATABASE_URL no está configurada. Se trabajará OFFLINE.")
 	}
 }
 
@@ -270,8 +283,7 @@ func (d *Db) isRemoteDBAvailable() bool {
 	return d.RemoteDB.Ping(ctx) == nil
 }
 
-func (d *Db) NewLocalDB() (*sql.DB, error) {
-	dsn := "file:farmacia.db?_cache=shared&_journal_mode=WAL&_foreign_keys=1"
+func (d *Db) NewLocalDB(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
@@ -311,115 +323,36 @@ func (d *Db) Close() {
 	}
 }
 
-// AutoMigrate crea/actualiza el esquema de la BD local.
-func (d *Db) AutoMigrate() error {
-	// Se añade la tabla sync_log para la sincronización inteligente
-	schema := `
-		CREATE TABLE IF NOT EXISTS sync_log (
-			model_name TEXT PRIMARY KEY,
-			last_sync_timestamp DATETIME NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS vendedors (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			deleted_at DATETIME,
-			nombre TEXT,
-			apellido TEXT,
-			cedula TEXT UNIQUE NOT NULL,
-			email TEXT UNIQUE NOT NULL,
-			contrasena TEXT,
-			mfa_secret TEXT,
-			mfa_enabled BOOLEAN DEFAULT false
-		);
-		CREATE TABLE IF NOT EXISTS clientes (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			deleted_at DATETIME,
-			nombre TEXT UNIQUE NOT NULL,
-			apellido TEXT,
-			tipo_id TEXT,
-			numero_id TEXT UNIQUE NOT NULL,
-			telefono TEXT,
-			email TEXT,
-			direccion TEXT
-		);
-		CREATE TABLE IF NOT EXISTS proveedors (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			deleted_at DATETIME,
-			nombre TEXT UNIQUE NOT NULL,
-			telefono TEXT,
-			email TEXT
-		);
-		CREATE TABLE IF NOT EXISTS productos (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			deleted_at DATETIME,
-			nombre TEXT,
-			codigo TEXT UNIQUE NOT NULL,
-			precio_venta REAL,
-			stock INTEGER
-		);
-		CREATE TABLE IF NOT EXISTS operacion_stocks (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			uuid TEXT UNIQUE NOT NULL,
-			producto_id INTEGER NOT NULL,
-			tipo_operacion TEXT,
-			cantidad_cambio INTEGER,
-			stock_resultante INTEGER,
-			vendedor_id INTEGER,
-			factura_id INTEGER,
-			timestamp DATETIME,
-			sincronizado BOOLEAN DEFAULT false,
-			FOREIGN KEY (producto_id) REFERENCES productos (id)
-		);
-		CREATE TABLE IF NOT EXISTS facturas (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			uuid TEXT UNIQUE NOT NULL,
-			numero_factura TEXT UNIQUE NOT NULL,
-			fecha_emision DATETIME,
-			vendedor_id INTEGER,
-			cliente_id INTEGER,
-			subtotal REAL,
-			iva REAL,
-			total REAL,
-			estado TEXT,
-			metodo_pago TEXT,
-			FOREIGN KEY (vendedor_id) REFERENCES vendedors (id),
-			FOREIGN KEY (cliente_id) REFERENCES clientes (id)
-		);
-		CREATE TABLE IF NOT EXISTS detalle_facturas (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			deleted_at DATETIME,
-			uuid TEXT UNIQUE NOT NULL,
-			factura_id INTEGER,
-			producto_id INTEGER,
-			cantidad INTEGER,
-			precio_unitario REAL,
-			precio_total REAL,
-			FOREIGN KEY (factura_id) REFERENCES facturas (id),
-			FOREIGN KEY (producto_id) REFERENCES productos (id),
-			UNIQUE (factura_id, producto_id)
-		);
-		CREATE TABLE IF NOT EXISTS compras (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, fecha DATETIME, proveedor_id INTEGER, factura_numero TEXT,
-			total REAL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL,
-			FOREIGN KEY (proveedor_id) REFERENCES proveedors (id)
-		);
-		CREATE TABLE IF NOT EXISTS detalle_compras (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, compra_id INTEGER, producto_id INTEGER, cantidad INTEGER,
-			precio_compra_unitario REAL,
-			FOREIGN KEY (compra_id) REFERENCES compras (id), FOREIGN KEY (producto_id) REFERENCES productos (id)
-		);
-	`
-	_, err := d.LocalDB.Exec(schema)
-	return err
+func (d *Db) runMigrations(dbType string, dsn string) {
+	if dsn == "" {
+		d.Log.Warnf("No hay DSN para la migración de '%s', omitiendo.", dbType)
+		return
+	}
+
+	sourceURL := fmt.Sprintf("file://backend/db/migrations/%s", dbType)
+
+	var databaseURL string
+	if dbType == "sqlite3" {
+		databaseURL = "sqlite3://" + dsn
+	} else {
+		databaseURL = dsn
+	}
+
+	d.Log.Infof("Ejecutando migraciones para '%s' desde '%s'", dbType, sourceURL)
+
+	m, err := migrate.New(sourceURL, databaseURL)
+	if err != nil {
+		d.Log.Errorf("Error al inicializar instancia de migración para '%s': %v", dbType, err)
+		return
+	}
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		d.Log.Errorf("¡¡¡ERROR CRÍTICO al aplicar migración para '%s'!!!: %v", dbType, err)
+	} else if err == migrate.ErrNoChange {
+		d.Log.Infof("Migración para '%s': No hay cambios que aplicar. Esquema actualizado.", dbType)
+	} else {
+		d.Log.Infof("Migración para '%s' aplicada exitosamente.", dbType)
+	}
+
+	_, _ = m.Close()
 }
