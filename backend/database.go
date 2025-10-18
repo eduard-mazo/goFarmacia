@@ -123,6 +123,7 @@ type DetalleFactura struct {
 	UpdatedAt      time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt      *time.Time `json:"deleted_at" ts_type:"string"`
 	UUID           string     `json:"uuid"`
+	FacturaUUID    string     `json:"FacturaUUID"`
 	FacturaID      uint       `json:"FacturaID"`
 	ProductoID     uint       `json:"ProductoID"`
 	Producto       Producto   `json:"Producto"`

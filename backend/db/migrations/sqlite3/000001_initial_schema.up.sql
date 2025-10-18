@@ -99,6 +99,7 @@ CREATE TABLE
         updated_at DATETIME NOT NULL,
         deleted_at DATETIME,
         uuid TEXT UNIQUE NOT NULL,
+        factura_uuid TEXT NOT NULL,
         factura_id INTEGER,
         producto_id INTEGER,
         cantidad INTEGER,
@@ -130,4 +131,15 @@ CREATE TABLE
         precio_compra_unitario REAL,
         FOREIGN KEY (compra_id) REFERENCES compras (id),
         FOREIGN KEY (producto_id) REFERENCES productos (id)
+    );
+
+UPDATE detalle_facturas
+SET
+    factura_uuid = (
+        SELECT
+            uuid
+        FROM
+            facturas f
+        WHERE
+            f.id = detalle_facturas.factura_id
     );

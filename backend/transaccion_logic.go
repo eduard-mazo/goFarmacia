@@ -183,10 +183,14 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	// 6. Lanzar sincronizaciones en segundo plano.
-	go d.syncVentaToRemote(factura.ID)
+	go func(uuid string) {
+		if err := d.syncVentaToRemote(uuid); err != nil {
+			d.Log.Errorf("error sincronizando venta remota para factura UUID %s: %v", uuid, err)
+		}
+	}(factura.UUID)
 
 	// Devolver la factura completa
-	return d.ObtenerDetalleFactura(factura.ID)
+	return d.ObtenerDetalleFactura(factura.UUID)
 }
 
 func (d *Db) generarNumeroFactura(tx *sql.Tx) (string, error) {
@@ -255,7 +259,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 
 	// Query final para obtener los registros
 	selectQuery := `
-		SELECT f.id, f.numero_factura, f.fecha_emision, f.total, c.id, c.nombre, v.id, v.nombre
+		SELECT f.id, f.uuid, f.numero_factura, f.fecha_emision, f.total, c.id, c.nombre, v.id, v.nombre
 	` + baseQuery + whereClause + orderByClause + paginationClause
 
 	rows, err := d.LocalDB.Query(selectQuery, args...)
@@ -266,7 +270,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 
 	for rows.Next() {
 		var f Factura
-		err := rows.Scan(&f.ID, &f.NumeroFactura, &f.FechaEmision, &f.Total, &f.Cliente.ID, &f.Cliente.Nombre, &f.Vendedor.ID, &f.Vendedor.Nombre)
+		err := rows.Scan(&f.ID, &f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.Total, &f.Cliente.ID, &f.Cliente.Nombre, &f.Vendedor.ID, &f.Vendedor.Nombre)
 		if err != nil {
 			return PaginatedResult{}, err
 		}
@@ -276,9 +280,9 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 	return PaginatedResult{Records: facturas, TotalRecords: total}, nil
 }
 
-func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
+func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 	var factura Factura
-	d.Log.Infof("Obteniendo detalles para Factura ID: %d", facturaID)
+	d.Log.Infof("Obteniendo detalles para Factura ID: %s", facturaUUID)
 
 	// 1. Obtener la factura principal y los datos del cliente/vendedor
 	queryFactura := `
@@ -306,16 +310,16 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 						JOIN clientes c ON f.cliente_id = c.id
 						JOIN vendedors v ON f.vendedor_id = v.id
 					WHERE
-						f.id = ?
+						f.uuid = ?
 	`
 	// Escaneamos los IDs y también los datos anidados para tener el objeto completo
-	err := d.LocalDB.QueryRow(queryFactura, facturaID).Scan(
+	err := d.LocalDB.QueryRow(queryFactura, facturaUUID).Scan(
 		&factura.ID, &factura.UUID, &factura.NumeroFactura, &factura.FechaEmision, &factura.Subtotal, &factura.IVA, &factura.Total, &factura.Estado, &factura.MetodoPago,
 		&factura.ClienteID, &factura.Cliente.ID, &factura.Cliente.Nombre, &factura.Cliente.Apellido, &factura.Cliente.NumeroID,
 		&factura.VendedorID, &factura.Vendedor.ID, &factura.Vendedor.Nombre, &factura.Vendedor.Apellido,
 	)
 	if err != nil {
-		d.Log.Errorf("Error al obtener la cabecera de la factura ID %d: %v", facturaID, err)
+		d.Log.Errorf("Error al obtener la cabecera de la factura ID %s: %v", facturaUUID, err)
 		return Factura{}, err
 	}
 
@@ -327,11 +331,11 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 			p.id, p.codigo, p.nombre
 		FROM detalle_facturas d
 		JOIN productos p ON d.producto_id = p.id
-		WHERE d.factura_id = ?
+		WHERE d.factura_uuid = ?
 	`
-	rows, err := d.LocalDB.Query(queryDetalles, facturaID)
+	rows, err := d.LocalDB.Query(queryDetalles, facturaUUID)
 	if err != nil {
-		d.Log.Errorf("Error al consultar los detalles para la factura ID %d: %v", facturaID, err)
+		d.Log.Errorf("Error al consultar los detalles para la factura ID %s: %v", facturaUUID, err)
 		return factura, err
 	}
 	defer rows.Close()
@@ -344,7 +348,7 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 			&detalle.Producto.ID, &detalle.Producto.Codigo, &detalle.Producto.Nombre,
 		)
 		if err != nil {
-			d.Log.Errorf("Error al escanear un detalle de la factura ID %d: %v", facturaID, err)
+			d.Log.Errorf("Error al escanear un detalle de la factura ID %s: %v", facturaUUID, err)
 			continue
 		}
 		factura.Detalles = append(factura.Detalles, detalle)
@@ -352,11 +356,11 @@ func (d *Db) ObtenerDetalleFactura(facturaID uint) (Factura, error) {
 	}
 
 	if err = rows.Err(); err != nil {
-		d.Log.Errorf("Error final al iterar los detalles de la factura ID %d: %v", facturaID, err)
+		d.Log.Errorf("Error final al iterar los detalles de la factura ID %s: %v", facturaUUID, err)
 		return factura, err
 	}
 
-	d.Log.Infof("Se encontraron y adjuntaron %d detalles para la Factura ID: %d", detailCount, facturaID)
+	d.Log.Infof("Se encontraron y adjuntaron %d detalles para la Factura ID: %s", detailCount, facturaUUID)
 
 	return factura, nil
 }

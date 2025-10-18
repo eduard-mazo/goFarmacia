@@ -197,7 +197,7 @@ const currentPage = computed({
 async function verDetalleFactura(factura: backend.Factura) {
   loadingFacturaId.value = factura.id;
   try {
-    const facturaCompleta = await ObtenerDetalleFactura(factura.id);
+    const facturaCompleta = await ObtenerDetalleFactura(factura.uuid);
     facturaParaRecibo.value = facturaCompleta;
     isModalOpen.value = true;
   } catch (error) {
