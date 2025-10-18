@@ -690,23 +690,28 @@ func (d *Db) syncVentaToRemote(id uint) {
 	}
 	defer rtx.Rollback(d.ctx)
 
-	// Upsert factura (por numero_factura / id)
 	upsertFactura := `
-		INSERT INTO facturas (id, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
+		INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		ON CONFLICT (id) DO UPDATE SET
+		ON CONFLICT (uuid) DO UPDATE SET
 			numero_factura = EXCLUDED.numero_factura, fecha_emision = EXCLUDED.fecha_emision, vendedor_id = EXCLUDED.vendedor_id,
 			cliente_id = EXCLUDED.cliente_id, subtotal = EXCLUDED.subtotal, iva = EXCLUDED.iva, total = EXCLUDED.total,
-			estado = EXCLUDED.estado, metodo_pago = EXCLUDED.metodo_pago, updated_at = EXCLUDED.updated_at;
+			estado = EXCLUDED.estado, metodo_pago = EXCLUDED.metodo_pago, updated_at = EXCLUDED.updated_at
+        RETURNING id;
 	`
-	_, err = rtx.Exec(d.ctx, upsertFactura, int64(f.ID), f.NumeroFactura, f.FechaEmision, int64(f.VendedorID), int64(f.ClienteID), f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt)
+	var remoteFacturaID int64
+	err = rtx.QueryRow(d.ctx, upsertFactura,
+		f.UUID,
+		f.NumeroFactura, f.FechaEmision, int64(f.VendedorID), int64(f.ClienteID), f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt,
+	).Scan(&remoteFacturaID)
+
 	if err != nil {
 		d.Log.Errorf("syncVentaToRemote: error upserting factura remota: %v", err)
 		return
 	}
 
-	// Borrar detalles existentes de esta factura en remoto y reinsertar (asegura consistencia)
-	if _, err := rtx.Exec(d.ctx, "DELETE FROM detalle_facturas WHERE factura_id = $1", int64(f.ID)); err != nil {
+	// Borrar detalles existentes de esta factura en remoto (usando el ID remoto)
+	if _, err := rtx.Exec(d.ctx, "DELETE FROM detalle_facturas WHERE factura_id = $1", remoteFacturaID); err != nil {
 		d.Log.Errorf("syncVentaToRemote: error borrando detalles remotos: %v", err)
 		return
 	}
@@ -714,9 +719,9 @@ func (d *Db) syncVentaToRemote(id uint) {
 	if len(f.Detalles) > 0 {
 		batch := &pgx.Batch{}
 		upsertDetalleSQL := `
-			INSERT INTO detalle_facturas (factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (factura_id, producto_id) DO UPDATE SET
+			INSERT INTO detalle_facturas (uuid, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT (uuid) DO UPDATE SET
 				cantidad = EXCLUDED.cantidad,
 				precio_unitario = EXCLUDED.precio_unitario,
 				precio_total = EXCLUDED.precio_total,
@@ -733,13 +738,13 @@ func (d *Db) syncVentaToRemote(id uint) {
 				updatedAt = f.UpdatedAt
 			} // Fallback a la fecha de la factura
 
-			batch.Queue(upsertDetalleSQL, f.ID, det.ProductoID, det.Cantidad, det.PrecioUnitario, det.PrecioTotal, createdAt, updatedAt)
+			batch.Queue(upsertDetalleSQL, det.UUID, remoteFacturaID, det.ProductoID, det.Cantidad, det.PrecioUnitario, det.PrecioTotal, createdAt, updatedAt)
 		}
 
 		br := rtx.SendBatch(d.ctx, batch)
 		if err := br.Close(); err != nil {
 			d.Log.Errorf("syncVentaToRemote: error ejecutando batch de detalles para factura %d: %v", f.ID, err)
-			return // Detenemos la sincronización si los detalles fallan
+			return
 		}
 		d.Log.Infof("syncVentaToRemote: Batch de %d detalles procesado para factura %d.", len(f.Detalles), f.ID)
 	}

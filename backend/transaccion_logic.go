@@ -77,6 +77,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	factura := Factura{
+		UUID:          uuid.New().String(),
 		NumeroFactura: numeroFactura,
 		FechaEmision:  time.Now(),
 		VendedorID:    req.VendedorID,
@@ -121,6 +122,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		precioTotalProducto := p.PrecioUnitario * float64(p.Cantidad)
 		subtotal += precioTotalProducto
 		detallesFactura = append(detallesFactura, DetalleFactura{
+			UUID:           uuid.New().String(),
 			ProductoID:     producto.ID,
 			Cantidad:       p.Cantidad,
 			PrecioUnitario: p.PrecioUnitario,
@@ -131,8 +133,8 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	// 3. Insertar la factura y obtener el ID.
 	var timestamp = time.Now()
 	res, err := tx.ExecContext(d.ctx,
-		"INSERT INTO facturas (numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		factura.NumeroFactura, factura.FechaEmision, factura.VendedorID, factura.ClienteID, factura.Subtotal, factura.IVA, factura.Total, factura.Estado, factura.MetodoPago, timestamp, timestamp,
+		"INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		factura.UUID, factura.NumeroFactura, factura.FechaEmision, factura.VendedorID, factura.ClienteID, factura.Subtotal, factura.IVA, factura.Total, factura.Estado, factura.MetodoPago, timestamp, timestamp,
 	)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error al crear la factura: %w", err)
@@ -144,13 +146,13 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	factura.ID = uint(facturaID)
 
 	// 4. Insertar masivamente los detalles y las operaciones de stock.
-	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (uuid, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return Factura{}, err
 	}
 	defer stmtDetalles.Close()
 	for _, detalle := range detallesFactura {
-		_, err := stmtDetalles.ExecContext(d.ctx, factura.ID, detalle.ProductoID, detalle.Cantidad, detalle.PrecioUnitario, detalle.PrecioTotal, timestamp, timestamp)
+		_, err := stmtDetalles.ExecContext(d.ctx, detalle.UUID, factura.ID, detalle.ProductoID, detalle.Cantidad, detalle.PrecioUnitario, detalle.PrecioTotal, timestamp, timestamp)
 		if err != nil {
 			return Factura{}, fmt.Errorf("error al crear detalle de factura: %w", err)
 		}

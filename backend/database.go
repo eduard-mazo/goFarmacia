@@ -97,6 +97,7 @@ type Factura struct {
 	CreatedAt     time.Time        `json:"created_at" ts_type:"string"`
 	UpdatedAt     time.Time        `json:"updated_at" ts_type:"string"`
 	DeletedAt     *time.Time       `json:"deleted_at" ts_type:"string"`
+	UUID          string           `json:"uuid"`
 	NumeroFactura string           `json:"NumeroFactura"`
 	FechaEmision  time.Time        `json:"fecha_emision"  ts_type:"string"`
 	VendedorID    uint             `json:"VendedorID"`
@@ -116,6 +117,7 @@ type DetalleFactura struct {
 	CreatedAt      time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt      time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt      *time.Time `json:"deleted_at" ts_type:"string"`
+	UUID           string     `json:"uuid"`
 	FacturaID      uint       `json:"FacturaID"`
 	ProductoID     uint       `json:"ProductoID"`
 	Producto       Producto   `json:"Producto"`
@@ -377,6 +379,9 @@ func (d *Db) AutoMigrate() error {
 		);
 		CREATE TABLE IF NOT EXISTS facturas (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			uuid TEXT UNIQUE NOT NULL,
 			numero_factura TEXT UNIQUE NOT NULL,
 			fecha_emision DATETIME,
 			vendedor_id INTEGER,
@@ -386,8 +391,6 @@ func (d *Db) AutoMigrate() error {
 			total REAL,
 			estado TEXT,
 			metodo_pago TEXT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
 			FOREIGN KEY (vendedor_id) REFERENCES vendedors (id),
 			FOREIGN KEY (cliente_id) REFERENCES clientes (id)
 		);
@@ -396,6 +399,7 @@ func (d *Db) AutoMigrate() error {
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL,
 			deleted_at DATETIME,
+			uuid TEXT UNIQUE NOT NULL,
 			factura_id INTEGER,
 			producto_id INTEGER,
 			cantidad INTEGER,
