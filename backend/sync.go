@@ -282,7 +282,11 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		d.Log.Errorf("no se pudo iniciar la transacción remota: %v", err)
 		return
 	}
-	defer rtx.Rollback(d.ctx)
+	go func() {
+		if err := rtx.Rollback(d.ctx); err != nil {
+			d.Log.Errorf("[LOCAL -> REMOTO] - Error durante rollback %v", err)
+		}
+	}()
 
 	_, err = rtx.CopyFrom(d.ctx,
 		pgx.Identifier{"operacion_stocks"},

@@ -110,6 +110,10 @@ function handleDeleteConfirm() {
           <Input id="name" v-model="editableClient.Nombre" class="col-span-3" />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="apellido" class="text-right">Apellido</Label>
+          <Input id="apellido" v-model="editableClient.Apellido" class="col-span-3" />
+        </div>
+        <div class="grid grid-cols-4 items-center gap-4">
           <Label for="documento" class="text-right">Cédula</Label>
           <Input
             id="documento"
