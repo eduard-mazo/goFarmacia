@@ -146,26 +146,26 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	factura.ID = uint(facturaID)
 
 	// 4. Insertar masivamente los detalles y las operaciones de stock.
-	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (uuid, factura_id, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return Factura{}, err
 	}
 	defer stmtDetalles.Close()
 	for _, detalle := range detallesFactura {
-		_, err := stmtDetalles.ExecContext(d.ctx, detalle.UUID, factura.ID, detalle.ProductoID, detalle.Cantidad, detalle.PrecioUnitario, detalle.PrecioTotal, timestamp, timestamp)
+		_, err := stmtDetalles.ExecContext(d.ctx, detalle.UUID, factura.ID, factura.UUID, detalle.ProductoID, detalle.Cantidad, detalle.PrecioUnitario, detalle.PrecioTotal, timestamp, timestamp)
 		if err != nil {
 			return Factura{}, fmt.Errorf("error al crear detalle de factura: %w", err)
 		}
 	}
 
-	stmtOps, err := tx.Prepare("INSERT INTO operacion_stocks (uuid, producto_id, tipo_operacion, cantidad_cambio, vendedor_id, timestamp, factura_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	stmtOps, err := tx.Prepare("INSERT INTO operacion_stocks (uuid, producto_id, tipo_operacion, cantidad_cambio, vendedor_id, timestamp, factura_id, factura_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return Factura{}, err
 	}
 	defer stmtOps.Close()
 	facturaIDUint := uint(facturaID)
 	for _, op := range opsStock {
-		_, err := stmtOps.Exec(op.UUID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.VendedorID, op.Timestamp, &facturaIDUint)
+		_, err := stmtOps.ExecContext(d.ctx, op.UUID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.VendedorID, op.Timestamp, &facturaIDUint, &factura.UUID)
 		if err != nil {
 			return Factura{}, fmt.Errorf("error creando operación de stock: %w", err)
 		}
@@ -282,7 +282,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 
 func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 	var factura Factura
-	d.Log.Infof("Obteniendo detalles para Factura ID: %s", facturaUUID)
+	d.Log.Infof("[LOCAL] - Obteniendo detalles para Factura UUID: %s", facturaUUID)
 
 	// 1. Obtener la factura principal y los datos del cliente/vendedor
 	queryFactura := `

@@ -62,6 +62,7 @@ CREATE TABLE
     IF NOT EXISTS operacion_stocks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         uuid TEXT UNIQUE NOT NULL,
+        factura_uuid TEXT,
         producto_id INTEGER NOT NULL,
         tipo_operacion TEXT,
         cantidad_cambio INTEGER,
@@ -131,15 +132,4 @@ CREATE TABLE
         precio_compra_unitario REAL,
         FOREIGN KEY (compra_id) REFERENCES compras (id),
         FOREIGN KEY (producto_id) REFERENCES productos (id)
-    );
-
-UPDATE detalle_facturas
-SET
-    factura_uuid = (
-        SELECT
-            uuid
-        FROM
-            facturas f
-        WHERE
-            f.id = detalle_facturas.factura_id
     );

@@ -10,4 +10,6 @@ FROM
 WHERE
     df.factura_id = f.id;
 
+CREATE INDEX IF NOT EXISTS idx_detalle_facturas_factura_uuid ON detalle_facturas (factura_uuid);
+
 ALTER TABLE detalle_facturas ADD CONSTRAINT fk_detalle_factura_uuid FOREIGN KEY (factura_uuid) REFERENCES facturas (uuid) ON UPDATE CASCADE ON DELETE CASCADE;

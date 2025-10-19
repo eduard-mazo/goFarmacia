@@ -29,6 +29,7 @@ type OperacionStock struct {
 	StockResultante int       `json:"stock_resultante"`
 	VendedorID      uint      `json:"vendedor_id"`
 	FacturaID       *uint     `json:"factura_id"`
+	FacturaUUID     *string   `json:"factura_uuid"`
 	Timestamp       time.Time `json:"timestamp" ts_type:"string"`
 	Sincronizado    bool      `json:"sincronizado"`
 }
