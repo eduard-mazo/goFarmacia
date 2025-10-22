@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -64,6 +66,7 @@ type Vendedor struct {
 	CreatedAt  time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt  time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt  *time.Time `json:"deleted_at" ts_type:"string"`
+	UUID       string     `json:"uuid"`
 	Nombre     string     `json:"Nombre"`
 	Apellido   string     `json:"Apellido"`
 	Cedula     string     `json:"Cedula"`
@@ -78,6 +81,7 @@ type Cliente struct {
 	CreatedAt time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt *time.Time `json:"deleted_at" ts_type:"string"`
+	UUID      string     `json:"uuid"`
 	Nombre    string     `json:"Nombre"`
 	Apellido  string     `json:"Apellido"`
 	TipoID    string     `json:"TipoID"`
@@ -92,6 +96,7 @@ type Producto struct {
 	CreatedAt   time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt   time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt   *time.Time `json:"deleted_at" ts_type:"string"`
+	UUID        string     `json:"uuid"`
 	Nombre      string     `json:"Nombre"`
 	Codigo      string     `json:"Codigo"`
 	PrecioVenta float64    `json:"PrecioVenta"`
@@ -138,6 +143,7 @@ type Proveedor struct {
 	CreatedAt time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt *time.Time `json:"deleted_at" ts_type:"string"`
+	UUID      string     `json:"uuid"`
 	Nombre    string     `json:"Nombre"`
 	Telefono  string     `json:"Telefono"`
 	Email     string     `json:"Email"`
@@ -148,6 +154,7 @@ type Compra struct {
 	CreatedAt     time.Time       `json:"created_at" ts_type:"string"`
 	UpdatedAt     time.Time       `json:"updated_at" ts_type:"string"`
 	DeletedAt     *time.Time      `json:"deleted_at" ts_type:"string"`
+	UUID          string          `json:"uuid"`
 	Fecha         time.Time       `json:"Fecha" ts_type:"string"`
 	ProveedorID   uint            `json:"ProveedorID"`
 	Proveedor     Proveedor       `json:"Proveedor"`
@@ -157,12 +164,16 @@ type Compra struct {
 }
 
 type DetalleCompra struct {
-	ID                   uint     `json:"id"`
-	CompraID             uint     `json:"CompraID"`
-	ProductoID           uint     `json:"ProductoID"`
-	Producto             Producto `json:"Producto"`
-	Cantidad             int      `json:"Cantidad"`
-	PrecioCompraUnitario float64  `json:"PrecioCompraUnitario"`
+	ID                   uint       `json:"id"`
+	CreatedAt            time.Time  `json:"created_at" ts_type:"string"`
+	UpdatedAt            time.Time  `json:"updated_at" ts_type:"string"`
+	DeletedAt            *time.Time `json:"deleted_at" ts_type:"string"`
+	UUID                 string     `json:"uuid"`
+	CompraID             uint       `json:"CompraID"`
+	ProductoID           uint       `json:"ProductoID"`
+	Producto             Producto   `json:"Producto"`
+	Cantidad             int        `json:"Cantidad"`
+	PrecioCompraUnitario float64    `json:"PrecioCompraUnitario"`
 }
 
 type VentaRequest struct {
@@ -220,12 +231,32 @@ type Db struct {
 }
 
 func NewDb() *Db {
+	fmt.Printf("NEW_DB")
 	logger := logrus.New()
+	logDir := "logs"
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Printf("No se pudo crear el directorio de logs: %v\n", err)
+	}
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	logFileName := fmt.Sprintf("app_%s.log", timestamp)
+	logFilePath := filepath.Join(logDir, logFileName)
+
+	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		fmt.Printf("No se pudo abrir archivo de log: %v\n", err)
+	}
 	logger.SetFormatter(&logrus.TextFormatter{
-		FullTimestamp: true,
-		ForceColors:   true,
+		FullTimestamp:   true,
+		ForceColors:     false,
+		TimestampFormat: "2006-01-02 15:04:05.000",
 	})
+
 	logger.SetLevel(logrus.DebugLevel)
+
+	logger.SetOutput(io.MultiWriter(os.Stdout, file))
+
+	logger.Info("Inicializando logger con salida a consola y archivo...")
+
 	return &Db{Log: logger}
 }
 

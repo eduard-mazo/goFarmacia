@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,8 +39,8 @@ func (d *Db) SincronizacionInteligente() {
 	}{
 		{"vendedors", "cedula", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "apellido", "cedula", "email", "contrasena", "mfa_enabled", "mfa_secret"}},
 		{"clientes", "numero_id", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "apellido", "tipo_id", "numero_id", "telefono", "email", "direccion"}},
-		{"proveedors", "nombre", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "telefono", "email"}},
-		{"productos", "codigo", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "codigo", "precio_venta", "stock"}},
+		{"proveedors", "nombre", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "telefono", "email"}},
+		{"productos", "codigo", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "codigo", "precio_venta", "stock"}},
 	}
 
 	for _, m := range models {
@@ -53,18 +54,15 @@ func (d *Db) SincronizacionInteligente() {
 	}
 	d.Log.Info("Sincronización de datos maestros completada exitosamente.")
 
-	// Sincronizar operaciones de stock (descarga primero, luego subir pendientes)
+	if err := d.sincronizarTransaccionesHaciaLocal(); err != nil {
+		d.Log.Errorf("Error sincronizando transacciones hacia local: %v", err)
+	}
 	if err := d.sincronizarOperacionesStockHaciaLocal(); err != nil {
 		d.Log.Errorf("Error sincronizando operaciones de stock hacia local: %v", err)
 	}
 
 	// Subir operaciones locales pendientes (marcado atómico)
 	d.SincronizarOperacionesStockHaciaRemoto()
-
-	// Sincronizar transacciones (facturas/compras) desde remoto a local
-	if err := d.sincronizarTransaccionesHaciaLocal(); err != nil {
-		d.Log.Errorf("Error sincronizando transacciones hacia local: %v", err)
-	}
 
 	d.Log.Info("[FIN]: Sincronización Inteligente")
 }
@@ -138,6 +136,13 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 		if err := rows.Scan(valPtrs...); err != nil {
 			d.Log.Errorf("[%s] Error escaneando fila remota: %v", tableName, err)
 			continue
+		}
+		for i, colName := range cols {
+			if colName == "uuid" {
+				if uuidBytes, ok := rawVals[i].([16]uint8); ok {
+					rawVals[i] = uuid.UUID(uuidBytes).String()
+				}
+			}
 		}
 		if err := d.sanitizeRow(tableName, cols, rawVals); err != nil {
 			d.Log.Warn(err.Error())

@@ -11,6 +11,7 @@ CREATE TABLE
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         deleted_at DATETIME,
+        uuid TEXT UNIQUE NOT NULL,
         nombre TEXT,
         apellido TEXT,
         cedula TEXT UNIQUE NOT NULL,
@@ -26,6 +27,7 @@ CREATE TABLE
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         deleted_at DATETIME,
+        uuid TEXT UNIQUE NOT NULL,
         nombre TEXT UNIQUE NOT NULL,
         apellido TEXT,
         tipo_id TEXT,
@@ -41,6 +43,7 @@ CREATE TABLE
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         deleted_at DATETIME,
+        uuid TEXT UNIQUE NOT NULL,
         nombre TEXT UNIQUE NOT NULL,
         telefono TEXT,
         email TEXT
@@ -49,6 +52,7 @@ CREATE TABLE
 CREATE TABLE
     IF NOT EXISTS productos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT UNIQUE NOT NULL,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         deleted_at DATETIME,
@@ -79,6 +83,7 @@ CREATE TABLE
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
+        deleted_at DATETIME,
         uuid TEXT UNIQUE NOT NULL,
         numero_factura TEXT UNIQUE NOT NULL,
         fecha_emision DATETIME,
@@ -114,18 +119,21 @@ CREATE TABLE
 CREATE TABLE
     IF NOT EXISTS compras (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        deleted_at DATETIME,
+        uuid TEXT UNIQUE NOT NULL,
         fecha DATETIME,
         proveedor_id INTEGER,
         factura_numero TEXT,
         total REAL,
-        created_at DATETIME NOT NULL,
-        updated_at DATETIME NOT NULL,
         FOREIGN KEY (proveedor_id) REFERENCES proveedors (id)
     );
 
 CREATE TABLE
-    IF NOT EXISTS detalle_compras (
+    IF NOT EXISTS detalle_compra (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT UNIQUE NOT NULL,
         compra_id INTEGER,
         producto_id INTEGER,
         cantidad INTEGER,
