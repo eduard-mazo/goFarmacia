@@ -14,7 +14,7 @@ import (
 var assets embed.FS
 
 func main() {
-	db := backend.NewDb()
+	db := backend.GetDbInstance()
 	app := NewApp(db)
 
 	err := wails.Run(&options.App{

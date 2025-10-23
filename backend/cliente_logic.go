@@ -14,7 +14,11 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 	if err != nil {
 		return Cliente{}, fmt.Errorf("error al iniciar la transacción: %w", err)
 	}
-	defer tx.Rollback()
+	go func() {
+		if err := tx.Rollback(); err != nil {
+			d.Log.Errorf("[LOCAL -> REMOTO] - Error durante [RegistrarCliente] rollback %v", err)
+		}
+	}()
 
 	var existente struct {
 		ID        uint

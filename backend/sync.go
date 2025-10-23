@@ -37,8 +37,8 @@ func (d *Db) SincronizacionInteligente() {
 		uniqueCol string
 		cols      []string
 	}{
-		{"vendedors", "cedula", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "apellido", "cedula", "email", "contrasena", "mfa_enabled", "mfa_secret"}},
-		{"clientes", "numero_id", []string{"id", "created_at", "updated_at", "deleted_at", "nombre", "apellido", "tipo_id", "numero_id", "telefono", "email", "direccion"}},
+		{"vendedors", "cedula", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "apellido", "cedula", "email", "contrasena", "mfa_enabled", "mfa_secret"}},
+		{"clientes", "numero_id", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "apellido", "tipo_id", "numero_id", "telefono", "email", "direccion"}},
 		{"proveedors", "nombre", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "telefono", "email"}},
 		{"productos", "codigo", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "codigo", "precio_venta", "stock"}},
 	}
@@ -99,7 +99,11 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	if err != nil {
 		return fmt.Errorf("[%s] error iniciando tx local: %w", tableName, err)
 	}
-	defer txLocal.Rollback()
+	go func() {
+		if err := txLocal.Rollback(); err != nil {
+			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [syncGenericModel] rollback %v", err)
+		}
+	}()
 
 	// Build local UPSERT (SQLite) using excluded and WHERE excluded.updated_at > updated_at
 	placeholders := strings.Repeat("?,", len(cols)-1) + "?"
@@ -361,7 +365,11 @@ func (d *Db) ForzarResincronizacionLocalDesdeRemoto() error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	go func() {
+		if err := tx.Rollback(); err != nil {
+			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [ForzarResincronizacionLocalDesdeRemoto] rollback %v", err)
+		}
+	}()
 
 	// BORRÓN Y CUENTA NUEVA LOCAL
 	d.Log.Info("Limpiando tablas locales de stock y transacciones...")
@@ -396,7 +404,11 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	if err != nil {
 		return fmt.Errorf("error al iniciar transacción local para transacciones: %w", err)
 	}
-	defer tx.Rollback()
+	go func() {
+		if err := tx.Rollback(); err != nil {
+			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [sincronizarTransaccionesHaciaLocal] rollback %v", err)
+		}
+	}()
 
 	// ---------------------------
 	// --- 1) FACTURAS ----------
@@ -757,7 +769,11 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	if err != nil {
 		return fmt.Errorf("error iniciando tx remota: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	go func() {
+		if err := tx.Rollback(ctx); err != nil {
+			d.Log.Errorf("[LOCAL -> REMOTO] - Error durante [syncVentaToRemote] rollback %v", err)
+		}
+	}()
 	d.Log.Infof("[REMOTO] - Se prepara INSERT por batch para detalles_facturas de Factura UUID %s", f.UUID)
 	batch := &pgx.Batch{}
 	for rows.Next() {
@@ -831,7 +847,11 @@ func (d *Db) syncCompraToRemote(id uint) {
 		d.Log.Errorf("syncCompraToRemote: no se pudo iniciar tx remota: %v", err)
 		return
 	}
-	defer rtx.Rollback(d.ctx)
+	go func() {
+		if err := rtx.Rollback(d.ctx); err != nil {
+			d.Log.Errorf("[LOCAL -> REMOTO] - Error durante [syncCompraToRemote] rollback %v", err)
+		}
+	}()
 
 	_, err = rtx.Exec(d.ctx, `
 		INSERT INTO compras (id, fecha, proveedor_id, factura_numero, total, created_at, updated_at)
@@ -1017,7 +1037,11 @@ func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
 	if err != nil {
 		return fmt.Errorf("error al iniciar transacción local para op. stock: %w", err)
 	}
-	defer tx.Rollback()
+	go func() {
+		if err := tx.Rollback(); err != nil {
+			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [sincronizarOperacionesStockHaciaLocal] rollback %v", err)
+		}
+	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO operacion_stocks (uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp, sincronizado)
@@ -1064,18 +1088,6 @@ func joinInt64s(nums []int64) string {
 		b.WriteString(fmt.Sprintf("%d", n))
 	}
 	return b.String()
-}
-
-func uniqueProductoIDsFromDetalles(detalles []DetalleFactura) []uint {
-	m := make(map[uint]bool)
-	for _, d := range detalles {
-		m[d.ProductoID] = true
-	}
-	out := make([]uint, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 func uniqueProductoIDsFromDetallesCompra(detalles []DetalleCompra) []uint {

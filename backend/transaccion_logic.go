@@ -68,7 +68,11 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	if err != nil {
 		return Factura{}, fmt.Errorf("error al iniciar transacción: %w", err)
 	}
-	defer tx.Rollback()
+	go func() {
+		if err := tx.Rollback(); err != nil {
+			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [RegistrarVenta] rollback %v", err)
+		}
+	}()
 
 	// 1. Crear la cabecera de la factura primero para obtener su ID.
 	numeroFactura, err := d.generarNumeroFactura(tx)
@@ -370,7 +374,11 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 	if err != nil {
 		return Compra{}, fmt.Errorf("error al iniciar transacción de compra: %w", err)
 	}
-	defer tx.Rollback()
+	go func() {
+		if err := tx.Rollback(); err != nil {
+			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [RegistrarCompra] rollback %v", err)
+		}
+	}()
 
 	var totalCompra float64
 	for _, p := range req.Productos {

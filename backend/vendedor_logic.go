@@ -30,7 +30,11 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	if err != nil {
 		return Vendedor{}, fmt.Errorf("error al iniciar transacción local para transacciones: %w", err)
 	}
-	defer tx.Rollback()
+	go func() {
+		if err := tx.Rollback(); err != nil {
+			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [RegistrarVendedor] rollback %v", err)
+		}
+	}()
 
 	var existenteID sql.NullInt64
 	var deletedAt sql.NullTime

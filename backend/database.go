@@ -230,39 +230,46 @@ type Db struct {
 	jwtKey    []byte
 }
 
-func NewDb() *Db {
-	fmt.Printf("NEW_DB")
-	logger := logrus.New()
-	logDir := "logs"
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		fmt.Printf("No se pudo crear el directorio de logs: %v\n", err)
-	}
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	logFileName := fmt.Sprintf("app_%s.log", timestamp)
-	logFilePath := filepath.Join(logDir, logFileName)
+var (
+	dbInstance *Db
+	once       sync.Once
+)
 
-	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		fmt.Printf("No se pudo abrir archivo de log: %v\n", err)
-	}
-	logger.SetFormatter(&logrus.TextFormatter{
-		FullTimestamp:   true,
-		ForceColors:     false,
-		TimestampFormat: "2006-01-02 15:04:05.000",
+func GetDbInstance() *Db {
+	once.Do(func() {
+		logger := logrus.New()
+		logDir := "logs"
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			fmt.Printf("No se pudo crear el directorio de logs: %v\n", err)
+		}
+		timestamp := time.Now().Format("2006-01-02_15-04-05")
+		logFileName := fmt.Sprintf("app_%s.log", timestamp)
+		logFilePath := filepath.Join(logDir, logFileName)
+
+		file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			fmt.Printf("No se pudo abrir archivo de log: %v\n", err)
+		}
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			ForceColors:     false,
+			TimestampFormat: "2006-01-02 15:04:05.000",
+		})
+
+		logger.SetLevel(logrus.DebugLevel)
+		logger.SetOutput(io.MultiWriter(os.Stdout, file))
+
+		logger.Info("Inicializando logger con salida a consola y archivo... (SINGLETON)")
+
+		dbInstance = &Db{Log: logger}
 	})
 
-	logger.SetLevel(logrus.DebugLevel)
-
-	logger.SetOutput(io.MultiWriter(os.Stdout, file))
-
-	logger.Info("Inicializando logger con salida a consola y archivo...")
-
-	return &Db{Log: logger}
+	// Devolvemos la instancia única que ya fue creada
+	return dbInstance
 }
 
 func (d *Db) Startup(ctx context.Context) {
 	d.ctx = ctx
-	fmt.Println("DB backend starting up...")
 	d.initDB()
 	d.RealizarSincronizacionInicial()
 }
