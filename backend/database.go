@@ -264,7 +264,6 @@ func GetDbInstance() *Db {
 		dbInstance = &Db{Log: logger}
 	})
 
-	// Devolvemos la instancia única que ya fue creada
 	return dbInstance
 }
 

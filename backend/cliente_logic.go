@@ -16,7 +16,7 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 	}
 	go func() {
 		if err := tx.Rollback(); err != nil {
-			d.Log.Errorf("[LOCAL -> REMOTO] - Error durante [RegistrarCliente] rollback %v", err)
+			d.Log.Errorf("[LOCAL] - Error durante [RegistrarCliente] rollback %v", err)
 		}
 	}()
 
