@@ -74,7 +74,7 @@ func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 	}
 
 	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(vendedor.ID)
+		go d.syncVendedorToRemote(vendedor.UUID)
 	}
 	var buf bytes.Buffer
 	img, err := key.Image(200, 200)
@@ -156,7 +156,7 @@ func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 	}
 
 	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(vendedor.ID)
+		go d.syncVendedorToRemote(vendedor.UUID)
 	}
 
 	return true, nil

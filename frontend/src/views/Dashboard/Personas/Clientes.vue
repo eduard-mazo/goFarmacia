@@ -182,7 +182,7 @@ async function handleEdit(cliente: backend.Cliente) {
 }
 async function handleDelete(cliente: backend.Cliente) {
   try {
-    await EliminarCliente(cliente.id);
+    await EliminarCliente(cliente.uuid);
     await cargarClientes();
     toast.warning("Cliente eliminado con éxito", {
       description: `Nombre: ${cliente.Nombre}, ID: ${cliente.NumeroID}`,

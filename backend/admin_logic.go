@@ -182,11 +182,7 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción de normalización: %w", err)
 	}
-	go func() {
-		if err := tx.Rollback(); err != nil {
-			d.Log.Errorf("[LOCAL] - Error durante [NormalizarStockTodosLosProductos] rollback %v", err)
-		}
-	}()
+	defer tx.Rollback()
 
 	// 1. Obtener todos los IDs de productos.
 	rows, err := tx.QueryContext(ctx, "SELECT id FROM productos WHERE deleted_at IS NULL")

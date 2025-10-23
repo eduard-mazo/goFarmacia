@@ -209,7 +209,7 @@ async function handleDelete(vendedor: backend.Vendedor) {
     return;
   }
   try {
-    await EliminarVendedor(vendedor.id);
+    await EliminarVendedor(vendedor.uuid);
     await cargarVendedores();
     toast.warning("Vendedor eliminado con éxito", {
       description: `Nombre: ${vendedor.Nombre}, Email: ${vendedor.Email}`,

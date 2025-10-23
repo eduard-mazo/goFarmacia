@@ -79,6 +79,7 @@ async function handleSaveChanges() {
 
   isSaving.value = true;
   const request = new backend.VendedorUpdateRequest();
+  request.UUID = editableUser.value.uuid;
   request.ID = editableUser.value.id;
   request.Nombre = editableUser.value.Nombre;
   request.Apellido = editableUser.value.Apellido;

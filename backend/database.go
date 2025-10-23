@@ -213,6 +213,7 @@ type PaginatedResult struct {
 
 type VendedorUpdateRequest struct {
 	ID               uint   `json:"ID"`
+	UUID             string `json:"UUID"`
 	Nombre           string `json:"Nombre"`
 	Apellido         string `json:"Apellido"`
 	Cedula           string `json:"Cedula"`

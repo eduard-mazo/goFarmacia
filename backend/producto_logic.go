@@ -16,11 +16,7 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 	if err != nil {
 		return Producto{}, fmt.Errorf("no se pudo iniciar la transacción: %w", err)
 	}
-	go func() {
-		if err := tx.Rollback(); err != nil {
-			d.Log.Errorf("[LOCAL] - Error durante [RegistrarProducto] rollback %v", err)
-		}
-	}()
+	defer tx.Rollback()
 
 	var existente struct {
 		ID        uint
@@ -126,11 +122,7 @@ func (d *Db) ActualizarProducto(p Producto) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción: %w", err)
 	}
-	go func() {
-		if err := tx.Rollback(); err != nil {
-			d.Log.Errorf("[LOCAL] - Error durante [ActualizarProducto] rollback %v", err)
-		}
-	}()
+	defer tx.Rollback()
 
 	// 1️⃣ Obtener stock real actual (sumatoria)
 	var stockRealActual int
@@ -329,12 +321,7 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción masiva: %w", err)
 	}
-	go func() {
-		if err := tx.Rollback(); err != nil {
-			d.Log.Errorf("[LOCAL] - Error durante [ActualizarStockMasivo] rollback %v", err)
-		}
-	}()
-
+	defer tx.Rollback()
 	// 1. Preparar IDs para la consulta en lote.
 	productoIDs := make([]uint, 0, len(ajustes))
 	mapaAjustes := make(map[uint]int, len(ajustes))

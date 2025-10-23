@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -21,6 +22,7 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	}
 
 	vendedor.Email = strings.ToLower(vendedor.Email)
+	vendedor.UUID = uuid.New().String()
 	vendedor.CreatedAt = time.Now()
 	vendedor.UpdatedAt = time.Now()
 	vendedor.Contrasena = hashedPassword
@@ -30,35 +32,31 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	if err != nil {
 		return Vendedor{}, fmt.Errorf("error al iniciar transacción local para transacciones: %w", err)
 	}
-	go func() {
-		if err := tx.Rollback(); err != nil {
-			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [RegistrarVendedor] rollback %v", err)
-		}
-	}()
+	defer tx.Rollback()
 
-	var existenteID sql.NullInt64
 	var deletedAt sql.NullTime
-	err = tx.QueryRow("SELECT id, deleted_at FROM vendedors WHERE cedula = ? OR email = ?",
-		vendedor.Cedula, vendedor.Email).Scan(&existenteID, &deletedAt)
+	var existenteUUID sql.NullString
+	err = tx.QueryRow("SELECT uuid, deleted_at FROM vendedors WHERE cedula = ? OR email = ?",
+		vendedor.Cedula, vendedor.Email).Scan(&existenteUUID, &deletedAt)
 	if err != nil && err != sql.ErrNoRows {
 		if err != sql.ErrNoRows {
 			return Vendedor{}, err
 		}
 	}
 
-	if existenteID.Valid {
+	if existenteUUID.Valid {
 		if deletedAt.Valid {
-			_, err = tx.Exec("UPDATE vendedors SET nombre = ?, apellido = ?, email = ?, contrasena = ?, deleted_at = NULL, updated_at = ? WHERE id = ?",
-				vendedor.Nombre, vendedor.Apellido, vendedor.Email, vendedor.Contrasena, time.Now(), existenteID.Int64)
+			_, err = tx.Exec("UPDATE vendedors SET nombre = ?, apellido = ?, email = ?, contrasena = ?, deleted_at = NULL, updated_at = ? WHERE uuid = ?",
+				vendedor.Nombre, vendedor.Apellido, vendedor.Email, vendedor.Contrasena, time.Now(), existenteUUID.String)
 			if err != nil {
 				return Vendedor{}, err
 			}
-			vendedor.ID = uint(existenteID.Int64)
+			vendedor.UUID = existenteUUID.String
 		} else {
 			return Vendedor{}, fmt.Errorf("la cédula o el email ya están registrados en un vendedor activo")
 		}
 	} else {
-		res, err := tx.Exec("INSERT INTO vendedors (nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, time.Now(), time.Now())
+		res, err := tx.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", vendedor.UUID, vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, time.Now(), time.Now())
 		if err != nil {
 			return Vendedor{}, err
 		}
@@ -74,7 +72,7 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	}
 
 	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(vendedor.ID)
+		go d.syncVendedorToRemote(vendedor.UUID)
 	}
 
 	vendedor.Contrasena = ""
@@ -185,8 +183,8 @@ func (d *Db) ActualizarPerfilVendedor(req VendedorUpdateRequest) (string, error)
 
 	// obtener actual
 	var vendedorActual Vendedor
-	row := d.LocalDB.QueryRow("SELECT id, contrasena FROM vendedors WHERE id = ?", req.ID)
-	err := row.Scan(&vendedorActual.ID, &vendedorActual.Contrasena)
+	row := d.LocalDB.QueryRow("SELECT uuid, contrasena FROM vendedors WHERE uuid = ?", req.ID)
+	err := row.Scan(&vendedorActual.UUID, &vendedorActual.Contrasena)
 	if err != nil {
 		return "", errors.New("vendedor no encontrado")
 	}
@@ -199,26 +197,26 @@ func (d *Db) ActualizarPerfilVendedor(req VendedorUpdateRequest) (string, error)
 		if err != nil {
 			return "", fmt.Errorf("error al encriptar la nueva contraseña: %w", err)
 		}
-		_, err = d.LocalDB.Exec("UPDATE vendedors SET contrasena = ?, updated_at = ? WHERE id = ?", hashedPassword, time.Now(), req.ID)
+		_, err = d.LocalDB.Exec("UPDATE vendedors SET contrasena = ?, updated_at = ? WHERE uuid = ?", hashedPassword, time.Now(), req.UUID)
 		if err != nil {
 			return "", err
 		}
 	}
 
-	_, err = d.LocalDB.Exec("UPDATE vendedors SET nombre = ?, apellido = ?, cedula = ?, email = ?, updated_at = ? WHERE id = ?", req.Nombre, req.Apellido, req.Cedula, strings.ToLower(req.Email), time.Now(), req.ID)
+	_, err = d.LocalDB.Exec("UPDATE vendedors SET nombre = ?, apellido = ?, cedula = ?, email = ?, updated_at = ? WHERE uuid = ?", req.Nombre, req.Apellido, req.Cedula, strings.ToLower(req.Email), time.Now(), req.UUID)
 	if err != nil {
 		return "", err
 	}
 
 	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(req.ID)
+		go d.syncVendedorToRemote(req.UUID)
 	}
 
 	return "Perfil actualizado correctamente.", nil
 }
 
 func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
-	if vendedor.ID == 0 {
+	if vendedor.UUID == "" {
 		return Vendedor{}, errors.New("se requiere un ID de vendedor válido para actualizar")
 	}
 
@@ -228,7 +226,7 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 	query := `
 		UPDATE vendedors
 		SET nombre = ?, apellido = ?, cedula = ?, email = ?, updated_at = ?
-		WHERE id = ? AND deleted_at IS NULL
+		WHERE uuid = ? AND deleted_at IS NULL
 	`
 
 	res, err := d.LocalDB.ExecContext(ctx, query,
@@ -237,7 +235,7 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 		vendedor.Cedula,
 		strings.ToLower(vendedor.Email),
 		time.Now(),
-		vendedor.ID,
+		vendedor.UUID,
 	)
 	if err != nil {
 		return Vendedor{}, fmt.Errorf("error al actualizar vendedor: %w", err)
@@ -250,7 +248,7 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 
 	// Sincronización remota asincrónica
 	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(vendedor.ID)
+		go d.syncVendedorToRemote(vendedor.UUID)
 	}
 
 	vendedor.Contrasena = ""
@@ -271,7 +269,7 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 
 	// Construcción dinámica del query SQL
 	baseQuery := `
-		SELECT id, nombre, apellido, cedula, email, mfa_enabled, created_at, updated_at
+		SELECT uuid, nombre, apellido, cedula, email, mfa_enabled, created_at, updated_at
 		FROM vendedors
 		WHERE deleted_at IS NULL
 	`
@@ -313,7 +311,7 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 
 	for rows.Next() {
 		var v Vendedor
-		if err := rows.Scan(&v.ID, &v.Nombre, &v.Apellido, &v.Cedula, &v.Email, &v.MFAEnabled, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.UUID, &v.Nombre, &v.Apellido, &v.Cedula, &v.Email, &v.MFAEnabled, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			d.Log.Errorf("error al escanear vendedor: %v", err)
 			continue
 		}
@@ -325,8 +323,8 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 	return result, nil
 }
 
-func (d *Db) EliminarVendedor(id uint) (string, error) {
-	if id == 0 {
+func (d *Db) EliminarVendedor(uuid string) (string, error) {
+	if uuid == "" {
 		return "", errors.New("ID de vendedor no válido")
 	}
 
@@ -334,14 +332,14 @@ func (d *Db) EliminarVendedor(id uint) (string, error) {
 	_, err := d.LocalDB.Exec(`
 		UPDATE vendedors
 		SET deleted_at = ?
-		WHERE id = ? AND deleted_at IS NULL
-	`, time.Now(), id)
+		WHERE uuid = ? AND deleted_at IS NULL
+	`, time.Now(), uuid)
 	if err != nil {
 		return "", fmt.Errorf("error eliminando vendedor: %w", err)
 	}
 
 	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(id)
+		go d.syncVendedorToRemote(uuid)
 	}
 
 	return "Vendedor marcado como eliminado localmente. Sincronizando...", nil
