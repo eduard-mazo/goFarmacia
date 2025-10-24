@@ -2,6 +2,7 @@ package backend
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -104,9 +105,9 @@ func (d *Db) SincronizarTodasLasOperacionesHaciaRemoto() error {
 	if err != nil {
 		return fmt.Errorf("no se pudo iniciar la transacción remota forzada: %w", err)
 	}
-	go func() {
-		if err := rtx.Rollback(d.ctx); err != nil {
-			d.Log.Errorf("[LOCAL -> REMOTO] - Error durante [SincronizarTodasLasOperacionesHaciaRemoto] rollback %v", err)
+	defer func() {
+		if rErr := rtx.Rollback(d.ctx); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [NormalizarStockTodosLosProductos] rollback %v", err)
 		}
 	}()
 
@@ -182,7 +183,11 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción de normalización: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [NormalizarStockTodosLosProductos] rollback %v", err)
+		}
+	}()
 
 	// 1. Obtener todos los IDs de productos.
 	rows, err := tx.QueryContext(ctx, "SELECT id FROM productos WHERE deleted_at IS NULL")

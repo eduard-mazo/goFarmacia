@@ -32,7 +32,11 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	if err != nil {
 		return Vendedor{}, fmt.Errorf("error al iniciar transacción local para transacciones: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rErr := tx.Rollback(); err != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [RegistrarVendedor] rollback %v", err)
+		}
+	}()
 
 	var deletedAt sql.NullTime
 	var existenteUUID sql.NullString
@@ -89,12 +93,12 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 		defer cancel()
 
 		row := d.RemoteDB.QueryRow(ctx, `
-			SELECT id, nombre, apellido, cedula, email, contrasena, mfa_enabled
+			SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
 			FROM vendedors
 			WHERE email = $1 AND deleted_at IS NULL
 		`, req.Email)
 
-		err = row.Scan(&vendedor.ID, &vendedor.Nombre, &vendedor.Apellido,
+		err = row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
 			&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled)
 
 		if err != nil {
@@ -110,11 +114,11 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 
 	if err != nil {
 		row := d.LocalDB.QueryRow(`
-			SELECT id, nombre, apellido, cedula, email, contrasena, mfa_enabled
+			SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
 			FROM vendedors
 			WHERE email = ? AND deleted_at IS NULL
 		`, req.Email)
-		err = row.Scan(&vendedor.ID, &vendedor.Nombre, &vendedor.Apellido,
+		err = row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
 			&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled)
 		if err != nil {
 			if err == sql.ErrNoRows {

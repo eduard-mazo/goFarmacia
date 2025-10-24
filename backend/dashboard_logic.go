@@ -118,7 +118,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	}
 
 	// 6. Obtener Top 5 Productos sin stock.
-	querySinStock := "SELECT id, codigo, nombre, precio_venta, stock FROM productos WHERE stock <= 0 AND deleted_at IS NULL ORDER BY nombre ASC LIMIT 5"
+	querySinStock := "SELECT id, uuid, codigo, nombre, precio_venta, stock FROM productos WHERE stock <= 0 AND deleted_at IS NULL ORDER BY nombre ASC LIMIT 5"
 	rows, err = d.LocalDB.Query(querySinStock)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener productos sin stock: %w", err)
@@ -126,7 +126,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var p Producto
-		if err := rows.Scan(&p.ID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock); err != nil {
+		if err := rows.Scan(&p.ID, &p.UUID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock); err != nil {
 			return data, err
 		}
 		data.ProductosSinStock = append(data.ProductosSinStock, p)

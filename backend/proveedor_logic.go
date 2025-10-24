@@ -49,7 +49,7 @@ func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (Pagi
 	offset := (page - 1) * pageSize
 	paginationClause := fmt.Sprintf("ORDER BY nombre ASC LIMIT %d OFFSET %d", pageSize, offset)
 
-	selectQuery := "SELECT id, nombre, contacto, telefono, direccion " + baseQuery + whereClause + paginationClause
+	selectQuery := "SELECT id, uuid, nombre, contacto, telefono, direccion " + baseQuery + whereClause + paginationClause
 	rows, err := d.LocalDB.Query(selectQuery, args...)
 	if err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al obtener proveedores paginados: %w", err)
@@ -58,7 +58,7 @@ func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (Pagi
 
 	for rows.Next() {
 		var p Proveedor
-		if err := rows.Scan(&p.ID, &p.Nombre, &p.Telefono, &p.Email); err != nil {
+		if err := rows.Scan(&p.ID, &p.UUID, &p.Nombre, &p.Telefono, &p.Email); err != nil {
 			return PaginatedResult{}, fmt.Errorf("error al escanear proveedor: %w", err)
 		}
 		proveedores = append(proveedores, p)
@@ -68,13 +68,13 @@ func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (Pagi
 }
 
 // ObtenerProveedorPorID busca un proveedor por su ID.
-func (d *Db) ObtenerProveedorPorID(id uint) (Proveedor, error) {
+func (d *Db) ObtenerProveedorPorUUID(uuid string) (Proveedor, error) {
 	var p Proveedor
-	query := "SELECT id, nombre, contacto, telefono, direccion FROM proveedors WHERE id = ? AND deleted_at IS NULL"
+	query := "SELECT uuid, nombre, contacto, telefono, direccion FROM proveedors WHERE uuid = ? AND deleted_at IS NULL"
 
-	err := d.LocalDB.QueryRow(query, id).Scan(&p.ID, &p.Nombre, &p.Email, &p.Telefono)
+	err := d.LocalDB.QueryRow(query, uuid).Scan(&p.ID, &p.Nombre, &p.Email, &p.Telefono)
 	if err != nil {
-		return Proveedor{}, fmt.Errorf("error al buscar proveedor por ID %d: %w", id, err)
+		return Proveedor{}, fmt.Errorf("error al buscar proveedor por ID %s: %w", uuid, err)
 	}
 
 	return p, nil

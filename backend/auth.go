@@ -46,9 +46,9 @@ func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 
 	// Buscar vendedor en SQLite
 	err := d.LocalDB.QueryRow(
-		"SELECT id, email FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		"SELECT id, uuid, email FROM vendedors WHERE email = ? AND deleted_at IS NULL",
 		email,
-	).Scan(&vendedor.ID, &vendedor.Email)
+	).Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return MFASetupResponse{}, errors.New("vendedor no encontrado")
@@ -66,8 +66,8 @@ func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 
 	vendedor.MFASecret = key.Secret()
 	_, err = d.LocalDB.Exec(
-		"UPDATE vendedors SET mfa_secret = ?, updated_at = ? WHERE id = ?",
-		vendedor.MFASecret, time.Now(), vendedor.ID,
+		"UPDATE vendedors SET mfa_secret = ?, updated_at = ? WHERE uuid = ?",
+		vendedor.MFASecret, time.Now(), vendedor.UUID,
 	)
 	if err != nil {
 		return MFASetupResponse{}, errors.New("no se pudo guardar la clave MFA")
@@ -128,9 +128,9 @@ func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 	var vendedor Vendedor
 
 	err := d.LocalDB.QueryRow(
-		"SELECT id, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		"SELECT id, uuid, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
 		email,
-	).Scan(&vendedor.ID, &vendedor.MFASecret)
+	).Scan(&vendedor.ID, &vendedor.UUID, &vendedor.MFASecret)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return false, errors.New("usuario no encontrado")
@@ -175,9 +175,9 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 
 	var vendedor Vendedor
 	err = d.LocalDB.QueryRow(
-		"SELECT id, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		"SELECT id, uuid, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
 		claims.Email,
-	).Scan(&vendedor.ID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.MFAEnabled, &vendedor.MFASecret)
+	).Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.MFAEnabled, &vendedor.MFASecret)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return response, errors.New("usuario no encontrado")

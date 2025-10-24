@@ -16,13 +16,17 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 	if err != nil {
 		return Producto{}, fmt.Errorf("no se pudo iniciar la transacción: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [RegistrarProducto] rollback %v", err)
+		}
+	}()
 
 	var existente struct {
-		ID        uint
+		UUID      string
 		DeletedAt sql.NullTime
 	}
-	err = tx.QueryRowContext(d.ctx, "SELECT id, deleted_at FROM productos WHERE codigo = ?", producto.Codigo).Scan(&existente.ID, &existente.DeletedAt)
+	err = tx.QueryRowContext(d.ctx, "SELECT id, uuid, deleted_at FROM productos WHERE codigo = ?", producto.Codigo).Scan(&existente.UUID, &existente.DeletedAt)
 
 	if err != nil && err != sql.ErrNoRows {
 		return Producto{}, fmt.Errorf("error al verificar producto existente: %w", err)
@@ -32,16 +36,16 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 	case err == nil:
 		if existente.DeletedAt.Valid {
 			// Restaurar producto eliminado
-			d.Log.Infof("Restaurando producto eliminado con ID: %d", existente.ID)
+			d.Log.Infof("Restaurando producto eliminado con ID: %s", existente.UUID)
 			update := `
 				UPDATE productos
 				SET nombre = ?, precio_venta = ?, stock = 0, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
-				WHERE id = ?
+				WHERE uuid = ?
 			`
-			if _, err := tx.Exec(update, producto.Nombre, producto.PrecioVenta, existente.ID); err != nil {
+			if _, err := tx.Exec(update, producto.Nombre, producto.PrecioVenta, existente.UUID); err != nil {
 				return Producto{}, fmt.Errorf("error al restaurar producto: %w", err)
 			}
-			producto.ID = existente.ID
+			producto.UUID = existente.UUID
 			producto.Stock = 0
 		} else {
 			return Producto{}, fmt.Errorf("el código del producto ya está en uso")
@@ -108,7 +112,7 @@ func (d *Db) EliminarProducto(id uint) error {
 		return fmt.Errorf("error al eliminar producto: %w", err)
 	}
 
-	go d.SincronizacionInteligente()
+	go d.syncProductoToRemote(id)
 	return nil
 }
 
@@ -122,7 +126,11 @@ func (d *Db) ActualizarProducto(p Producto) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [ActualizarProducto] rollback %v", err)
+		}
+	}()
 
 	// 1️⃣ Obtener stock real actual (sumatoria)
 	var stockRealActual int
@@ -201,7 +209,7 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 		return PaginatedResult{}, fmt.Errorf("error al contar productos: %w", err)
 	}
 
-	selectQuery := "SELECT id, codigo, nombre, precio_venta, stock " + baseQuery + whereClause
+	selectQuery := "SELECT id, uuid, codigo, nombre, precio_venta, stock " + baseQuery + whereClause
 
 	if sortBy != "" {
 		order := "ASC"
@@ -228,7 +236,7 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 
 	for rows.Next() {
 		var p Producto
-		if err := rows.Scan(&p.ID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock); err != nil {
+		if err := rows.Scan(&p.ID, &p.UUID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock); err != nil {
 			return PaginatedResult{}, fmt.Errorf("error al escanear producto: %w", err)
 		}
 		productos = append(productos, p)
@@ -237,14 +245,14 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 	return PaginatedResult{Records: productos, TotalRecords: total}, nil
 }
 
-// ObtenerProductoPorID busca un producto por su ID.
-func (d *Db) ObtenerProductoPorID(id uint) (Producto, error) {
+// ObtenerProductoPorUUID busca un producto por su UUID.
+func (d *Db) ObtenerProductoPorUUID(uuid string) (Producto, error) {
 	var p Producto
-	query := "SELECT id, codigo, nombre, precio_venta, stock FROM productos WHERE id = ? AND deleted_at IS NULL"
+	query := "SELECT uuid, codigo, nombre, precio_venta, stock FROM productos WHERE uuid = ? AND deleted_at IS NULL"
 
-	err := d.LocalDB.QueryRow(query, id).Scan(&p.ID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock)
+	err := d.LocalDB.QueryRow(query, uuid).Scan(&p.ID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock)
 	if err != nil {
-		return Producto{}, fmt.Errorf("error al buscar producto por ID %d: %w", id, err)
+		return Producto{}, fmt.Errorf("error al buscar producto por ID %s: %w", uuid, err)
 	}
 
 	return p, nil
@@ -321,7 +329,11 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción masiva: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [ActualizarStockMasivo] rollback %v", err)
+		}
+	}()
 	// 1. Preparar IDs para la consulta en lote.
 	productoIDs := make([]uint, 0, len(ajustes))
 	mapaAjustes := make(map[uint]int, len(ajustes))

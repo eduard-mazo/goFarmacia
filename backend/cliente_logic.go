@@ -14,7 +14,11 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 	if err != nil {
 		return Cliente{}, fmt.Errorf("error al iniciar la transacción: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [RegistrarCliente] rollback %v", err)
+		}
+	}()
 
 	var existente struct {
 		UUID      sql.NullString
