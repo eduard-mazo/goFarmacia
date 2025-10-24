@@ -312,6 +312,7 @@ func (d *Db) initDB() {
 	} else {
 		d.Log.Warn("DATABASE_URL no está configurada. Se trabajará OFFLINE.")
 	}
+	d.Log.Info("FIN INITDB \n")
 }
 
 func (d *Db) isRemoteDBAvailable() bool {
@@ -370,7 +371,6 @@ func (d *Db) runMigrations(dbType string, dsn string) {
 	}
 
 	sourceURL := fmt.Sprintf("file://backend/db/migrations/%s", dbType)
-
 	var databaseURL string
 	if dbType == "sqlite3" {
 		databaseURL = "sqlite3://" + dsn
@@ -378,21 +378,42 @@ func (d *Db) runMigrations(dbType string, dsn string) {
 		databaseURL = dsn
 	}
 
-	d.Log.Infof("Ejecutando migraciones para '%s' desde '%s'", dbType, sourceURL)
+	d.Log.Infof("[MIGRATIONS] Iniciando migraciones para '%s' desde '%s'", dbType, sourceURL)
 
-	m, err := migrate.New(sourceURL, databaseURL)
-	if err != nil {
-		d.Log.Errorf("Error al inicializar instancia de migración para '%s': %v", dbType, err)
-		return
+	// ✅ Protegemos con timeout si es remoto (evita bloqueos)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		m, err := migrate.New(sourceURL, databaseURL)
+		if err != nil {
+			done <- fmt.Errorf("Error al inicializar instancia de migración para '%s': %v", dbType, err)
+			return
+		}
+
+		err = m.Up()
+		if err != nil && err != migrate.ErrNoChange {
+			done <- fmt.Errorf("¡¡¡ERROR CRÍTICO al aplicar migración para '%s'!!!: %v", dbType, err)
+		} else if err == migrate.ErrNoChange {
+			d.Log.Infof("Migración para '%s': No hay cambios que aplicar. Esquema actualizado.", dbType)
+			done <- nil
+		} else {
+			d.Log.Infof("Migración para '%s' aplicada exitosamente.", dbType)
+			done <- nil
+		}
+
+		_, _ = m.Close()
+	}()
+
+	select {
+	case <-ctx.Done():
+		d.Log.Errorf("Timeout al ejecutar migraciones para '%s' (más de 10s). Se omite.", dbType)
+	case err := <-done:
+		if err != nil {
+			d.Log.Error(err)
+		}
 	}
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		d.Log.Errorf("¡¡¡ERROR CRÍTICO al aplicar migración para '%s'!!!: %v", dbType, err)
-	} else if err == migrate.ErrNoChange {
-		d.Log.Infof("Migración para '%s': No hay cambios que aplicar. Esquema actualizado.", dbType)
-	} else {
-		d.Log.Infof("Migración para '%s' aplicada exitosamente.", dbType)
-	}
-
-	_, _ = m.Close()
+	d.Log.Infof("[MIGRATIONS] Finalizadas migraciones para '%s'", dbType)
 }
