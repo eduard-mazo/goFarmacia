@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -23,6 +24,8 @@ func (d *Db) SincronizacionInteligente() {
 		return
 	}
 	defer d.syncMutex.Unlock()
+
+	runtime.EventsEmit(d.ctx, "sync:start", "[INICIO]: Sincronización Inteligente (refactor)")
 
 	if !d.isRemoteDBAvailable() {
 		d.Log.Warn("Modo offline: la base de datos remota no está disponible, se omite la sincronización.")
@@ -64,6 +67,7 @@ func (d *Db) SincronizacionInteligente() {
 
 	// Subir operaciones locales pendientes (marcado atómico)
 	d.SincronizarOperacionesStockHaciaRemoto()
+	runtime.EventsEmit(d.ctx, "sync:finish", "Sincronización completada exitosamente.")
 
 	d.Log.Info("[FIN]: Sincronización Inteligente")
 }
@@ -728,7 +732,7 @@ func (d *Db) syncProveedorToRemote(id uint) {
 func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	ctx := d.ctx
 	d.Log.Infof("[LOCAL -> REMOTO] - Sincronizando venta factura UUID %s", facturaUUID)
-
+	runtime.EventsEmit(d.ctx, "sync:start", facturaUUID)
 	// 1) Obtener factura local
 	var f Factura
 	err := d.LocalDB.QueryRowContext(ctx, `
@@ -816,6 +820,7 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	_, _ = d.LocalDB.ExecContext(ctx, `UPDATE detalle_facturas SET sincronizado = 1 WHERE factura_uuid = ?`, f.UUID)
 
 	d.Log.Infof("[REMOTO] - Factura %s y sus detalles sincronizados correctamente.", f.UUID)
+	runtime.EventsEmit(d.ctx, "sync:finish", facturaUUID)
 	return nil
 }
 
