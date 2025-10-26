@@ -312,7 +312,6 @@ func (d *Db) initDB() {
 	} else {
 		d.Log.Warn("DATABASE_URL no está configurada. Se trabajará OFFLINE.")
 	}
-	d.Log.Info("FIN INITDB \n")
 }
 
 func (d *Db) isRemoteDBAvailable() bool {

@@ -5,13 +5,20 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	UUIDConstraintName          = "facturas_uuid_unique"
+	NumeroFacturaConstraintName = "uni_facturas_numero_factura"
 )
 
 func (d *Db) RealizarSincronizacionInicial() {
@@ -727,13 +734,16 @@ func (d *Db) syncProveedorToRemote(id uint) {
 	d.Log.Infof("Sincronizado proveedor individual ID %d hacia el remoto.", id)
 }
 
-// syncVentaToRemote: sincroniza una factura + detalles + operaciones de stock relacionadas.
-// Sincroniza una venta (factura) local hacia el servidor remoto sin duplicar
+// syncVentaToRemote: sincroniza una factura + detalles + operaciones de stock relacionadas
+// de forma atómica usando la estrategia EAFP (Es más fácil pedir perdón que permiso).
 func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	ctx := d.ctx
-	d.Log.Infof("[LOCAL -> REMOTO] - Sincronizando venta factura UUID %s", facturaUUID)
+	d.Log.Infof("[LOCAL -> REMOTO] - Iniciando sincronización atómica para Venta UUID %s", facturaUUID)
 	runtime.EventsEmit(d.ctx, "sync:start", facturaUUID)
-	// 1) Obtener factura local
+
+	// --- 1) OBTENER TODOS LOS DATOS LOCALES PRIMERO ---
+
+	// 1a) Obtener factura local
 	var f Factura
 	err := d.LocalDB.QueryRowContext(ctx, `
 		SELECT uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at
@@ -741,85 +751,200 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 		&f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.VendedorID, &f.ClienteID,
 		&f.Subtotal, &f.IVA, &f.Total, &f.Estado, &f.MetodoPago, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
-		return fmt.Errorf("factura no encontrada localmente: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			d.Log.Warnf("[LOCAL] - No se encontró la factura %s para sincronizar. Omitiendo.", facturaUUID)
+			return nil
+		}
+		return fmt.Errorf("[LOCAL] - factura no encontrada localmente: %w", err)
 	}
 
-	// 2) Verificar si ya existe en remoto
-	var exists bool
-	checkQuery := `SELECT EXISTS(SELECT 1 FROM facturas WHERE uuid = $1)`
-	err = d.RemoteDB.QueryRow(ctx, checkQuery, f.UUID).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("error verificando existencia de factura remota: %w", err)
-	}
-	if exists {
-		d.Log.Infof("[REMOTO] - Factura UUID %s ya existe en remoto, se omite inserción.", f.UUID)
-		_, _ = d.LocalDB.ExecContext(ctx, `UPDATE facturas SET sincronizado = 1 WHERE uuid = ?`, f.UUID)
-		return nil
-	}
-	d.Log.Infof("[REMOTO] - Factura UUID %s no existe en remoto", f.UUID)
-	// 3) Insertar factura en remoto (usa ON CONFLICT(uuid))
-	insertFacturaSQL := `
-		INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		ON CONFLICT (uuid) DO UPDATE 
-		SET updated_at = EXCLUDED.updated_at
-		WHERE EXCLUDED.updated_at > facturas.updated_at
-	`
-	_, err = d.RemoteDB.Exec(ctx, insertFacturaSQL, f.UUID, f.NumeroFactura, f.FechaEmision, f.VendedorID, f.ClienteID, f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("error insertando factura remota: %w", err)
-	}
-	d.Log.Infof("[REMOTO] - Se ejecutó INSERT remoto para Factura UUID %s", f.UUID)
-	// 4) Subir los detalles (solo si la factura fue insertada)
-	d.Log.Infof("[LOCAL] - consultando detalles_factura para Factura UUID %s", f.UUID)
-	rows, err := d.LocalDB.QueryContext(ctx, `
+	// 1b) Obtener detalles locales
+	var detallesLocales []DetalleFactura
+	rowsDetalles, err := d.LocalDB.QueryContext(ctx, `
 		SELECT uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at 
 		FROM detalle_facturas WHERE factura_uuid = ?`, facturaUUID)
 	if err != nil {
 		return fmt.Errorf("error obteniendo detalles locales: %w", err)
 	}
-	defer rows.Close()
-
-	tx, err := d.RemoteDB.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("error iniciando tx remota: %w", err)
+	for rowsDetalles.Next() {
+		var df DetalleFactura
+		if err := rowsDetalles.Scan(&df.UUID, &df.FacturaID, &df.FacturaUUID, &df.ProductoID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
+			d.Log.Errorf("Error al escanear detalle_factura local: %v", err)
+			rowsDetalles.Close()
+			return err
+		}
+		detallesLocales = append(detallesLocales, df)
 	}
+	rowsDetalles.Close()
+
+	// 1c) Obtener operaciones de stock locales
+	var operacionesLocales []OperacionStock
+	rowsOps, err := d.LocalDB.QueryContext(ctx, `
+		SELECT uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp 
+		FROM operacion_stocks WHERE factura_uuid = ?`, facturaUUID)
+	if err != nil {
+		return fmt.Errorf("error obteniendo operaciones de stock locales: %w", err)
+	}
+	for rowsOps.Next() {
+		var op OperacionStock
+		var facturaID sql.NullInt64
+		var stockResultante sql.NullInt64
+		if err := rowsOps.Scan(&op.UUID, &op.ProductoID, &op.TipoOperacion, &op.CantidadCambio, &stockResultante, &op.VendedorID, &facturaID, &op.FacturaUUID, &op.Timestamp); err != nil {
+			d.Log.Errorf("Error al escanear operacion_stock local: %v", err)
+			rowsOps.Close()
+			return err
+		}
+		operacionesLocales = append(operacionesLocales, op)
+	}
+	rowsOps.Close()
+
+	// --- 2) INICIAR TRANSACCIÓN REMOTA ATÓMICA ---
+	rtx, err := d.RemoteDB.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("[REMOTO] - error al iniciar transacción: %w", err)
+	}
+	// defer rtx.Rollback() se encargará de cualquier 'return err'
 	defer func() {
-		if rErr := tx.Rollback(ctx); rErr != nil && !errors.Is(rErr, pgx.ErrTxClosed) {
-			d.Log.Errorf("[LOCAL -> REMOTO] - Error durante [syncVentaToRemote] rollback %v", err)
+		if rErr := rtx.Rollback(ctx); rErr != nil && !errors.Is(rErr, pgx.ErrTxClosed) {
+			d.Log.Errorf("[REMOTO] - Error durante [syncVentaToRemote] rollback %v", rErr)
 		}
 	}()
-	d.Log.Infof("[REMOTO] - Se prepara INSERT por batch para detalles_facturas de Factura UUID %s", f.UUID)
-	batch := &pgx.Batch{}
-	for rows.Next() {
-		var df DetalleFactura
-		if err := rows.Scan(&df.UUID, &df.FacturaID, &df.FacturaUUID, &df.ProductoID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
-			d.Log.Errorf("Error al escanear detalle_factura remota: %v", err)
-			continue
+
+	// --- 3) EAFP PARA LA FACTURA (INSERT-FIRST) ---
+	var facturaFueInsertada bool
+	var needsLocalUpdate bool
+	finalNumeroFactura := f.NumeroFactura
+
+	insertFacturaSQL := `
+		INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`
+	_, err = rtx.Exec(ctx, insertFacturaSQL,
+		f.UUID, f.NumeroFactura, f.FechaEmision, f.VendedorID, f.ClienteID,
+		f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt,
+	)
+
+	if err == nil {
+		d.Log.Infof("[REMOTO] - Factura %s insertada ", f.UUID)
+		facturaFueInsertada = true
+	} else {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // 23505 = unique_violation
+
+			switch pgErr.ConstraintName {
+			case UUIDConstraintName:
+				d.Log.Infof("[REMOTO] - Factura UUID [%s] ya existe. No se insertará, pero se marcará como sincronizada.", facturaUUID)
+				facturaFueInsertada = false
+
+			case NumeroFacturaConstraintName:
+				d.Log.Warnf("[REMOTO] - Colisión de numero_factura [%s]. Buscando nuevo número...", f.NumeroFactura)
+				prefix, _, parseErr := parseNumeroFactura(f.NumeroFactura)
+				if parseErr != nil {
+					return fmt.Errorf("[REMOTO] - Colisión de numero_factura ('%s') formato inválido: %w", f.NumeroFactura, parseErr)
+				}
+				var maxNum int
+				maxQuery := `
+					SELECT COALESCE(MAX(CAST(SUBSTRING(numero_factura FROM '(\d+)$') AS INTEGER)), 0)
+					FROM facturas 
+					WHERE numero_factura LIKE $1`
+
+				if errMax := rtx.QueryRow(ctx, maxQuery, prefix+"%").Scan(&maxNum); errMax != nil {
+					return fmt.Errorf("error obteniendo max numero_factura tras colisión: %w", errMax)
+				}
+
+				newNum := maxNum + 1
+				numeroParaInsertar := fmt.Sprintf("%s%d", prefix, newNum)
+				d.Log.Infof("[REMOTO] - Nuevo número asignado: %s", numeroParaInsertar)
+
+				_, errInsert2 := rtx.Exec(ctx, insertFacturaSQL,
+					f.UUID, numeroParaInsertar, f.FechaEmision, f.VendedorID, f.ClienteID,
+					f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt,
+				)
+
+				if errInsert2 != nil {
+					return fmt.Errorf("error en el segundo intento de insert con '%s': %w", numeroParaInsertar, errInsert2)
+				}
+
+				d.Log.Infof("[REMOTO] - Factura %s insertada con nuevo número %s.", f.UUID, numeroParaInsertar)
+				facturaFueInsertada = true
+				needsLocalUpdate = true
+				finalNumeroFactura = numeroParaInsertar
+
+			default:
+				// Otro error de constraint
+				return fmt.Errorf("[REMOTO] - colisión unique desconocida (restricción: %s): %w", pgErr.ConstraintName, err)
+			}
+		} else {
+			// Error que no es 'unique_violation'
+			return fmt.Errorf("error al insertar factura (no es colisión unique): %w", err)
 		}
-		batch.Queue(`
-			INSERT INTO detalle_facturas (uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-			ON CONFLICT (uuid) DO UPDATE 
-			SET updated_at = EXCLUDED.updated_at
-			WHERE EXCLUDED.updated_at > detalle_facturas.updated_at`,
-			df.UUID, df.FacturaID, df.FacturaUUID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt)
-	}
-	d.Log.Infof("[REMOTO] - Se envía INSERT por batch para detalles_facturas de Factura UUID %s", f.UUID)
-	br := tx.SendBatch(ctx, batch)
-	if err := br.Close(); err != nil {
-		return fmt.Errorf("[REMOTO] - Error ejecutando batch de detalles_factura: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("Error confirmando detalles remotos: %w", err)
+	// --- 4) SINCRONIZAR HIJOS (SI LA FACTURA SE INSERTÓ) ---
+	if facturaFueInsertada {
+		// 4a) Subir los detalles (usando la misma transacción rtx)
+		d.Log.Infof("[REMOTO] - Preparando batch para %d detalles_factura...", len(detallesLocales))
+		batchDetalles := &pgx.Batch{}
+		for _, df := range detallesLocales {
+			batchDetalles.Queue(`
+				INSERT INTO detalle_facturas (uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+				ON CONFLICT (uuid) DO UPDATE 
+				SET updated_at = EXCLUDED.updated_at
+				WHERE EXCLUDED.updated_at > detalle_facturas.updated_at`,
+				df.UUID, df.FacturaID, df.FacturaUUID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt)
+		}
+
+		br := rtx.SendBatch(ctx, batchDetalles)
+		if err := br.Close(); err != nil {
+			return fmt.Errorf("[REMOTO] - Error ejecutando batch de detalles_factura: %w", err)
+		}
+		d.Log.Infof("[REMOTO] - Batch de detalles_factura enviado.")
+
+		// 4b) Subir las operaciones de stock (usando la misma transacción rtx)
+		d.Log.Infof("[REMOTO] - Preparando batch para %d operacion_stocks...", len(operacionesLocales))
+		batchOps := &pgx.Batch{}
+		for _, op := range operacionesLocales {
+			batchOps.Queue(`
+				INSERT INTO operacion_stocks (uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				ON CONFLICT (uuid) DO NOTHING`, // Generalmente DO NOTHING es más seguro para logs
+				op.UUID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorID, op.FacturaID, op.FacturaUUID, op.Timestamp)
+		}
+
+		brOps := rtx.SendBatch(ctx, batchOps)
+		if err := brOps.Close(); err != nil {
+			return fmt.Errorf("[REMOTO] - Error ejecutando batch de operacion_stocks: %w", err)
+		}
+		d.Log.Infof("[REMOTO] - Batch de operacion_stocks enviado.")
+
+	} // Fin de if(facturaFueInsertada)
+
+	// --- 5) COMMIT REMOTO ---
+	// Si todo salió bien (o si la factura ya existía y no se hizo nada),
+	// confirmamos la transacción remota.
+	if err := rtx.Commit(ctx); err != nil {
+		return fmt.Errorf("Error confirmando transacción remota: %w", err)
 	}
 
-	// 5) Marcar factura y detalles locales como sincronizados
-	_, _ = d.LocalDB.ExecContext(ctx, `UPDATE facturas SET sincronizado = 1 WHERE uuid = ?`, f.UUID)
-	_, _ = d.LocalDB.ExecContext(ctx, `UPDATE detalle_facturas SET sincronizado = 1 WHERE factura_uuid = ?`, f.UUID)
+	// --- 6) MARCAR LOCAL COMO SINCRONIZADO ---
+	// Solo si el Commit remoto fue exitoso
+	d.Log.Infof("[LOCAL] - Marcando venta %s como sincronizada...", f.UUID)
 
-	d.Log.Infof("[REMOTO] - Factura %s y sus detalles sincronizados correctamente.", f.UUID)
+	if needsLocalUpdate {
+		// Actualizar el número de factura local si cambió
+		_, err = d.LocalDB.ExecContext(ctx, `UPDATE facturas SET numero_factura = ? WHERE uuid = ?`, finalNumeroFactura, f.UUID)
+	}
+	if err != nil {
+		d.Log.Errorf("[LOCAL] - CRÍTICO: Error al renombrar factura local [%s]: %v", f.UUID, err)
+	}
+
+	_, err = d.LocalDB.ExecContext(ctx, `UPDATE operacion_stocks SET sincronizado = 1 WHERE factura_uuid = ?`, f.UUID)
+	if err != nil {
+		d.Log.Errorf("[LOCAL] - CRÍTICO: No se pudo marcar operaciones de stock locales de %s como sincronizadas: %v", f.UUID, err)
+	}
+
+	d.Log.Infof("[LOCAL -> REMOTO] - Venta %s y sus hijos sincronizados correctamente.", f.UUID)
 	runtime.EventsEmit(d.ctx, "sync:finish", facturaUUID)
 	return nil
 }
@@ -1194,4 +1319,33 @@ func parseFlexibleTime(dateStr string) (time.Time, error) {
 	}
 
 	return time.Time{}, fmt.Errorf("no se pudo parsear la fecha '%s' con ninguno de los formatos conocidos", dateStr)
+}
+
+// parseNumeroFactura divide un número de factura en prefijo y número.
+// "FAC-1000" -> ("FAC-", 1000, nil)
+// "1000"     -> ("", 1000, nil)
+// "INVALID"  -> ("", 0, error)
+func parseNumeroFactura(numFactura string) (prefix string, num int, err error) {
+	lastDash := strings.LastIndex(numFactura, "-")
+
+	// Caso 1: Sin guión (ej: "1000")
+	if lastDash == -1 {
+		num, err := strconv.Atoi(numFactura)
+		if err != nil {
+			// No es un número simple, formato no reconocido
+			return "", 0, fmt.Errorf("formato no reconocido, no es numérico: %s", numFactura)
+		}
+		return "", num, nil // Sin prefijo
+	}
+
+	// Caso 2: Con guión (ej: "FAC-1000")
+	prefix = numFactura[:lastDash+1]  // "FAC-"
+	numStr := numFactura[lastDash+1:] // "1000"
+
+	num, err = strconv.Atoi(numStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("parte numérica inválida tras el guión '%s': %w", numStr, err)
+	}
+
+	return prefix, num, nil
 }
