@@ -19,7 +19,7 @@
 *.xlsx
 
 # Environment variables and secrets
-.env
+*.env
 .DS_Store
 .vscode/
 

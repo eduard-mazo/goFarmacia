@@ -84,6 +84,7 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 }
 
 func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
+	d.Log.Infof("Intento log con %s", req)
 	var vendedor Vendedor
 	var response LoginResponse
 	var err error
@@ -107,8 +108,6 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 			} else {
 				d.Log.Errorf("Error consultando remoto: %v", err)
 			}
-		} else {
-			d.Log.Info("Login exitoso en base remota")
 		}
 	}
 
@@ -126,13 +125,11 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 			}
 			return response, err
 		}
-		d.Log.Info("Login exitoso en base local")
 	}
 
 	if !CheckPasswordHash(req.Contrasena, vendedor.Contrasena) {
 		return response, errors.New("vendedor no encontrado o credenciales incorrectas")
 	}
-
 	if d.isRemoteDBAvailable() {
 		go d.syncVendedorToLocal(vendedor)
 	}
@@ -155,28 +152,28 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 		}
 		response.MFARequired = false
 		response.Token = tokenString
-		return response, nil
+	} else {
+		expirationTime := time.Now().Add(5 * time.Minute)
+		claims := &Claims{
+			UserID:  vendedor.ID,
+			Email:   vendedor.Email,
+			MFAStep: "pending",
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(expirationTime),
+			},
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString(d.jwtKey)
+		if err != nil {
+			return response, err
+		}
+		response.Token = tokenString
+		response.MFARequired = true
 	}
-
-	expirationTime := time.Now().Add(5 * time.Minute)
-	claims := &Claims{
-		UserID:  vendedor.ID,
-		Email:   vendedor.Email,
-		MFAStep: "pending",
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(d.jwtKey)
-	if err != nil {
-		return response, err
-	}
-
 	vendedor.Contrasena = ""
 	response.Vendedor = vendedor
-	response.MFARequired = true
-	response.Token = tokenString
+
+	d.Log.Infof("Fin proceso Login con response: %+v", response)
 	return response, nil
 }
 
