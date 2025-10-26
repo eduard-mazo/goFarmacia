@@ -23,14 +23,12 @@ import (
 )
 
 type OperacionStock struct {
-	ID              uint      `json:"id"`
 	UUID            string    `json:"uuid"`
-	ProductoID      uint      `json:"producto_id"`
+	ProductoUUID    uint      `json:"producto_uuid"`
 	TipoOperacion   string    `json:"tipo_operacion"`
 	CantidadCambio  int       `json:"cantidad_cambio"`
 	StockResultante int       `json:"stock_resultante"`
-	VendedorID      uint      `json:"vendedor_id"`
-	FacturaID       *uint     `json:"factura_id"`
+	VendedorUUID    uint      `json:"vendedor_uuid"`
 	FacturaUUID     *string   `json:"factura_uuid"`
 	Timestamp       time.Time `json:"timestamp" ts_type:"string"`
 	Sincronizado    bool      `json:"sincronizado"`
@@ -46,8 +44,8 @@ type Claims struct {
 }
 
 type AjusteStockRequest struct {
-	ProductoID uint `json:"producto_id"`
-	NuevoStock int  `json:"nuevo_stock"`
+	ProductoUUID string `json:"producto_uuid"`
+	NuevoStock   int    `json:"nuevo_stock"`
 }
 
 type LoginResponse struct {
@@ -62,7 +60,6 @@ type MFASetupResponse struct {
 }
 
 type Vendedor struct {
-	ID         uint       `json:"id"`
 	CreatedAt  time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt  time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt  *time.Time `json:"deleted_at" ts_type:"string"`
@@ -77,7 +74,6 @@ type Vendedor struct {
 }
 
 type Cliente struct {
-	ID        uint       `json:"id"`
 	CreatedAt time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt *time.Time `json:"deleted_at" ts_type:"string"`
@@ -92,7 +88,6 @@ type Cliente struct {
 }
 
 type Producto struct {
-	ID          uint       `json:"id"`
 	CreatedAt   time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt   time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt   *time.Time `json:"deleted_at" ts_type:"string"`
@@ -104,16 +99,15 @@ type Producto struct {
 }
 
 type Factura struct {
-	ID            uint             `json:"id"`
 	CreatedAt     time.Time        `json:"created_at" ts_type:"string"`
 	UpdatedAt     time.Time        `json:"updated_at" ts_type:"string"`
 	DeletedAt     *time.Time       `json:"deleted_at" ts_type:"string"`
 	UUID          string           `json:"uuid"`
 	NumeroFactura string           `json:"NumeroFactura"`
 	FechaEmision  time.Time        `json:"fecha_emision"  ts_type:"string"`
-	VendedorID    uint             `json:"VendedorID"`
+	VendedorUUID  string           `json:"Vendedor_uuid"`
 	Vendedor      Vendedor         `json:"Vendedor"`
-	ClienteID     uint             `json:"ClienteID"`
+	ClienteUUID   string           `json:"Cliente_uuid"`
 	Cliente       Cliente          `json:"Cliente"`
 	Subtotal      float64          `json:"Subtotal"`
 	IVA           float64          `json:"IVA"`
@@ -124,22 +118,19 @@ type Factura struct {
 }
 
 type DetalleFactura struct {
-	ID             uint       `json:"id"`
 	CreatedAt      time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt      time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt      *time.Time `json:"deleted_at" ts_type:"string"`
 	UUID           string     `json:"uuid"`
-	FacturaUUID    string     `json:"FacturaUUID"`
-	FacturaID      uint       `json:"FacturaID"`
-	ProductoID     uint       `json:"ProductoID"`
-	Producto       Producto   `json:"Producto"`
-	Cantidad       int        `json:"Cantidad"`
-	PrecioUnitario float64    `json:"PrecioUnitario"`
-	PrecioTotal    float64    `json:"PrecioTotal"`
+	FacturaUUID    string     `json:"factura_uuid"`
+	ProductoUUID   string     `json:"producto_uuid"`
+	Producto       Producto   `json:"producto"`
+	Cantidad       int        `json:"cantidad"`
+	PrecioUnitario float64    `json:"precio_unitario"`
+	PrecioTotal    float64    `json:"precioTotal"`
 }
 
 type Proveedor struct {
-	ID        uint       `json:"id"`
 	CreatedAt time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt *time.Time `json:"deleted_at" ts_type:"string"`
@@ -150,41 +141,38 @@ type Proveedor struct {
 }
 
 type Compra struct {
-	ID            uint            `json:"id"`
 	CreatedAt     time.Time       `json:"created_at" ts_type:"string"`
 	UpdatedAt     time.Time       `json:"updated_at" ts_type:"string"`
 	DeletedAt     *time.Time      `json:"deleted_at" ts_type:"string"`
 	UUID          string          `json:"uuid"`
 	Fecha         time.Time       `json:"Fecha" ts_type:"string"`
-	ProveedorID   uint            `json:"ProveedorID"`
-	Proveedor     Proveedor       `json:"Proveedor"`
+	ProveedorUUID string          `json:"proveedor_uuid"`
+	Proveedor     Proveedor       `json:"proveedor"`
 	FacturaNumero string          `json:"FacturaNumero"`
 	Total         float64         `json:"Total"`
 	Detalles      []DetalleCompra `json:"Detalles"`
 }
 
 type DetalleCompra struct {
-	ID                   uint       `json:"id"`
 	CreatedAt            time.Time  `json:"created_at" ts_type:"string"`
 	UpdatedAt            time.Time  `json:"updated_at" ts_type:"string"`
 	DeletedAt            *time.Time `json:"deleted_at" ts_type:"string"`
 	UUID                 string     `json:"uuid"`
-	CompraID             uint       `json:"CompraID"`
-	ProductoID           uint       `json:"ProductoID"`
-	Producto             Producto   `json:"Producto"`
-	Cantidad             int        `json:"Cantidad"`
-	PrecioCompraUnitario float64    `json:"PrecioCompraUnitario"`
+	CompraUUID           uint       `json:"compra_uuid"`
+	ProductoUUID         uint       `json:"producto_uuid"`
+	Producto             Producto   `json:"producto"`
+	Cantidad             int        `json:"cantidad"`
+	PrecioCompraUnitario float64    `json:"precio_compra_unitario"`
 }
 
 type VentaRequest struct {
-	ClienteID  uint            `json:"ClienteID"`
-	VendedorID uint            `json:"VendedorID"`
-	Productos  []ProductoVenta `json:"Productos"`
-	MetodoPago string          `json:"MetodoPago"`
+	ClienteUUID  string          `json:"cliente_uuid"`
+	VendedorUUID string          `json:"vendedor_uuid"`
+	Productos    []ProductoVenta `json:"Productos"`
+	MetodoPago   string          `json:"MetodoPago"`
 }
 
 type ProductoVenta struct {
-	ID             uint    `json:"ID"`
 	Cantidad       int     `json:"Cantidad"`
 	PrecioUnitario float64 `json:"PrecioUnitario"`
 }
@@ -195,13 +183,13 @@ type LoginRequest struct {
 }
 
 type CompraRequest struct {
-	ProveedorID   uint                 `json:"ProveedorID"`
+	ProveedorUUID string               `json:"proveedor_uuid"`
 	FacturaNumero string               `json:"FacturaNumero"`
 	Productos     []ProductoCompraInfo `json:"Productos"`
 }
 
 type ProductoCompraInfo struct {
-	ProductoID           uint    `json:"ProductoID"`
+	ProductoUUID         uint    `json:"producto_uuid"`
 	Cantidad             int     `json:"Cantidad"`
 	PrecioCompraUnitario float64 `json:"PrecioCompraUnitario"`
 }
@@ -212,7 +200,6 @@ type PaginatedResult struct {
 }
 
 type VendedorUpdateRequest struct {
-	ID               uint   `json:"ID"`
 	UUID             string `json:"UUID"`
 	Nombre           string `json:"Nombre"`
 	Apellido         string `json:"Apellido"`

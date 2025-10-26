@@ -49,10 +49,10 @@ func (d *Db) SincronizacionInteligente() {
 		uniqueCol string
 		cols      []string
 	}{
-		{"vendedors", "cedula", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "apellido", "cedula", "email", "contrasena", "mfa_enabled", "mfa_secret"}},
-		{"clientes", "numero_id", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "apellido", "tipo_id", "numero_id", "telefono", "email", "direccion"}},
-		{"proveedors", "nombre", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "telefono", "email"}},
-		{"productos", "codigo", []string{"id", "created_at", "updated_at", "deleted_at", "uuid", "nombre", "codigo", "precio_venta", "stock"}},
+		{"vendedors", "cedula", []string{"created_at", "updated_at", "deleted_at", "uuid", "nombre", "apellido", "cedula", "email", "contrasena", "mfa_enabled", "mfa_secret"}},
+		{"clientes", "numero_id", []string{"created_at", "updated_at", "deleted_at", "uuid", "nombre", "apellido", "tipo_id", "numero_id", "telefono", "email", "direccion"}},
+		{"proveedors", "nombre", []string{"created_at", "updated_at", "deleted_at", "uuid", "nombre", "telefono", "email"}},
+		{"productos", "codigo", []string{"created_at", "updated_at", "deleted_at", "uuid", "nombre", "codigo", "precio_venta", "stock"}},
 	}
 
 	for _, m := range models {
@@ -438,10 +438,10 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	}
 
 	facturasRemotasQuery := `
-		SELECT id, uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at 
+		SELECT uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at 
 		FROM facturas 
-		WHERE id > $1 
-		ORDER BY id ASC
+		WHERE uuid > $1 
+		ORDER BY uuid ASC
 	`
 	rows, err := d.RemoteDB.Query(ctx, facturasRemotasQuery, lastFacturaID)
 	if err != nil {
@@ -450,8 +450,8 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 
 	// Preparar statement local (SQLite) para insertar facturas (idempotente por uuid)
 	insertFactSQL := `
-	INSERT INTO facturas (id, uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(uuid) DO NOTHING
+	INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(uuid) DO NOTHING
 	`
 	stmtFact, err := tx.PrepareContext(ctx, insertFactSQL)
 	if err != nil {
@@ -502,10 +502,10 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 				args[i] = id
 			}
 			detallesFacturaQuery := fmt.Sprintf(`
-				SELECT id, uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at 
+				SELECT uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total, created_at, updated_at 
 				FROM detalle_facturas 
-				WHERE factura_id IN (%s)
-				ORDER BY id ASC
+				WHERE factura_uuid IN (%s)
+				ORDER BY uuid ASC
 			`, strings.Join(placeholders, ","))
 
 			detalleRows, err := d.RemoteDB.Query(ctx, detallesFacturaQuery, args...)
@@ -515,8 +515,8 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 
 			// Statement local para detalles: ON CONFLICT(uuid) DO NOTHING
 			detalleStmt, err := tx.PrepareContext(ctx, `
-				INSERT INTO detalle_facturas (id, uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) 
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(uuid) DO NOTHING`)
+				INSERT INTO detalle_facturas (uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total, created_at, updated_at) 
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(uuid) DO NOTHING`)
 			if err != nil {
 				detalleRows.Close()
 				return fmt.Errorf("error al preparar statement de detalles de factura: %w", err)
@@ -528,7 +528,8 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 				var df DetalleFactura
 				var uuidDetalleStr sql.NullString
 				var uuidFacturaStr sql.NullString
-				if err := detalleRows.Scan(&df.ID, &uuidDetalleStr, &df.FacturaID, &uuidFacturaStr, &df.ProductoID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
+				var uuidProductoStr sql.NullString
+				if err := detalleRows.Scan(&uuidDetalleStr, &uuidFacturaStr, &uuidProductoStr, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
 					d.Log.Errorf("Error al escanear detalle de factura remoto: %v", err)
 					continue
 				}
@@ -544,7 +545,13 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 				}
 				df.FacturaUUID = uuidFacturaStr.String
 
-				if _, err := detalleStmt.ExecContext(ctx, df.ID, df.UUID, df.FacturaID, df.FacturaUUID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt); err != nil {
+				if !uuidProductoStr.Valid || strings.TrimSpace(uuidProductoStr.String) == "" {
+					d.Log.Warnf("Detalle de factura remoto con ID %d tiene un UUID nulo o vacío y será ignorado.", df.ID)
+					continue
+				}
+				df.ProductoUUID = uuidProductoStr.String
+
+				if _, err := detalleStmt.ExecContext(ctx, df.UUID, df.FacturaID, df.FacturaUUID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt); err != nil {
 					d.Log.Errorf("Error al insertar detalle de factura local (ID remoto: %d): %v", df.ID, err)
 					continue
 				}
@@ -747,9 +754,9 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	// 1a) Obtener factura local
 	var f Factura
 	err := d.LocalDB.QueryRowContext(ctx, `
-		SELECT uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at
+		SELECT id, uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at
 		FROM facturas WHERE uuid = ?`, facturaUUID).Scan(
-		&f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.VendedorID, &f.ClienteID,
+		&f.ID, &f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.VendedorID, &f.ClienteID,
 		&f.Subtotal, &f.IVA, &f.Total, &f.Estado, &f.MetodoPago, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -907,10 +914,10 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 		batchOps := &pgx.Batch{}
 		for _, op := range operacionesLocales {
 			batchOps.Queue(`
-				INSERT INTO operacion_stocks (uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				INSERT INTO operacion_stocks (id, uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 				ON CONFLICT (uuid) DO NOTHING`, // Generalmente DO NOTHING es más seguro para logs
-				op.UUID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorID, op.FacturaID, op.FacturaUUID, op.Timestamp)
+				op.UUID, op.ID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorID, op.FacturaID, op.FacturaUUID, op.Timestamp)
 		}
 
 		brOps := rtx.SendBatch(ctx, batchOps)
