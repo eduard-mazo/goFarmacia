@@ -240,32 +240,42 @@ func GetDbInstance() *Db {
 	once.Do(func() {
 		logger := logrus.New()
 		logDir := "logs"
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			fmt.Printf("No se pudo crear el directorio de logs: %v\n", err)
-		}
-		timestamp := time.Now().Format("2006-01-02_15-04-05")
-		logFileName := fmt.Sprintf("app_%s.log", timestamp)
-		logFilePath := filepath.Join(logDir, logFileName)
+		_ = os.MkdirAll(logDir, 0755)
 
-		file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		timestamp := time.Now().Format("2006-01-02_15-04-05")
+		logFile := filepath.Join(logDir, fmt.Sprintf("app_%s.log", timestamp))
+
+		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
 			fmt.Printf("No se pudo abrir archivo de log: %v\n", err)
 		}
+
 		logger.SetFormatter(&logrus.TextFormatter{
 			FullTimestamp:   true,
 			ForceColors:     false,
 			TimestampFormat: "2006-01-02 15:04:05.000",
 		})
-
 		logger.SetLevel(logrus.DebugLevel)
-		logger.SetOutput(io.MultiWriter(os.Stdout, file))
 
-		logger.Info("Inicializando logger con salida a consola y archivo... (SINGLETON)")
+		var writers []io.Writer
+		writers = append(writers, file)
+		if isConsoleAvailable() {
+			writers = append(writers, os.Stdout)
+		}
+		logger.SetOutput(io.MultiWriter(writers...))
 
+		logger.Info("Logger inicializado correctamente.")
 		dbInstance = &Db{Log: logger}
 	})
-
 	return dbInstance
+}
+
+func isConsoleAvailable() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 func (d *Db) Startup(ctx context.Context) {

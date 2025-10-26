@@ -70,13 +70,15 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		return Factura{}, fmt.Errorf("error al iniciar transacción: %w", err)
 	}
 	defer func() {
-		if rErr := tx.Rollback(); err != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [RegistrarVenta] rollback %v", err)
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [RegistrarVenta] rollback %v", rErr)
 		}
 	}()
 
 	// 1. Crear la cabecera de la factura primero para obtener su ID.
+	d.Log.Info("1. Crear la cabecera de la factura primero para obtener su ID.")
 	numeroFactura, err := d.generarNumeroFactura(tx)
+	d.Log.Infof("Número factura generado [%s]", numeroFactura)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error al generar número de factura: %w", err)
 	}
@@ -96,6 +98,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	var opsStock []OperacionStock
 
 	// 2. Procesar cada producto, validar stock y preparar operaciones.
+	d.Log.Info("2. Procesar cada producto, validar stock y preparar operaciones.")
 	for _, p := range req.Productos {
 		var producto Producto
 		err := tx.QueryRow("SELECT id, nombre, stock FROM productos WHERE id = ?", p.ID).Scan(&producto.ID, &producto.Nombre, &producto.Stock)
@@ -136,21 +139,25 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 	factura.Subtotal, factura.IVA, factura.Total = subtotal, 0, subtotal
 	// 3. Insertar la factura y obtener el ID.
+	d.Log.Info("3. Insertar la factura y obtener el ID.")
 	var timestamp = time.Now()
 	res, err := tx.ExecContext(d.ctx,
 		"INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		factura.UUID, factura.NumeroFactura, factura.FechaEmision, factura.VendedorID, factura.ClienteID, factura.Subtotal, factura.IVA, factura.Total, factura.Estado, factura.MetodoPago, timestamp, timestamp,
 	)
 	if err != nil {
+		d.Log.Infof("[LOCAL] - Error al insertar factura: %+v", factura)
 		return Factura{}, fmt.Errorf("error al crear la factura: %w", err)
 	}
 	facturaID, err := res.LastInsertId()
 	if err != nil {
+		d.Log.Infof("[LOCAL] - Error LastInsertId: %v", err)
 		return Factura{}, fmt.Errorf("error al obtener ID de la factura: %w", err)
 	}
 	factura.ID = uint(facturaID)
 
 	// 4. Insertar masivamente los detalles y las operaciones de stock.
+	d.Log.Info("4. Insertar masivamente los detalles y las operaciones de stock.")
 	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return Factura{}, err
@@ -177,6 +184,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	// 5. Recalcular y actualizar la caché de stock para cada producto afectado.
+	d.Log.Info("5. Recalcular y actualizar la caché de stock para cada producto afectado.")
 	for _, detalle := range detallesFactura {
 		if err := RecalcularYActualizarStock(tx, detalle.ProductoID); err != nil {
 			return Factura{}, fmt.Errorf("error al recalcular stock para producto ID %d: %w", detalle.ProductoID, err)
@@ -188,6 +196,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	// 6. Lanzar sincronizaciones en segundo plano.
+	d.Log.Info("6. Lanzar sincronizaciones en segundo plano.")
 	go func(uuid string) {
 		if err := d.syncVentaToRemote(uuid); err != nil {
 			d.Log.Errorf("error sincronizando venta remota para factura UUID %s: %v", uuid, err)

@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	IDConstraintName            = "facturas_pkey"
 	UUIDConstraintName          = "facturas_uuid_unique"
 	NumeroFacturaConstraintName = "uni_facturas_numero_factura"
 )

@@ -199,7 +199,7 @@ async function finalizarVenta() {
     });
     return;
   }
-  if (!authenticatedUser.value?.id) {
+  if (!authenticatedUser.value?.uuid) {
     toast.error("Vendedor no identificado", {
       description: "Inicie sesión de nuevo.",
     });

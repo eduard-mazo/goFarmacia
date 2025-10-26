@@ -94,12 +94,12 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 		defer cancel()
 
 		row := d.RemoteDB.QueryRow(ctx, `
-			SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
+			SELECT id, uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
 			FROM vendedors
 			WHERE email = $1 AND deleted_at IS NULL
 		`, req.Email)
 
-		err = row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
+		err = row.Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
 			&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled)
 
 		if err != nil {
@@ -113,11 +113,11 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 
 	if err != nil {
 		row := d.LocalDB.QueryRow(`
-			SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
+			SELECT id, uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
 			FROM vendedors
 			WHERE email = ? AND deleted_at IS NULL
 		`, req.Email)
-		err = row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
+		err = row.Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
 			&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled)
 		if err != nil {
 			if err == sql.ErrNoRows {
