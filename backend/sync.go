@@ -684,62 +684,62 @@ func (d *Db) syncClienteToRemote(uuid string) {
 	d.Log.Infof("Sincronizado cliente individual UUID %s hacia el remoto.", uuid)
 }
 
-func (d *Db) syncProductoToRemote(id uint) {
+func (d *Db) syncProductoToRemote(p_uuid string) {
 	if !d.isRemoteDBAvailable() {
 		d.Log.Warn("[REMOTO] la base de datos no está disponible, se omite la sincronización.")
 		return
 	}
 	var p Producto
-	query := `SELECT id, uuid, created_at, updated_at, deleted_at, nombre, codigo, precio_venta FROM productos WHERE id = ?`
-	err := d.LocalDB.QueryRowContext(d.ctx, query, id).Scan(&p.ID, &p.UUID, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.Nombre, &p.Codigo, &p.PrecioVenta)
+	query := `SELECT uuid, created_at, updated_at, deleted_at, nombre, codigo, precio_venta FROM productos WHERE uuid = ?`
+	err := d.LocalDB.QueryRowContext(d.ctx, query, p_uuid).Scan(&p.UUID, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.Nombre, &p.Codigo, &p.PrecioVenta)
 	if err != nil {
-		d.Log.Errorf("syncProductoToRemote: no se encontró producto local ID %d: %v", id, err)
+		d.Log.Errorf("syncProductoToRemote: no se encontró producto local UUID %s: %v", p_uuid, err)
 		return
 	}
 
 	upsertSQL := `
-		INSERT INTO productos (id, uuid, created_at, updated_at, deleted_at, nombre, codigo, precio_venta)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO productos (uuid, created_at, updated_at, deleted_at, nombre, codigo, precio_venta)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (codigo) DO UPDATE SET
 			nombre = EXCLUDED.nombre, 
 			precio_venta = EXCLUDED.precio_venta,
 			updated_at = EXCLUDED.updated_at, 
 			deleted_at = EXCLUDED.deleted_at;`
 
-	_, err = d.RemoteDB.Exec(d.ctx, upsertSQL, p.ID, p.UUID, p.CreatedAt, p.UpdatedAt, p.DeletedAt, p.Nombre, p.Codigo, p.PrecioVenta)
+	_, err = d.RemoteDB.Exec(d.ctx, upsertSQL, p.UUID, p.CreatedAt, p.UpdatedAt, p.DeletedAt, p.Nombre, p.Codigo, p.PrecioVenta)
 	if err != nil {
-		d.Log.Errorf("Error en UPSERT de datos maestros del producto remoto ID %d: %v", id, err)
+		d.Log.Errorf("Error en UPSERT de datos maestros del producto remoto UUID %s: %v", p_uuid, err)
 		return
 	}
-	d.Log.Infof("Sincronizado datos maestros del producto ID %d. El stock se calculará por separado.", id)
+	d.Log.Infof("Sincronizado datos maestros del producto UUID %s. El stock se calculará por separado.", p_uuid)
 }
 
-func (d *Db) syncProveedorToRemote(id uint) {
+func (d *Db) syncProveedorToRemote(p_uuid string) {
 	if !d.isRemoteDBAvailable() {
 		d.Log.Warn("[REMOTO] la base de datos no está disponible, se omite la sincronización.")
 		return
 	}
 	var p Proveedor
-	query := `SELECT id, uuid, created_at, updated_at, deleted_at, nombre, telefono, email FROM proveedors WHERE id = ?`
-	err := d.LocalDB.QueryRowContext(d.ctx, query, id).Scan(&p.ID, &p.UUID, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.Nombre, &p.Telefono, &p.Email)
+	query := `SELECT uuid, created_at, updated_at, deleted_at, nombre, telefono, email FROM proveedors WHERE uuid = ?`
+	err := d.LocalDB.QueryRowContext(d.ctx, query, p_uuid).Scan(&p.UUID, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.Nombre, &p.Telefono, &p.Email)
 	if err != nil {
-		d.Log.Errorf("syncProveedorToRemote: no se encontró proveedor local ID %d: %v", id, err)
+		d.Log.Errorf("syncProveedorToRemote: no se encontró proveedor local UUID %s: %v", p_uuid, err)
 		return
 	}
 
 	upsertSQL := `
-		INSERT INTO proveedors (id, uuid, created_at, updated_at, deleted_at, nombre, telefono, email)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO proveedors (uuid, created_at, updated_at, deleted_at, nombre, telefono, email)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (nombre) DO UPDATE SET
 			telefono = EXCLUDED.telefono, email = EXCLUDED.email,
 			updated_at = EXCLUDED.updated_at, deleted_at = EXCLUDED.deleted_at;`
 
-	_, err = d.RemoteDB.Exec(d.ctx, upsertSQL, p.ID, p.UUID, p.CreatedAt, p.UpdatedAt, p.DeletedAt, p.Nombre, p.Telefono, p.Email)
+	_, err = d.RemoteDB.Exec(d.ctx, upsertSQL, p.UUID, p.CreatedAt, p.UpdatedAt, p.DeletedAt, p.Nombre, p.Telefono, p.Email)
 	if err != nil {
-		d.Log.Errorf("Error en UPSERT de proveedor remoto ID %d: %v", id, err)
+		d.Log.Errorf("Error en UPSERT de proveedor remoto UUID %s: %v", p_uuid, err)
 		return
 	}
-	d.Log.Infof("Sincronizado proveedor individual ID %d hacia el remoto.", id)
+	d.Log.Infof("Sincronizado proveedor individual UUID %s hacia el remoto.", p_uuid)
 }
 
 // syncVentaToRemote: sincroniza una factura + detalles + operaciones de stock relacionadas
@@ -754,13 +754,13 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	// 1a) Obtener factura local
 	var f Factura
 	err := d.LocalDB.QueryRowContext(ctx, `
-		SELECT id, uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at
+		SELECT uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid, subtotal, iva, total, estado, metodo_pago, created_at, updated_at
 		FROM facturas WHERE uuid = ?`, facturaUUID).Scan(
-		&f.ID, &f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.VendedorID, &f.ClienteID,
+		&f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.VendedorUUID, &f.ClienteUUID,
 		&f.Subtotal, &f.IVA, &f.Total, &f.Estado, &f.MetodoPago, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			d.Log.Warnf("[LOCAL] - No se encontró la factura %s para sincronizar. Omitiendo.", facturaUUID)
+			d.Log.Warnf("[LOCAL] - No se encontró la factura UUID [%s] para sincronizar. Omitiendo.", facturaUUID)
 			return nil
 		}
 		return fmt.Errorf("[LOCAL] - factura no encontrada localmente: %w", err)
@@ -769,14 +769,14 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	// 1b) Obtener detalles locales
 	var detallesLocales []DetalleFactura
 	rowsDetalles, err := d.LocalDB.QueryContext(ctx, `
-		SELECT uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at 
+		SELECT uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total, created_at, updated_at 
 		FROM detalle_facturas WHERE factura_uuid = ?`, facturaUUID)
 	if err != nil {
 		return fmt.Errorf("error obteniendo detalles locales: %w", err)
 	}
 	for rowsDetalles.Next() {
 		var df DetalleFactura
-		if err := rowsDetalles.Scan(&df.UUID, &df.FacturaID, &df.FacturaUUID, &df.ProductoID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
+		if err := rowsDetalles.Scan(&df.UUID, &df.FacturaUUID, &df.ProductoUUID, &df.Cantidad, &df.PrecioUnitario, &df.PrecioTotal, &df.CreatedAt, &df.UpdatedAt); err != nil {
 			d.Log.Errorf("Error al escanear detalle_factura local: %v", err)
 			rowsDetalles.Close()
 			return err
@@ -788,16 +788,15 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	// 1c) Obtener operaciones de stock locales
 	var operacionesLocales []OperacionStock
 	rowsOps, err := d.LocalDB.QueryContext(ctx, `
-		SELECT uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp 
+		SELECT uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp 
 		FROM operacion_stocks WHERE factura_uuid = ?`, facturaUUID)
 	if err != nil {
 		return fmt.Errorf("error obteniendo operaciones de stock locales: %w", err)
 	}
 	for rowsOps.Next() {
 		var op OperacionStock
-		var facturaID sql.NullInt64
 		var stockResultante sql.NullInt64
-		if err := rowsOps.Scan(&op.UUID, &op.ProductoID, &op.TipoOperacion, &op.CantidadCambio, &stockResultante, &op.VendedorID, &facturaID, &op.FacturaUUID, &op.Timestamp); err != nil {
+		if err := rowsOps.Scan(&op.UUID, &op.ProductoUUID, &op.TipoOperacion, &op.CantidadCambio, &stockResultante, &op.VendedorUUID, &op.FacturaUUID, &op.Timestamp); err != nil {
 			d.Log.Errorf("Error al escanear operacion_stock local: %v", err)
 			rowsOps.Close()
 			return err
@@ -824,11 +823,11 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 	finalNumeroFactura := f.NumeroFactura
 
 	insertFacturaSQL := `
-		INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_id, cliente_id, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
+		INSERT INTO facturas (uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid, subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 	_, err = rtx.Exec(ctx, insertFacturaSQL,
-		f.UUID, f.NumeroFactura, f.FechaEmision, f.VendedorID, f.ClienteID,
+		f.UUID, f.NumeroFactura, f.FechaEmision, f.VendedorUUID, f.ClienteUUID,
 		f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt,
 	)
 
@@ -865,7 +864,7 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 				d.Log.Infof("[REMOTO] - Nuevo número asignado: %s", numeroParaInsertar)
 
 				_, errInsert2 := rtx.Exec(ctx, insertFacturaSQL,
-					f.UUID, numeroParaInsertar, f.FechaEmision, f.VendedorID, f.ClienteID,
+					f.UUID, numeroParaInsertar, f.FechaEmision, f.VendedorUUID, f.ClienteUUID,
 					f.Subtotal, f.IVA, f.Total, f.Estado, f.MetodoPago, f.CreatedAt, f.UpdatedAt,
 				)
 
@@ -895,12 +894,12 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 		batchDetalles := &pgx.Batch{}
 		for _, df := range detallesLocales {
 			batchDetalles.Queue(`
-				INSERT INTO detalle_facturas (uuid, factura_id, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+				INSERT INTO detalle_facturas (uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total, created_at, updated_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 				ON CONFLICT (uuid) DO UPDATE 
 				SET updated_at = EXCLUDED.updated_at
 				WHERE EXCLUDED.updated_at > detalle_facturas.updated_at`,
-				df.UUID, df.FacturaID, df.FacturaUUID, df.ProductoID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt)
+				df.UUID, df.FacturaUUID, df.FacturaUUID, df.ProductoUUID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt)
 		}
 
 		br := rtx.SendBatch(ctx, batchDetalles)
@@ -914,10 +913,10 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 		batchOps := &pgx.Batch{}
 		for _, op := range operacionesLocales {
 			batchOps.Queue(`
-				INSERT INTO operacion_stocks (id, uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-				ON CONFLICT (uuid) DO NOTHING`, // Generalmente DO NOTHING es más seguro para logs
-				op.UUID, op.ID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorID, op.FacturaID, op.FacturaUUID, op.Timestamp)
+				INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				ON CONFLICT (uuid) DO NOTHING`,
+				op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, op.FacturaUUID, op.Timestamp)
 		}
 
 		brOps := rtx.SendBatch(ctx, batchOps)
@@ -958,31 +957,31 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 }
 
 // syncCompraToRemote: sincroniza una compra + detalles + operaciones de stock asociadas.
-func (d *Db) syncCompraToRemote(id uint) {
+func (d *Db) syncCompraToRemote(c_uuid string) {
 	if !d.isRemoteDBAvailable() {
 		d.Log.Warn("[REMOTO] la base de datos no está disponible, se omite la sincronización.")
 		return
 	}
-	d.Log.Infof("Sincronizando compra individual ID %d hacia el remoto.", id)
+	d.Log.Infof("Sincronizando compra individual UUID %d hacia el remoto.", c_uuid)
 
 	// Obtener compra y detalles desde local
 	var c Compra
-	err := d.LocalDB.QueryRowContext(d.ctx, "SELECT id, uuid, fecha, proveedor_id, factura_numero, total, created_at, updated_at FROM compras WHERE id = ?", id).
-		Scan(&c.ID, &c.UUID, &c.Fecha, &c.ProveedorID, &c.FacturaNumero, &c.Total, &c.CreatedAt, &c.UpdatedAt)
+	err := d.LocalDB.QueryRowContext(d.ctx, "SELECT uuid, fecha, proveedor_uuid, factura_numero, total, created_at, updated_at FROM compras WHERE uuid = ?", c_uuid).
+		Scan(&c.UUID, &c.Fecha, &c.ProveedorUUID, &c.FacturaNumero, &c.Total, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
-		d.Log.Errorf("syncCompraToRemote: no se encontró compra local ID %d: %v", id, err)
+		d.Log.Errorf("syncCompraToRemote: no se encontró compra local UUID %s: %v", c_uuid, err)
 		return
 	}
 
 	// Asegurar proveedor en remoto
-	d.syncProveedorToRemote(c.ProveedorID)
+	d.syncProveedorToRemote(c.ProveedorUUID)
 
 	// Recolectar detalles
-	rows, err := d.LocalDB.QueryContext(d.ctx, "SELECT producto_id, cantidad, precio_compra_unitario FROM detalle_compras WHERE compra_id = ?", id)
+	rows, err := d.LocalDB.QueryContext(d.ctx, "SELECT producto_uuid, cantidad, precio_compra_unitario FROM detalle_compras WHERE compra_uuid = ?", c_uuid)
 	if err == nil {
 		for rows.Next() {
 			var det DetalleCompra
-			if err := rows.Scan(&det.ProductoID, &det.Cantidad, &det.PrecioCompraUnitario); err != nil {
+			if err := rows.Scan(&det.ProductoUUID, &det.Cantidad, &det.PrecioCompraUnitario); err != nil {
 				d.Log.Errorf("syncCompraToRemote: error scanning detalle: %v", err)
 				continue
 			}
@@ -1004,27 +1003,26 @@ func (d *Db) syncCompraToRemote(id uint) {
 	}()
 
 	_, err = rtx.Exec(d.ctx, `
-		INSERT INTO compras (id, fecha, proveedor_id, factura_numero, total, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (id) DO UPDATE SET fecha = EXCLUDED.fecha, proveedor_id=EXCLUDED.proveedor_id, factura_numero=EXCLUDED.factura_numero, total=EXCLUDED.total, updated_at=EXCLUDED.updated_at
-	`, int64(c.ID), c.Fecha, int64(c.ProveedorID), c.FacturaNumero, c.Total, c.CreatedAt, c.UpdatedAt)
+		INSERT INTO compras (fecha, proveedor_uuid, factura_numero, total, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (uuid) DO UPDATE SET fecha = EXCLUDED.fecha, proveedor_uuid=EXCLUDED.proveedor_uuid, factura_numero=EXCLUDED.factura_numero, total=EXCLUDED.total, updated_at=EXCLUDED.updated_at
+	`, c.Fecha, c.ProveedorUUID, c.FacturaNumero, c.Total, c.CreatedAt, c.UpdatedAt)
+
 	if err != nil {
 		d.Log.Errorf("syncCompraToRemote: error upserting compra remota: %v", err)
 		return
 	}
 
-	// Reinsert detalles (borrar y copy)
-	if _, err := rtx.Exec(d.ctx, "DELETE FROM detalle_compras WHERE compra_id = $1", int64(c.ID)); err != nil {
+	if _, err := rtx.Exec(d.ctx, "DELETE FROM detalle_compras WHERE compra_uuid = $1", c.UUID); err != nil {
 		d.Log.Errorf("syncCompraToRemote: error borrando detalles remotos: %v", err)
-		// continue
 	}
 	if len(c.Detalles) > 0 {
 		_, err := rtx.CopyFrom(d.ctx,
 			pgx.Identifier{"detalle_compras"},
-			[]string{"compra_id", "producto_id", "cantidad", "precio_compra_unitario"},
+			[]string{"compra_uuid", "producto_uuid", "cantidad", "precio_compra_unitario"},
 			pgx.CopyFromSlice(len(c.Detalles), func(i int) ([]interface{}, error) {
 				det := c.Detalles[i]
-				return []interface{}{int64(c.ID), int64(det.ProductoID), det.Cantidad, det.PrecioCompraUnitario}, nil
+				return []interface{}{c.UUID, det.ProductoUUID, det.Cantidad, det.PrecioCompraUnitario}, nil
 			}),
 		)
 		if err != nil {
@@ -1033,19 +1031,14 @@ func (d *Db) syncCompraToRemote(id uint) {
 	}
 
 	// Sincronizar operaciones de stock de la compra (si existieran)
-	opsRows, err := d.LocalDB.QueryContext(d.ctx, "SELECT uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, timestamp FROM operacion_stocks WHERE factura_id IS NULL AND tipo_operacion = 'COMPRA' AND sincronizado = 0")
+	opsRows, err := d.LocalDB.QueryContext(d.ctx, "SELECT uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp FROM operacion_stocks WHERE factura_uuid IS NULL AND tipo_operacion = 'COMPRA' AND sincronizado = 0")
 	if err == nil {
 		var localOps []OperacionStock
 		for opsRows.Next() {
 			var op OperacionStock
-			var facturaID sql.NullInt64
-			if err := opsRows.Scan(&op.UUID, &op.ProductoID, &op.TipoOperacion, &op.CantidadCambio, &op.StockResultante, &op.VendedorID, &facturaID, &op.Timestamp); err != nil {
+			if err := opsRows.Scan(&op.UUID, &op.ProductoUUID, &op.TipoOperacion, &op.CantidadCambio, &op.StockResultante, &op.VendedorUUID, &op.FacturaUUID, &op.Timestamp); err != nil {
 				d.Log.Errorf("syncCompraToRemote: error scanning operacion local: %v", err)
 				continue
-			}
-			if facturaID.Valid {
-				fid := uint(facturaID.Int64)
-				op.FacturaID = &fid
 			}
 			localOps = append(localOps, op)
 		}
@@ -1054,16 +1047,16 @@ func (d *Db) syncCompraToRemote(id uint) {
 		if len(localOps) > 0 {
 			_, err := rtx.CopyFrom(d.ctx,
 				pgx.Identifier{"operacion_stocks"},
-				[]string{"uuid", "producto_id", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_id", "factura_id", "timestamp"},
+				[]string{"uuid", "producto_uuid", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_uuid", "factura_uuid", "timestamp"},
 				pgx.CopyFromSlice(len(localOps), func(i int) ([]interface{}, error) {
 					op := localOps[i]
 					var facturaID interface{}
-					if op.FacturaID != nil {
-						facturaID = int64(*op.FacturaID)
+					if op.FacturaUUID != nil {
+						facturaID = *op.FacturaUUID
 					} else {
 						facturaID = nil
 					}
-					return []interface{}{op.UUID, int64(op.ProductoID), op.TipoOperacion, op.CantidadCambio, op.StockResultante, int64(op.VendedorID), facturaID, op.Timestamp}, nil
+					return []interface{}{op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, facturaID, op.Timestamp}, nil
 				}),
 			)
 			if err != nil && !strings.Contains(err.Error(), "duplicate key") {
@@ -1074,10 +1067,10 @@ func (d *Db) syncCompraToRemote(id uint) {
 			if len(prodIDs) > 0 {
 				if _, err := rtx.Exec(d.ctx, `
 					WITH stock_calculado AS (
-						SELECT producto_id, COALESCE(SUM(cantidad_cambio),0) as nuevo_stock
-						FROM operacion_stocks WHERE producto_id = ANY($1) GROUP BY producto_id
+						SELECT producto_uuid, COALESCE(SUM(cantidad_cambio),0) as nuevo_stock
+						FROM operacion_stocks WHERE producto_uuid = ANY($1) GROUP BY producto_uuid
 					)
-					UPDATE productos p SET stock = sc.nuevo_stock FROM stock_calculado sc WHERE p.id = sc.producto_id;
+					UPDATE productos p SET stock = sc.nuevo_stock FROM stock_calculado sc WHERE p.uuid = sc.producto_uuid;
 				`, prodIDs); err != nil {
 					d.Log.Errorf("syncCompraToRemote: error actualizando stock remoto: %v", err)
 				}
@@ -1089,21 +1082,21 @@ func (d *Db) syncCompraToRemote(id uint) {
 		d.Log.Errorf("syncCompraToRemote: error confirmando tx remota: %v", err)
 		return
 	}
-	d.Log.Infof("Compra ID %d sincronizada correctamente al remoto.", id)
+	d.Log.Infof("Compra UUID %s sincronizada correctamente al remoto.", c_uuid)
 }
 
 func (d *Db) syncVendedorToLocal(v Vendedor) {
 	// upsert pattern for sqlite: try update, if rows affected==0 then insert
 	res, err := d.LocalDB.Exec("UPDATE vendedors SET nombre=?, apellido=?, cedula=?, email=?, contrasena=?, mfa_enabled=?, updated_at=? WHERE uuid=?", v.Nombre, v.Apellido, v.Cedula, v.Email, v.Contrasena, v.MFAEnabled, time.Now(), v.UUID)
 	if err != nil {
-		d.Log.Errorf("syncVendedorToLocal: error updating local vendedor ID %d: %v", v.ID, err)
+		d.Log.Errorf("syncVendedorToLocal: error updating local vendedor UUID %s: %v", v.UUID, err)
 		return
 	}
 	r, _ := res.RowsAffected()
 	if r == 0 {
-		_, err = d.LocalDB.Exec("INSERT INTO vendedors (id, uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", v.ID, v.UUID, v.Nombre, v.Apellido, v.Cedula, v.Email, v.Contrasena, v.MFAEnabled, time.Now(), time.Now())
+		_, err = d.LocalDB.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", v.UUID, v.Nombre, v.Apellido, v.Cedula, v.Email, v.Contrasena, v.MFAEnabled, time.Now(), time.Now())
 		if err != nil {
-			d.Log.Errorf("syncVendedorToLocal: error inserting local vendedor ID %d: %v", v.ID, err)
+			d.Log.Errorf("syncVendedorToLocal: error inserting local vendedor UUID %s: %v", v.UUID, err)
 			return
 		}
 	}
@@ -1134,7 +1127,7 @@ func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
 
 	// 2. Pedir al remoto (Postgres) todas las operaciones más nuevas que la última que tenemos.
 	remoteOpsQuery := `
-		SELECT uuid, producto_id, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_id, factura_id, factura_uuid, timestamp 
+		SELECT uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp 
 		FROM operacion_stocks 
 		WHERE timestamp > $1 
 		ORDER BY timestamp ASC`
@@ -1145,21 +1138,19 @@ func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
 	defer rows.Close()
 
 	var newOps []OperacionStock
-	productosAfectados := make(map[uint]bool)
+	productosAfectados := make(map[string]bool)
 
 	for rows.Next() {
 		var op OperacionStock
 		var stockResultante sql.NullInt64
-		var facturaID sql.NullInt64
 
 		err := rows.Scan(
 			&op.UUID,
-			&op.ProductoID,
+			&op.ProductoUUID,
 			&op.TipoOperacion,
 			&op.CantidadCambio,
 			&stockResultante,
-			&op.VendedorID,
-			&facturaID,
+			&op.VendedorUUID,
 			&op.FacturaUUID,
 			&op.Timestamp,
 		)
@@ -1171,13 +1162,9 @@ func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
 		if stockResultante.Valid {
 			op.StockResultante = int(stockResultante.Int64)
 		}
-		if facturaID.Valid {
-			id := uint(facturaID.Int64)
-			op.FacturaID = &id
-		}
 
 		newOps = append(newOps, op)
-		productosAfectados[op.ProductoID] = true
+		productosAfectados[op.ProductoUUID] = true
 	}
 
 	if len(newOps) == 0 {
@@ -1205,7 +1192,7 @@ func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
 	defer stmt.Close()
 
 	for _, op := range newOps {
-		_, err := stmt.ExecContext(ctx, op.UUID, op.ProductoID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorID, op.FacturaID, op.FacturaUUID, op.Timestamp)
+		_, err := stmt.ExecContext(ctx, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, op.FacturaUUID, op.FacturaUUID, op.Timestamp)
 		if err != nil {
 			// Logueamos el error pero intentamos continuar con las demás operaciones.
 			d.Log.Errorf("Error al insertar op. stock local (UUID: %s): %v", op.UUID, err)
@@ -1243,12 +1230,12 @@ func joinInt64s(nums []int64) string {
 	return b.String()
 }
 
-func uniqueProductoIDsFromDetallesCompra(detalles []DetalleCompra) []uint {
-	m := make(map[uint]bool)
+func uniqueProductoIDsFromDetallesCompra(detalles []DetalleCompra) []string {
+	m := make(map[string]bool)
 	for _, d := range detalles {
-		m[d.ProductoID] = true
+		m[d.ProductoUUID] = true
 	}
-	out := make([]uint, 0, len(m))
+	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}

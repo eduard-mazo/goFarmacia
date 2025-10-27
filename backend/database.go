@@ -24,11 +24,11 @@ import (
 
 type OperacionStock struct {
 	UUID            string    `json:"uuid"`
-	ProductoUUID    uint      `json:"producto_uuid"`
+	ProductoUUID    string    `json:"producto_uuid"`
 	TipoOperacion   string    `json:"tipo_operacion"`
 	CantidadCambio  int       `json:"cantidad_cambio"`
 	StockResultante int       `json:"stock_resultante"`
-	VendedorUUID    uint      `json:"vendedor_uuid"`
+	VendedorUUID    string    `json:"vendedor_uuid"`
 	FacturaUUID     *string   `json:"factura_uuid"`
 	Timestamp       time.Time `json:"timestamp" ts_type:"string"`
 	Sincronizado    bool      `json:"sincronizado"`
@@ -159,7 +159,7 @@ type DetalleCompra struct {
 	DeletedAt            *time.Time `json:"deleted_at" ts_type:"string"`
 	UUID                 string     `json:"uuid"`
 	CompraUUID           uint       `json:"compra_uuid"`
-	ProductoUUID         uint       `json:"producto_uuid"`
+	ProductoUUID         string     `json:"producto_uuid"`
 	Producto             Producto   `json:"producto"`
 	Cantidad             int        `json:"cantidad"`
 	PrecioCompraUnitario float64    `json:"precio_compra_unitario"`
@@ -173,6 +173,7 @@ type VentaRequest struct {
 }
 
 type ProductoVenta struct {
+	ProductoUUID   string  `json:"producto_uuid"`
 	Cantidad       int     `json:"Cantidad"`
 	PrecioUnitario float64 `json:"PrecioUnitario"`
 }
@@ -189,7 +190,7 @@ type CompraRequest struct {
 }
 
 type ProductoCompraInfo struct {
-	ProductoUUID         uint    `json:"producto_uuid"`
+	ProductoUUID         string  `json:"producto_uuid"`
 	Cantidad             int     `json:"Cantidad"`
 	PrecioCompraUnitario float64 `json:"PrecioCompraUnitario"`
 }
