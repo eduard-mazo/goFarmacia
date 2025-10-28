@@ -60,7 +60,7 @@ const productosEncontrados = ref<backend.Producto[]>([]);
 const metodoPago = ref("efectivo");
 const efectivoRecibido = ref<number | undefined>(undefined);
 const clienteSeleccionado = ref("Cliente General");
-const clienteID = ref(1);
+const clienteUUID = ref<string>("SYSTEM-ADMIN");
 const debounceTimer = ref<number | undefined>(undefined);
 const isLoading = ref(false);
 const isCreateModalOpen = ref(false);
@@ -199,18 +199,18 @@ async function finalizarVenta() {
     });
     return;
   }
-  if (!authenticatedUser.value?.uuid) {
+  if (!authenticatedUser.value?.UUID) {
     toast.error("Vendedor no identificado", {
       description: "Inicie sesión de nuevo.",
     });
     return;
   }
   const ventaRequest = new backend.VentaRequest({
-    ClienteID: clienteID.value,
-    VendedorID: authenticatedUser.value.id,
+    clienteUUID: clienteUUID.value,
+    VendedorUUID: authenticatedUser.value.UUID,
     MetodoPago: metodoPago.value,
     Productos: activeCart.value.map((item) => ({
-      ID: item.id,
+      ID: item.UUID,
       Cantidad: item.cantidad,
       PrecioUnitario: item.PrecioVenta,
     })),
@@ -240,20 +240,20 @@ async function cargarClienteGeneralPorDefecto() {
       await ObtenerClientesPaginado(1, 1, "222222222", "", "asc");
     if (response && response.Records && response.Records.length > 0) {
       const clienteGeneral = response.Records[0] as backend.Cliente;
-      clienteID.value = clienteGeneral.id;
+      clienteUUID.value = clienteGeneral.UUID;
       clienteSeleccionado.value = `${clienteGeneral.Nombre} ${clienteGeneral.Apellido}`;
     } else {
-      clienteID.value = 1;
+      clienteUUID.value = "SYSTEM-ADMIN";
       clienteSeleccionado.value = "Cliente General";
     }
   } catch (error) {
-    clienteID.value = 1; // ID de respaldo
+    clienteUUID.value = "SYSTEM-ADMIN";
     clienteSeleccionado.value = "Cliente General";
   }
 }
 
 function handleClienteSeleccionado(cliente: backend.Cliente) {
-  clienteID.value = cliente.id;
+  clienteUUID.value = cliente.UUID;
   clienteSeleccionado.value = `${cliente.Nombre} ${cliente.Apellido}`;
   isClienteModalOpen.value = false;
 }
@@ -400,7 +400,7 @@ function handleLoadCart(cartId: number) {
                     <ul>
                       <li
                         v-for="(producto, index) in productosEncontrados"
-                        :key="producto.id"
+                        :key="producto.UUID"
                         :ref="el => { if (el) searchResultItemsRef[index] = el as HTMLLIElement }"
                         class="p-3 hover:bg-muted cursor-pointer flex justify-between items-center"
                         :class="{
@@ -465,7 +465,7 @@ function handleLoadCart(cartId: number) {
                   </TableHeader>
                   <TableBody>
                     <template v-if="activeCart.length > 0">
-                      <TableRow v-for="item in activeCart" :key="item.id">
+                      <TableRow v-for="item in activeCart" :key="item.UUID">
                         <TableCell class="font-mono">{{
                           item.Codigo
                         }}</TableCell>
@@ -480,7 +480,10 @@ function handleLoadCart(cartId: number) {
                             class="w-20 text-center mx-auto h-10"
                             :model-value="item.cantidad"
                             @update:model-value="
-                              cartStore.updateQuantity(item.id, Number($event))
+                              cartStore.updateQuantity(
+                                item.UUID,
+                                Number($event)
+                              )
                             "
                             min="1"
                             :max="item.Stock"
@@ -503,7 +506,7 @@ function handleLoadCart(cartId: number) {
                           <Button
                             size="icon"
                             variant="ghost"
-                            @click="cartStore.removeFromCart(item.id)"
+                            @click="cartStore.removeFromCart(item.UUID)"
                           >
                             <Trash2 class="w-5 h-5 text-destructive" />
                           </Button>

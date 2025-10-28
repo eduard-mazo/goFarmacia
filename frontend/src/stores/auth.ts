@@ -35,11 +35,11 @@ export const useAuthStore = defineStore("auth", () => {
   async function login(credentials: { Email: string; Contrasena: string }) {
     const response = await LoginVendedor(credentials);
 
-    if (response.mfa_required) {
-      tempMFAToken.value = response.token; // Guarda el token temporal
+    if (response.MFARequired) {
+      tempMFAToken.value = response.Token; // Guarda el token temporal
       return true; // Indica al componente que se requiere MFA
     } else {
-      setAuthenticated(response.vendedor, response.token);
+      setAuthenticated(response.Vendedor, response.Token);
       router.push("/dashboard");
       return false; // Indica al componente que el login está completo
     }
@@ -53,7 +53,7 @@ export const useAuthStore = defineStore("auth", () => {
     }
     const finalResponse = await VerificarLoginMFA(tempMFAToken.value, mfaCode);
 
-    setAuthenticated(finalResponse.vendedor, finalResponse.token);
+    setAuthenticated(finalResponse.Vendedor, finalResponse.Token);
 
     tempMFAToken.value = null;
 

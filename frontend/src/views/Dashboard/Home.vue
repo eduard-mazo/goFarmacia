@@ -317,7 +317,7 @@ watch(date, (newDate) => {
           >
             <li
               v-for="p in dashboardData.productosSinStock"
-              :key="p.id"
+              :key="p.UUID"
               class="flex flex-col"
             >
               <span class="font-medium truncate">{{ p.Nombre }}</span>

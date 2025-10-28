@@ -33,7 +33,6 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ArrowUpDown, Eye, Loader2 } from "lucide-vue-next";
 import { backend } from "@/../wailsjs/go/models";
 import {
@@ -54,7 +53,7 @@ const busqueda = ref("");
 const sorting = ref<SortingState>([]);
 const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 10 });
 const isModalOpen = ref(false);
-const loadingFacturaId = ref<number | null>(null);
+const loadingFacturaId = ref<string | null>(null);
 const facturaParaRecibo = ref<backend.Factura | null>(new backend.Factura());
 
 const cargarFacturas = async () => {
@@ -145,7 +144,7 @@ const columns: ColumnDef<backend.Factura>[] = [
   {
     id: "actions",
     cell: ({ row }) => {
-      const isLoading = loadingFacturaId.value === row.original.id;
+      const isLoading = loadingFacturaId.value === row.original.UUID;
       return h(
         Button,
         {
@@ -195,9 +194,9 @@ const currentPage = computed({
   set: (newPage) => table.setPageIndex(newPage - 1),
 });
 async function verDetalleFactura(factura: backend.Factura) {
-  loadingFacturaId.value = factura.id;
+  loadingFacturaId.value = factura.UUID;
   try {
-    const facturaCompleta = await ObtenerDetalleFactura(factura.uuid);
+    const facturaCompleta = await ObtenerDetalleFactura(factura.UUID);
     facturaParaRecibo.value = facturaCompleta;
     isModalOpen.value = true;
   } catch (error) {

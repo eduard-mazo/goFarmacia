@@ -19,7 +19,7 @@ func RecalcularYActualizarStock(dbExecutor interface{}, productoUUID string) err
 	var stockCalculado int
 
 	// SQL para calcular el stock real desde la fuente de verdad (operacion_stocks)
-	query := "SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_id = ?"
+	query := "SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_uuid = ?"
 
 	// Ejecutar la query de cálculo de stock
 	switch txOrDb := dbExecutor.(type) {
@@ -31,7 +31,7 @@ func RecalcularYActualizarStock(dbExecutor interface{}, productoUUID string) err
 		return fmt.Errorf("tipo de ejecutor de base de datos no válido")
 	}
 	if err != nil {
-		return fmt.Errorf("error al calcular la suma de stock para el producto UUID %d: %w", productoUUID, err)
+		return fmt.Errorf("error al calcular la suma de stock para el producto UUID %s: %w", productoUUID, err)
 	}
 
 	// SQL para actualizar la caché en la tabla de productos
@@ -45,7 +45,7 @@ func RecalcularYActualizarStock(dbExecutor interface{}, productoUUID string) err
 		_, err = txOrDb.Exec(updateQuery, stockCalculado, productoUUID)
 	}
 	if err != nil {
-		return fmt.Errorf("error al actualizar el stock en caché para el producto UUID %d: %w", productoUUID, err)
+		return fmt.Errorf("error al actualizar el stock en caché para el producto UUID %s: %w", productoUUID, err)
 	}
 
 	return nil
@@ -149,14 +149,10 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		d.Log.Infof("[LOCAL] - Error al insertar factura: %+v", factura)
 		return Factura{}, fmt.Errorf("error al crear la factura: %w", err)
 	}
-	if err != nil {
-		d.Log.Infof("[LOCAL] - Error LastInsertId: %v", err)
-		return Factura{}, fmt.Errorf("error al obtener ID de la factura: %w", err)
-	}
 
 	// 4. Insertar masivamente los detalles y las operaciones de stock.
 	d.Log.Info("4. Insertar masivamente los detalles y las operaciones de stock.")
-	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (uuid, factura_uuid, producto_id, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtDetalles, err := tx.PrepareContext(d.ctx, "INSERT INTO detalle_facturas (uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return Factura{}, err
 	}
@@ -311,14 +307,14 @@ func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 						c.nombre,
 						c.apellido,
 						c.numero_id,
-						f.vendedor_id,
+						f.vendedor_uuid,
 						v.uuid,
 						v.nombre,
 						v.apellido
 					FROM
 						facturas f
-						JOIN clientes c ON f.cliente_id = c.uuid
-						JOIN vendedors v ON f.vendedor_id = v.uuid
+						JOIN clientes c ON f.cliente_uuid = c.uuid
+						JOIN vendedors v ON f.vendedor_uuid = v.uuid
 					WHERE
 						f.uuid = ?
 	`
@@ -340,7 +336,7 @@ func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 		SELECT d.uuid, d.uuid, d.cantidad, d.precio_unitario, d.precio_total,
 			p.uuid, p.codigo, p.nombre
 		FROM detalle_facturas d
-		JOIN productos p ON d.producto_id = p.uuid
+		JOIN productos p ON d.producto_uuid = p.uuid
 		WHERE d.factura_uuid = ?
 	`
 	rows, err := d.LocalDB.Query(queryDetalles, facturaUUID)

@@ -33,8 +33,8 @@ async function handleGenerateMFA() {
       );
     }
     const response = await GenerarMFA(currentUser.value.Email);
-    qrCodeImage.value = response.image_url;
-    secretKey.value = response.secret;
+    qrCodeImage.value = response.ImageURL;
+    secretKey.value = response.Secret;
   } catch (err: any) {
     error.value = `Error al generar el código MFA: ${err.message || err}`;
   } finally {
@@ -61,7 +61,7 @@ async function verifyAndEnableMFA() {
 
     if (success) {
       toast.success("¡Autenticación de Dos Factores habilitada correctamente!");
-      authStore.updateUser({ mfa_enabled: true }); // Actualiza el estado global
+      authStore.updateUser({ MFAEnabled: true }); // Actualiza el estado global
     }
   } catch (err: any) {
     error.value = `Error al verificar el código: ${err.message || err}`;
@@ -75,7 +75,7 @@ async function verifyAndEnableMFA() {
 <template>
   <div class="py-4">
     <div
-      v-if="currentUser?.mfa_enabled"
+      v-if="currentUser?.MFAEnabled"
       class="flex flex-col items-center justify-center h-full p-6 border rounded-lg bg-secondary/50"
     >
       <ShieldCheck class="w-16 h-16 text-green-500 mb-4" />

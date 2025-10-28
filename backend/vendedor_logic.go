@@ -60,15 +60,10 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 			return Vendedor{}, fmt.Errorf("la cédula o el email ya están registrados en un vendedor activo")
 		}
 	} else {
-		res, err := tx.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", vendedor.UUID, vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, time.Now(), time.Now())
+		_, err := tx.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", vendedor.UUID, vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, time.Now(), time.Now())
 		if err != nil {
 			return Vendedor{}, err
 		}
-		last, err := res.LastInsertId()
-		if err != nil {
-			return Vendedor{}, err
-		}
-		vendedor.ID = uint(last)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -94,12 +89,12 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 		defer cancel()
 
 		row := d.RemoteDB.QueryRow(ctx, `
-			SELECT id, uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
+			SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
 			FROM vendedors
 			WHERE email = $1 AND deleted_at IS NULL
 		`, req.Email)
 
-		err = row.Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
+		err = row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
 			&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled)
 
 		if err != nil {
@@ -113,11 +108,11 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 
 	if err != nil {
 		row := d.LocalDB.QueryRow(`
-			SELECT id, uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
+			SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
 			FROM vendedors
 			WHERE email = ? AND deleted_at IS NULL
 		`, req.Email)
-		err = row.Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
+		err = row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
 			&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -137,10 +132,10 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	if !vendedor.MFAEnabled {
 		expirationTime := time.Now().Add(24 * time.Hour)
 		claims := &Claims{
-			UserID: vendedor.ID,
-			Email:  vendedor.Email,
-			Nombre: vendedor.Nombre,
-			Cedula: vendedor.Cedula,
+			UserUUID: vendedor.UUID,
+			Email:    vendedor.Email,
+			Nombre:   vendedor.Nombre,
+			Cedula:   vendedor.Cedula,
 			RegisteredClaims: jwt.RegisteredClaims{
 				ExpiresAt: jwt.NewNumericDate(expirationTime),
 			},
@@ -155,9 +150,9 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	} else {
 		expirationTime := time.Now().Add(5 * time.Minute)
 		claims := &Claims{
-			UserID:  vendedor.ID,
-			Email:   vendedor.Email,
-			MFAStep: "pending",
+			UserUUID: vendedor.UUID,
+			Email:    vendedor.Email,
+			MFAStep:  "pending",
 			RegisteredClaims: jwt.RegisteredClaims{
 				ExpiresAt: jwt.NewNumericDate(expirationTime),
 			},
@@ -178,13 +173,13 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 }
 
 func (d *Db) ActualizarPerfilVendedor(req VendedorUpdateRequest) (string, error) {
-	if req.ID == 0 {
-		return "", errors.New("se requiere un ID de vendedor válido")
+	if req.UUID == "" {
+		return "", errors.New("se requiere un UUID de vendedor válido")
 	}
 
 	// obtener actual
 	var vendedorActual Vendedor
-	row := d.LocalDB.QueryRow("SELECT uuid, contrasena FROM vendedors WHERE uuid = ?", req.ID)
+	row := d.LocalDB.QueryRow("SELECT uuid, contrasena FROM vendedors WHERE uuid = ?", req.UUID)
 	err := row.Scan(&vendedorActual.UUID, &vendedorActual.Contrasena)
 	if err != nil {
 		return "", errors.New("vendedor no encontrado")
@@ -290,7 +285,7 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 	case "nombre", "cedula", "email":
 		baseQuery += fmt.Sprintf(" ORDER BY %s %s", strings.ToLower(sortBy), order)
 	default:
-		baseQuery += " ORDER BY id DESC"
+		baseQuery += " ORDER BY uuid DESC"
 	}
 
 	// Contar total
@@ -326,7 +321,7 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 
 func (d *Db) EliminarVendedor(uuid string) (string, error) {
 	if uuid == "" {
-		return "", errors.New("ID de vendedor no válido")
+		return "", errors.New("UUID de vendedor no válido")
 	}
 
 	// Soft delete: marcar deleted_at

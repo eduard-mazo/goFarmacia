@@ -45,15 +45,13 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 			return Cliente{}, fmt.Errorf("el número de identificación ya está registrado")
 		}
 	} else {
-		res, err := tx.ExecContext(d.ctx,
+		_, err := tx.ExecContext(d.ctx,
 			`INSERT INTO clientes (nombre, apellido, tipo_id, numero_id, telefono, email, direccion, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			cliente.Nombre, cliente.Apellido, cliente.TipoID, cliente.NumeroID, cliente.Telefono, cliente.Email, cliente.Direccion, time.Now(), time.Now(),
 		)
 		if err != nil {
 			return Cliente{}, fmt.Errorf("error al registrar nuevo cliente: %w", err)
 		}
-		id, _ := res.LastInsertId()
-		cliente.ID = uint(id)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -136,7 +134,7 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrd
 	}
 
 	var queryArgs []interface{}
-	query := "SELECT id, uuid, nombre, apellido, tipo_id, numero_id, telefono, email, direccion FROM clientes WHERE deleted_at IS NULL"
+	query := "SELECT uuid, nombre, apellido, tipo_id, numero_id, telefono, email, direccion FROM clientes WHERE deleted_at IS NULL"
 	if search != "" {
 		query += " AND (LOWER(nombre) LIKE ? OR LOWER(apellido) LIKE ? OR numero_id LIKE ?)"
 		searchTerm := "%" + strings.ToLower(search) + "%"
@@ -175,7 +173,7 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrd
 
 	for rows.Next() {
 		var c Cliente
-		if err := rows.Scan(&c.ID, &c.UUID, &c.Nombre, &c.Apellido, &c.TipoID, &c.NumeroID, &c.Telefono, &c.Email, &c.Direccion); err != nil {
+		if err := rows.Scan(&c.UUID, &c.Nombre, &c.Apellido, &c.TipoID, &c.NumeroID, &c.Telefono, &c.Email, &c.Direccion); err != nil {
 			return PaginatedResult{}, fmt.Errorf("error al escanear cliente: %w", err)
 		}
 		clientes = append(clientes, c)
@@ -187,9 +185,9 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrd
 // ObtenerClientePorID busca un cliente por su ID.
 func (d *Db) ObtenerClientePorID(uuid string) (Cliente, error) {
 	var c Cliente
-	query := "SELECT id, uuid, tipo_id, numero_id, nombre, direccion, telefono, email FROM clientes WHERE uuid = ? AND deleted_at IS NULL"
+	query := "SELECT uuid, tipo_id, numero_id, nombre, direccion, telefono, email FROM clientes WHERE uuid = ? AND deleted_at IS NULL"
 
-	err := d.LocalDB.QueryRow(query, uuid).Scan(&c.ID, &c.UUID, &c.TipoID, &c.NumeroID, &c.Nombre, &c.Direccion, &c.Telefono, &c.Email)
+	err := d.LocalDB.QueryRow(query, uuid).Scan(&c.UUID, &c.TipoID, &c.NumeroID, &c.Nombre, &c.Direccion, &c.Telefono, &c.Email)
 	if err != nil {
 		return Cliente{}, fmt.Errorf("error al buscar cliente por ID %s: %w", uuid, err)
 	}

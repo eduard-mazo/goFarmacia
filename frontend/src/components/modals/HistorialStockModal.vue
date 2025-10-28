@@ -36,23 +36,23 @@
                 >No hay movimientos registrados para este producto.</TableCell
               >
             </TableRow>
-            <TableRow v-for="op in historial" :key="op.id">
-              <TableCell>{{ formatDateTime(op.timestamp) }}</TableCell>
+            <TableRow v-for="op in historial" :key="op.UUID">
+              <TableCell>{{ formatDateTime(op.Timestamp) }}</TableCell>
               <TableCell>
-                <Badge :variant="getOperationVariant(op.tipo_operacion)">{{
-                  op.tipo_operacion
+                <Badge :variant="getOperationVariant(op.TipoOperacion)">{{
+                  op.TipoOperacion
                 }}</Badge>
               </TableCell>
               <TableCell
                 :class="[
                   'text-right font-mono text-sm',
-                  op.cantidad_cambio > 0 ? 'text-green-600' : 'text-red-600',
+                  op.CantidadCambio > 0 ? 'text-green-600' : 'text-red-600',
                 ]"
               >
-                {{ op.cantidad_cambio > 0 ? "+" : "" }}{{ op.cantidad_cambio }}
+                {{ op.CantidadCambio > 0 ? "+" : "" }}{{ op.CantidadCambio }}
               </TableCell>
               <TableCell class="text-right font-mono text-sm">{{
-                op.stock_resultante
+                op.StockResultante
               }}</TableCell>
             </TableRow>
           </TableBody>
@@ -111,12 +111,12 @@ const isLoading = ref(false);
 const error = ref("");
 const historial = ref<backend.OperacionStock[]>([]);
 
-const fetchHistorial = async (productoId: number) => {
-  if (!productoId) return;
+const fetchHistorial = async (productoUUID: string) => {
+  if (!productoUUID) return;
   isLoading.value = true;
   error.value = "";
   try {
-    historial.value = (await ObtenerHistorialStock(productoId)) || [];
+    historial.value = (await ObtenerHistorialStock(productoUUID)) || [];
   } catch (err: any) {
     error.value = `No se pudo cargar el historial: ${err}`;
     historial.value = [];
@@ -129,7 +129,7 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen && props.producto) {
-      fetchHistorial(props.producto.id);
+      fetchHistorial(props.producto.UUID);
     } else {
       historial.value = [];
       error.value = "";

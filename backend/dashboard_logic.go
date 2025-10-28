@@ -56,7 +56,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	data.ProductosSinStock = make([]Producto, 0)
 	data.MetodosPago = make([]map[string]interface{}, 0)
 
-	queryTotalVentas := "SELECT COALESCE(SUM(total), 0), COUNT(id) FROM facturas WHERE fecha_emision BETWEEN ? AND ?"
+	queryTotalVentas := "SELECT COALESCE(SUM(total), 0), COUNT(uuid) FROM facturas WHERE fecha_emision BETWEEN ? AND ?"
 	err = d.LocalDB.QueryRow(queryTotalVentas, inicioDelDia, finDelDia).Scan(&data.TotalVentasDia, &data.NumeroVentasDia)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener total de ventas: %w", err)
@@ -82,8 +82,8 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	queryTopProd := `
 		SELECT p.nombre, SUM(df.cantidad) as cantidad
 		FROM detalle_facturas df
-		JOIN productos p ON p.id = df.producto_id
-		JOIN facturas f ON f.id = df.factura_id
+		JOIN productos p ON p.uuid = df.producto_uuid
+		JOIN facturas f ON f.uuid = df.factura_uuid
 		WHERE f.fecha_emision BETWEEN ? AND ?
 		GROUP BY p.nombre
 		ORDER BY cantidad DESC
@@ -118,7 +118,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	}
 
 	// 6. Obtener Top 5 Productos sin stock.
-	querySinStock := "SELECT id, uuid, codigo, nombre, precio_venta, stock FROM productos WHERE stock <= 0 AND deleted_at IS NULL ORDER BY nombre ASC LIMIT 5"
+	querySinStock := "SELECT uuid, codigo, nombre, precio_venta, stock FROM productos WHERE stock <= 0 AND deleted_at IS NULL ORDER BY nombre ASC LIMIT 5"
 	rows, err = d.LocalDB.Query(querySinStock)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener productos sin stock: %w", err)
@@ -126,7 +126,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var p Producto
-		if err := rows.Scan(&p.ID, &p.UUID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock); err != nil {
+		if err := rows.Scan(&p.UUID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock); err != nil {
 			return data, err
 		}
 		data.ProductosSinStock = append(data.ProductosSinStock, p)
@@ -136,7 +136,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	queryTopVendedor := `
 		SELECT v.nombre, SUM(f.total) as total_vendido
 		FROM facturas f
-		JOIN vendedors v ON v.id = f.vendedor_id
+		JOIN vendedors v ON v.uuid = f.vendedor_uuid
 		WHERE f.fecha_emision BETWEEN ? AND ?
 		GROUP BY v.nombre
 		ORDER BY total_vendido DESC

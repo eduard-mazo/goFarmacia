@@ -85,7 +85,7 @@ function seleccionarCliente(cliente: backend.Cliente) {
         <ul v-if="clientes.length > 0">
           <li
             v-for="cliente in clientes"
-            :key="cliente.id"
+            :key="cliente.UUID"
             class="p-3 hover:bg-muted cursor-pointer"
             @click="seleccionarCliente(cliente)"
           >

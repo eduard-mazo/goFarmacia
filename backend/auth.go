@@ -29,9 +29,9 @@ func CheckPasswordHash(password, hash string) bool {
 func (d *Db) GenerateJWT(vendedor Vendedor) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
-		UserID: vendedor.ID,
-		Nombre: vendedor.Nombre,
-		Cedula: vendedor.Cedula,
+		UserUUID: vendedor.UUID,
+		Nombre:   vendedor.Nombre,
+		Cedula:   vendedor.Cedula,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
@@ -46,9 +46,9 @@ func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 
 	// Buscar vendedor en SQLite
 	err := d.LocalDB.QueryRow(
-		"SELECT id, uuid, email FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		"SELECT uuid, email FROM vendedors WHERE email = ? AND deleted_at IS NULL",
 		email,
-	).Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Email)
+	).Scan(&vendedor.UUID, &vendedor.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return MFASetupResponse{}, errors.New("vendedor no encontrado")
@@ -128,9 +128,9 @@ func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 	var vendedor Vendedor
 
 	err := d.LocalDB.QueryRow(
-		"SELECT id, uuid, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		"SELECT uuid, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
 		email,
-	).Scan(&vendedor.ID, &vendedor.UUID, &vendedor.MFASecret)
+	).Scan(&vendedor.UUID, &vendedor.MFASecret)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return false, errors.New("usuario no encontrado")
@@ -148,8 +148,8 @@ func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 
 	// Habilitar MFA
 	_, err = d.LocalDB.Exec(
-		"UPDATE vendedors SET mfa_enabled = 1, updated_at = ? WHERE id = ?",
-		time.Now(), vendedor.ID,
+		"UPDATE vendedors SET mfa_enabled = 1, updated_at = ? WHERE uuid = ?",
+		time.Now(), vendedor.UUID,
 	)
 	if err != nil {
 		return false, errors.New("no se pudo habilitar MFA")
@@ -175,9 +175,9 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 
 	var vendedor Vendedor
 	err = d.LocalDB.QueryRow(
-		"SELECT id, uuid, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+		"SELECT uuid, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
 		claims.Email,
-	).Scan(&vendedor.ID, &vendedor.UUID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.MFAEnabled, &vendedor.MFASecret)
+	).Scan(&vendedor.UUID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.MFAEnabled, &vendedor.MFASecret)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return response, errors.New("usuario no encontrado")
@@ -195,10 +195,10 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 
 	expirationTime := time.Now().Add(24 * time.Hour)
 	finalClaims := &Claims{
-		UserID: vendedor.ID,
-		Email:  vendedor.Email,
-		Nombre: vendedor.Nombre,
-		Cedula: vendedor.Cedula,
+		UserUUID: vendedor.UUID,
+		Email:    vendedor.Email,
+		Nombre:   vendedor.Nombre,
+		Cedula:   vendedor.Cedula,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},

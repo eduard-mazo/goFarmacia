@@ -65,7 +65,7 @@ export const useCartStore = defineStore("cart", () => {
     if (!producto) return;
 
     const itemExistente = activeCart.value.find(
-      (item) => item.id === producto.id
+      (item) => item.UUID === producto.UUID
     );
 
     if (itemExistente) {
@@ -85,12 +85,12 @@ export const useCartStore = defineStore("cart", () => {
     }
   }
 
-  function removeFromCart(productoId: number) {
-    activeCart.value = activeCart.value.filter((p) => p.id !== productoId);
+  function removeFromCart(productoUUID: string) {
+    activeCart.value = activeCart.value.filter((p) => p.UUID !== productoUUID);
   }
 
-  function updateQuantity(productoId: number, nuevaCantidad: number) {
-    const item = activeCart.value.find((p) => p.id === productoId);
+  function updateQuantity(productoUUID: string, nuevaCantidad: number) {
+    const item = activeCart.value.find((p) => p.UUID === productoUUID);
     if (item) {
       if (nuevaCantidad > 0 && nuevaCantidad <= item.Stock) {
         item.cantidad = nuevaCantidad;
@@ -100,7 +100,7 @@ export const useCartStore = defineStore("cart", () => {
           description: `El stock disponible es de ${item.Stock} unidades.`,
         });
       } else if (nuevaCantidad <= 0) {
-        removeFromCart(productoId);
+        removeFromCart(productoUUID);
       }
     }
   }

@@ -42,7 +42,7 @@ const formatDate = (dateString: string) => {
       <p><span class="font-bold">Factura:</span> {{ factura.NumeroFactura }}</p>
       <p>
         <span class="font-bold">Fecha:</span>
-        {{ formatDate(factura.fecha_emision) }}
+        {{ formatDate(factura.FechaEmision) }}
       </p>
       <p>
         <span class="font-bold">Cliente:</span> {{ factura.Cliente.Nombre }}
@@ -74,7 +74,7 @@ const formatDate = (dateString: string) => {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="item in factura.Detalles" :key="item.id">
+        <tr v-for="item in factura.Detalles" :key="item.UUID">
           <td class="py-1 align-top">{{ item.Cantidad }}</td>
           <td class="py-1">{{ item.Producto.Nombre }}</td>
           <td class="text-right py-1 align-top">

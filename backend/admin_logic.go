@@ -229,18 +229,18 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 		var totalOperaciones int
 		err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM operacion_stocks WHERE producto_uuid = ?", pr_uuid).Scan(&totalOperaciones)
 		if err != nil {
-			return "", fmt.Errorf("error al contar operaciones para el producto UUID %d: %w", pr_uuid, err)
+			return "", fmt.Errorf("error al contar operaciones para el producto UUID %s: %w", pr_uuid, err)
 		}
 
 		if totalOperaciones > 0 {
 			// Si hay operaciones, recalcular desde ellas.
 			if err := RecalcularYActualizarStock(tx, pr_uuid); err != nil {
-				return "", fmt.Errorf("error al recalcular stock para el producto UUID %d: %w", pr_uuid, err)
+				return "", fmt.Errorf("error al recalcular stock para el producto UUID %s: %w", pr_uuid, err)
 			}
 		} else {
 			// Si no hay operaciones, forzar a 0 y crear registro inicial.
 			if _, err := stmtUpdateStock.ExecContext(ctx, 0, pr_uuid); err != nil {
-				return "", fmt.Errorf("error al actualizar stock a 0 para el producto UUID %d: %w", pr_uuid, err)
+				return "", fmt.Errorf("error al actualizar stock a 0 para el producto UUID %s: %w", pr_uuid, err)
 			}
 
 			// Crear la operación inicial de stock 0
@@ -255,7 +255,7 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 				Sincronizado:    false,
 			}
 			if _, err := stmtInsertOp.ExecContext(ctx, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, op.Timestamp, op.Sincronizado); err != nil {
-				return "", fmt.Errorf("error al crear operación 'INICIAL' para el producto UUID %d: %w", pr_uuid, err)
+				return "", fmt.Errorf("error al crear operación 'INICIAL' para el producto UUID %s: %w", pr_uuid, err)
 			}
 		}
 	}

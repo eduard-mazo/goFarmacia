@@ -147,7 +147,7 @@ const columns: ColumnDef<backend.Vendedor>[] = [
     id: "actions",
     enableHiding: false,
     cell: ({ row }) => {
-      const isCurrentUser = row.original.id === authenticatedUser.value?.id;
+      const isCurrentUser = row.original.UUID === authenticatedUser.value?.UUID;
       return h("div", { class: "relative" }, [
         h(DropdownAction, {
           vendedor: row.original,
@@ -202,14 +202,14 @@ async function handleEdit(vendedor: backend.Vendedor) {
   }
 }
 async function handleDelete(vendedor: backend.Vendedor) {
-  if (vendedor.id === authenticatedUser.value?.id) {
+  if (vendedor.UUID === authenticatedUser.value?.UUID) {
     toast.error("Acción no permitida", {
       description: "No puedes eliminar tu propio usuario.",
     });
     return;
   }
   try {
-    await EliminarVendedor(vendedor.uuid);
+    await EliminarVendedor(vendedor.UUID);
     await cargarVendedores();
     toast.warning("Vendedor eliminado con éxito", {
       description: `Nombre: ${vendedor.Nombre}, Email: ${vendedor.Email}`,

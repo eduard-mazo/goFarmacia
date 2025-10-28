@@ -215,7 +215,7 @@ async function handleEdit(producto: backend.Producto) {
 }
 async function handleDelete(producto: backend.Producto) {
   try {
-    await EliminarProducto(producto.id);
+    await EliminarProducto(producto.UUID);
     await cargarProductos();
     toast.warning("Producto eliminado con éxito", {
       description: `Nombre: ${producto.Nombre}, Código: ${producto.Codigo}`,
