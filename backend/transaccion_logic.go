@@ -100,6 +100,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	// 2. Procesar cada producto, validar stock y preparar operaciones.
 	d.Log.Info("2. Procesar cada producto, validar stock y preparar operaciones.")
 	for _, p := range req.Productos {
+		d.Log.Infof("Producto UUID [%s]", p.ProductoUUID)
 		var producto Producto
 		err := tx.QueryRow("SELECT uuid, nombre, stock FROM productos WHERE uuid = ?", p.ProductoUUID).Scan(&producto.UUID, &producto.Nombre, &producto.Stock)
 		if err != nil {
@@ -146,7 +147,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		factura.UUID, factura.NumeroFactura, factura.FechaEmision, factura.VendedorUUID, factura.ClienteUUID, factura.Subtotal, factura.IVA, factura.Total, factura.Estado, factura.MetodoPago, timestamp, timestamp,
 	)
 	if err != nil {
-		d.Log.Infof("[LOCAL] - Error al insertar factura: %+v", factura)
+		d.Log.Errorf("[LOCAL] - Error al insertar factura: [%s]: %s", factura.UUID, err)
 		return Factura{}, fmt.Errorf("error al crear la factura: %w", err)
 	}
 
@@ -201,19 +202,34 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 }
 
 func (d *Db) generarNumeroFactura(tx *sql.Tx) (string, error) {
-	var ultimoNumero sql.NullString
-	err := tx.QueryRow("SELECT numero_factura FROM facturas ORDER BY uuid DESC LIMIT 1").Scan(&ultimoNumero)
-	if err != nil && err != sql.ErrNoRows {
-		return "", err
+	var maxNum sql.NullInt64 // Usamos NullInt64 para manejar el caso de que la tabla esté vacía
+
+	// Esta consulta extrae la parte numérica (asumiendo el prefijo "FAC-")
+	// la convierte a INTEGER y encuentra el máximo.
+	// COALESCE devuelve 0 si no se encuentran facturas (ej. tabla vacía).
+	query := `
+		SELECT COALESCE(MAX(CAST(SUBSTR(numero_factura, 5) AS INTEGER)), 0) 
+		FROM facturas 
+		WHERE numero_factura LIKE 'FAC-%'`
+
+	err := tx.QueryRow(query).Scan(&maxNum)
+	if err != nil {
+		// Si falla la consulta (que no debería, por COALESCE), retornamos error.
+		return "", fmt.Errorf("error al consultar max numero_factura: %w", err)
 	}
 
-	nuevoNumero := 1000
-	if ultimoNumero.Valid {
-		var numeroActual int
-		if _, err := fmt.Sscanf(ultimoNumero.String, "FAC-%d", &numeroActual); err == nil {
-			nuevoNumero = numeroActual + 1
-		}
+	nuevoNumero := 1000 // Número base inicial
+
+	if maxNum.Valid && maxNum.Int64 > 0 {
+		// Si encontramos un número máximo, le sumamos 1
+		nuevoNumero = int(maxNum.Int64) + 1
 	}
+
+	// Aseguramos que el nuevo número nunca sea menor que el base
+	if nuevoNumero < 1000 {
+		nuevoNumero = 1000
+	}
+
 	return fmt.Sprintf("FAC-%d", nuevoNumero), nil
 }
 

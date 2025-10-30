@@ -23,7 +23,13 @@ const (
 )
 
 func (d *Db) RealizarSincronizacionInicial() {
-	go d.SincronizacionInteligente()
+	//go d.SincronizacionInteligente()
+	go func() {
+		if _, err := d.NormalizarStockTodosLosProductos(); err != nil {
+			d.Log.Errorf("Error sincronizando operaciones de stock hacia local: %v", err)
+		}
+	}()
+
 }
 
 func (d *Db) SincronizacionInteligente() {
@@ -96,7 +102,7 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	// --- Descarga Remoto -> Local ---
 	remoteCols := strings.Join(cols, ",")
 	remoteQuery := fmt.Sprintf("SELECT %s FROM %s", remoteCols, tableName)
-	args := []interface{}{}
+	args := []any{}
 	if !lastSync.IsZero() {
 		remoteQuery += " WHERE updated_at > $1"
 		args = append(args, lastSync)
@@ -147,8 +153,8 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 
 	remoteCount := 0
 	for rows.Next() {
-		rawVals := make([]interface{}, len(cols))
-		valPtrs := make([]interface{}, len(cols))
+		rawVals := make([]any, len(cols))
+		valPtrs := make([]any, len(cols))
 		for i := range rawVals {
 			valPtrs[i] = &rawVals[i]
 		}
@@ -178,6 +184,7 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	// --- Subida Local -> Remoto ---
 	localQuery := fmt.Sprintf("SELECT %s FROM %s WHERE updated_at > ? AND updated_at < ?", strings.Join(cols, ","), tableName)
 	localRows, err := txLocal.QueryContext(ctx, localQuery, lastSync, syncStartTime)
+	d.Log.Infof("Estampas de tiempo para depuración lastsync [%s] | Startsync [%s]", lastSync, syncStartTime)
 	if err != nil {
 		return fmt.Errorf("[%s] error consultando locales para push: %w", tableName, err)
 	}
@@ -206,14 +213,17 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	var batch pgx.Batch
 	localChanges := 0
 	for localRows.Next() {
-		values := make([]interface{}, len(cols))
-		valPtrs := make([]interface{}, len(cols))
+		values := make([]any, len(cols))
+		valPtrs := make([]any, len(cols))
 		for i := range values {
 			valPtrs[i] = &values[i]
 		}
 		if err := localRows.Scan(valPtrs...); err != nil {
 			d.Log.Errorf("[%s] Error escaneando fila local para push: %v", tableName, err)
 			continue
+		}
+		if tableName == "clientes" {
+			d.Log.Errorf("Cliente %+v", &valPtrs)
 		}
 		batch.Queue(remoteInsert, values...)
 		localChanges++
@@ -310,13 +320,13 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 	_, err = rtx.CopyFrom(d.ctx,
 		pgx.Identifier{"operacion_stocks"},
 		[]string{"uuid", "producto_uuid", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_uuid", "factura_uuid", "timestamp"},
-		pgx.CopyFromSlice(len(pending), func(i int) ([]interface{}, error) {
+		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
 			o := pending[i].op
 			var fuuid interface{}
 			if o.FacturaUUID != nil {
 				fuuid = *o.FacturaUUID
 			}
-			return []interface{}{o.UUID, o.ProductoUUID, o.TipoOperacion, o.CantidadCambio, o.StockResultante, o.VendedorUUID, fuuid, o.Timestamp}, nil
+			return []any{o.UUID, o.ProductoUUID, o.TipoOperacion, o.CantidadCambio, o.StockResultante, o.VendedorUUID, fuuid, o.Timestamp}, nil
 		}),
 	)
 	if err != nil && !strings.Contains(err.Error(), "duplicate key") {
@@ -427,14 +437,23 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	// -------------------------------------------------
 	// 1️⃣ FACTURAS
 	// -------------------------------------------------
+	var lastFacturaTimeStr sql.NullString
 	var lastFacturaTime sql.NullTime
 	query := `SELECT MAX(created_at) FROM facturas`
-	if err := tx.QueryRowContext(ctx, query).Scan(&lastFacturaTime); err != nil {
+	if err := tx.QueryRowContext(ctx, query).Scan(&lastFacturaTimeStr); err != nil {
 		return fmt.Errorf("error al obtener fecha de última factura local: %w", err)
+	}
+	if lastFacturaTimeStr.Valid && lastFacturaTimeStr.String != "" {
+		if parsedTime, parseErr := parseFlexibleTime(lastFacturaTimeStr.String); parseErr == nil {
+			lastFacturaTime.Time = parsedTime
+			lastFacturaTime.Valid = true
+		} else {
+			d.Log.Warnf("No se pudo parsear la fecha de última factura local '%s': %v", lastFacturaTimeStr.String, parseErr)
+		}
 	}
 
 	var facturasRemotasQuery string
-	var args []interface{}
+	var args []any
 
 	if lastFacturaTime.Valid {
 		facturasRemotasQuery = `
@@ -502,9 +521,8 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	// 1.a) DETALLES DE FACTURAS
 	// -------------------------------------------------
 	if len(facturaUUIDsRemotos) > 0 {
-		// Construir placeholders dinámicos para la consulta IN (...)
 		placeholders := make([]string, len(facturaUUIDsRemotos))
-		args = make([]interface{}, len(facturaUUIDsRemotos))
+		args = make([]any, len(facturaUUIDsRemotos))
 		for i, uuid := range facturaUUIDsRemotos {
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 			args[i] = uuid
@@ -560,9 +578,20 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	// -------------------------------------------------
 	// 2️⃣ COMPRAS
 	// -------------------------------------------------
+
+	var lastCompraTimeStr sql.NullString
 	var lastCompraTime sql.NullTime
-	if err := tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM compras").Scan(&lastCompraTime); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM compras").Scan(&lastCompraTimeStr); err != nil {
 		return fmt.Errorf("error al obtener fecha de última compra local: %w", err)
+	}
+
+	if lastCompraTimeStr.Valid && lastCompraTimeStr.String != "" {
+		if parsedTime, parseErr := parseFlexibleTime(lastCompraTimeStr.String); parseErr == nil {
+			lastCompraTime.Time = parsedTime
+			lastCompraTime.Valid = true
+		} else {
+			d.Log.Warnf("No se pudo parsear la fecha de última compra local '%s': %v", lastCompraTimeStr.String, parseErr)
+		}
 	}
 
 	var comprasQuery string
@@ -907,7 +936,7 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 				ON CONFLICT (uuid) DO UPDATE 
 				SET updated_at = EXCLUDED.updated_at
 				WHERE EXCLUDED.updated_at > detalle_facturas.updated_at`,
-				df.UUID, df.FacturaUUID, df.FacturaUUID, df.ProductoUUID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt)
+				df.UUID, df.FacturaUUID, df.ProductoUUID, df.Cantidad, df.PrecioUnitario, df.PrecioTotal, df.CreatedAt, df.UpdatedAt)
 		}
 
 		br := rtx.SendBatch(ctx, batchDetalles)
@@ -1028,9 +1057,9 @@ func (d *Db) syncCompraToRemote(c_uuid string) {
 		_, err := rtx.CopyFrom(d.ctx,
 			pgx.Identifier{"detalle_compras"},
 			[]string{"compra_uuid", "producto_uuid", "cantidad", "precio_compra_unitario"},
-			pgx.CopyFromSlice(len(c.Detalles), func(i int) ([]interface{}, error) {
+			pgx.CopyFromSlice(len(c.Detalles), func(i int) ([]any, error) {
 				det := c.Detalles[i]
-				return []interface{}{c.UUID, det.ProductoUUID, det.Cantidad, det.PrecioCompraUnitario}, nil
+				return []any{c.UUID, det.ProductoUUID, det.Cantidad, det.PrecioCompraUnitario}, nil
 			}),
 		)
 		if err != nil {
@@ -1056,7 +1085,7 @@ func (d *Db) syncCompraToRemote(c_uuid string) {
 			_, err := rtx.CopyFrom(d.ctx,
 				pgx.Identifier{"operacion_stocks"},
 				[]string{"uuid", "producto_uuid", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_uuid", "factura_uuid", "timestamp"},
-				pgx.CopyFromSlice(len(localOps), func(i int) ([]interface{}, error) {
+				pgx.CopyFromSlice(len(localOps), func(i int) ([]any, error) {
 					op := localOps[i]
 					var facturaID interface{}
 					if op.FacturaUUID != nil {
@@ -1064,7 +1093,7 @@ func (d *Db) syncCompraToRemote(c_uuid string) {
 					} else {
 						facturaID = nil
 					}
-					return []interface{}{op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, facturaID, op.Timestamp}, nil
+					return []any{op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, facturaID, op.Timestamp}, nil
 				}),
 			)
 			if err != nil && !strings.Contains(err.Error(), "duplicate key") {
@@ -1236,7 +1265,7 @@ func uniqueProductoIDsFromDetallesCompra(detalles []DetalleCompra) []string {
 	return out
 }
 
-func (d *Db) sanitizeRow(tableName string, cols []string, values []interface{}) error {
+func (d *Db) sanitizeRow(tableName string, cols []string, values []any) error {
 	now := time.Now().UTC()
 	colMap := make(map[string]int, len(cols))
 	for i, name := range cols {

@@ -11,7 +11,7 @@ import (
 )
 
 // CrearProducto inserta un nuevo producto en la base de datos local.
-func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
+func (d *Db) RegistrarProducto(NuevoProducto NuevoProducto) (Producto, error) {
 	tx, err := d.LocalDB.Begin()
 	if err != nil {
 		return Producto{}, fmt.Errorf("no se pudo iniciar la transacción: %w", err)
@@ -26,7 +26,7 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 		UUID      string
 		DeletedAt sql.NullTime
 	}
-	err = tx.QueryRowContext(d.ctx, "SELECT id, uuid, deleted_at FROM productos WHERE codigo = ?", producto.Codigo).Scan(&existente.UUID, &existente.DeletedAt)
+	err = tx.QueryRowContext(d.ctx, "SELECT uuid, deleted_at FROM productos WHERE codigo = ?", NuevoProducto.Codigo).Scan(&existente.UUID, &existente.DeletedAt)
 
 	if err != nil && err != sql.ErrNoRows {
 		return Producto{}, fmt.Errorf("error al verificar producto existente: %w", err)
@@ -36,17 +36,17 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 	case err == nil:
 		if existente.DeletedAt.Valid {
 			// Restaurar producto eliminado
-			d.Log.Infof("Restaurando producto eliminado con ID: %s", existente.UUID)
+			d.Log.Infof("Restaurando producto eliminado con UUID: %s", existente.UUID)
 			update := `
 				UPDATE productos
 				SET nombre = ?, precio_venta = ?, stock = 0, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
 				WHERE uuid = ?
 			`
-			if _, err := tx.Exec(update, producto.Nombre, producto.PrecioVenta, existente.UUID); err != nil {
+			if _, err := tx.Exec(update, NuevoProducto.Nombre, NuevoProducto.PrecioVenta, existente.UUID); err != nil {
 				return Producto{}, fmt.Errorf("error al restaurar producto: %w", err)
 			}
-			producto.UUID = existente.UUID
-			producto.Stock = 0
+			NuevoProducto.UUID = existente.UUID
+			NuevoProducto.Stock = 0
 		} else {
 			return Producto{}, fmt.Errorf("el código del producto ya está en uso")
 		}
@@ -57,7 +57,7 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 			INSERT INTO productos (uuid, nombre, codigo, precio_venta, stock, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		`
-		_, err := tx.Exec(insert, uuid.New().String(), producto.Nombre, producto.Codigo, producto.PrecioVenta, producto.Stock)
+		_, err := tx.Exec(insert, uuid.New().String(), NuevoProducto.Nombre, NuevoProducto.Codigo, NuevoProducto.PrecioVenta, NuevoProducto.Stock)
 		if err != nil {
 			return Producto{}, fmt.Errorf("error al registrar nuevo producto: %w", err)
 		}
@@ -70,7 +70,7 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 	op := OperacionStock{
 		UUID:           uuid.New().String(),
 		TipoOperacion:  "INICIAL",
-		CantidadCambio: producto.Stock,
+		CantidadCambio: NuevoProducto.Stock,
 		VendedorUUID:   "SYSTEM_ADMIN",
 		Timestamp:      time.Now(),
 		Sincronizado:   false,
@@ -80,12 +80,12 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, timestamp, sincronizado)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	if _, err := tx.Exec(opInsert, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, producto.Stock, op.VendedorUUID, op.Timestamp, op.Sincronizado); err != nil {
+	if _, err := tx.Exec(opInsert, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, NuevoProducto.Stock, op.VendedorUUID, op.Timestamp, op.Sincronizado); err != nil {
 		return Producto{}, fmt.Errorf("error al crear operación de stock inicial: %w", err)
 	}
 
 	// 3️⃣ Recalcular y actualizar stock
-	if err := RecalcularYActualizarStock(tx, producto.UUID); err != nil {
+	if err := RecalcularYActualizarStock(tx, NuevoProducto.UUID); err != nil {
 		return Producto{}, fmt.Errorf("error al calcular stock inicial: %w", err)
 	}
 
@@ -93,10 +93,16 @@ func (d *Db) RegistrarProducto(producto Producto) (Producto, error) {
 		return Producto{}, fmt.Errorf("error al confirmar transacción: %w", err)
 	}
 
-	go d.syncProductoToRemote(producto.UUID)
+	go d.syncProductoToRemote(NuevoProducto.UUID)
 	go d.SincronizarOperacionesStockHaciaRemoto()
 
-	return producto, nil
+	return Producto{
+		UUID:        NuevoProducto.UUID,
+		Nombre:      NuevoProducto.Nombre,
+		Codigo:      NuevoProducto.Codigo,
+		PrecioVenta: NuevoProducto.PrecioVenta,
+		Stock:       NuevoProducto.Stock,
+	}, nil
 }
 
 // ObtenerProductosPaginado recupera una lista paginada de productos con búsqueda.
@@ -329,8 +335,8 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 
 	// Implementación de consulta IN (...) para SQLite
 	args := make([]interface{}, len(productoUUIDs))
-	for i, id := range productoUUIDs {
-		args[i] = id
+	for i, p_uuid := range productoUUIDs {
+		args[i] = p_uuid
 	}
 	query := `SELECT producto_uuid, COALESCE(SUM(cantidad_cambio), 0)
 			  FROM operacion_stocks
@@ -374,9 +380,9 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 	}
 
 	// 5. ¡Uso de la función auxiliar en bucle para cada producto afectado!
-	for _, id := range productoUUIDs {
-		if err := RecalcularYActualizarStock(tx, id); err != nil {
-			return "", fmt.Errorf("error al recalcular stock en lote para producto ID %s: %w", id, err)
+	for _, p_uuid := range productoUUIDs {
+		if err := RecalcularYActualizarStock(tx, p_uuid); err != nil {
+			return "", fmt.Errorf("error al recalcular stock en lote para producto UUID %s: %w", p_uuid, err)
 		}
 	}
 

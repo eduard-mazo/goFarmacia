@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { useAuthStore } from "@/stores/auth";
+import { storeToRefs } from "pinia";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,11 +23,13 @@ const props = defineProps<{
   initialCodigo?: string;
 }>();
 
+const authStore = useAuthStore();
+const { user: authenticatedUser } = storeToRefs(authStore);
 // Eventos para comunicar el resultado al componente padre
 const emit = defineEmits(["update:open", "product-created"]);
 
 // Estado del formulario
-const producto = ref(new backend.Producto());
+const producto = ref<backend.NuevoProducto>(new backend.NuevoProducto());
 const isLoading = ref(false);
 
 // Sincronizar el código inicial cuando el modal se abre
@@ -33,7 +37,8 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      producto.value = new backend.Producto({
+      producto.value = new backend.NuevoProducto({
+        VendedorUUID: authenticatedUser.value?.UUID,
         Codigo: props.initialCodigo || "",
         Nombre: "",
         PrecioVenta: 0,

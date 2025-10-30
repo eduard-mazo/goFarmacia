@@ -206,11 +206,11 @@ async function finalizarVenta() {
     return;
   }
   const ventaRequest = new backend.VentaRequest({
-    clienteUUID: clienteUUID.value,
+    ClienteUUID: clienteUUID.value,
     VendedorUUID: authenticatedUser.value.UUID,
     MetodoPago: metodoPago.value,
     Productos: activeCart.value.map((item) => ({
-      ID: item.UUID,
+      ProductoUUID: item.UUID,
       Cantidad: item.cantidad,
       PrecioUnitario: item.PrecioVenta,
     })),

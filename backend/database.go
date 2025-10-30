@@ -98,6 +98,15 @@ type Producto struct {
 	Stock       int        `json:"Stock"`
 }
 
+type NuevoProducto struct {
+	UUID         string  `json:"UUID"`
+	VendedorUUID string  `json:"VendedorUUID"`
+	Nombre       string  `json:"Nombre"`
+	Codigo       string  `json:"Codigo"`
+	PrecioVenta  float64 `json:"PrecioVenta"`
+	Stock        int     `json:"Stock"`
+}
+
 type Factura struct {
 	CreatedAt     time.Time        `json:"CreatedAt" ts_type:"string"`
 	UpdatedAt     time.Time        `json:"UpdatedAt" ts_type:"string"`
