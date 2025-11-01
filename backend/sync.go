@@ -88,25 +88,32 @@ func (d *Db) SincronizacionInteligente() {
 
 func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, cols []string) error {
 	d.Log.Infof("[%s] Inicio syncGenericModel (unique: %s)", tableName, uniqueCol)
-	syncStartTime := time.Now().UTC()
 
-	// 1) lastSync
+	// 1) Obtener última sincronización desde la base de datos local
 	var lastSync time.Time
-	err := d.LocalDB.QueryRowContext(ctx, `SELECT last_sync_timestamp FROM sync_log WHERE model_name = ?`, tableName).Scan(&lastSync)
+	err := d.LocalDB.QueryRowContext(ctx, `
+		SELECT last_sync_timestamp 
+		FROM sync_log 
+		WHERE model_name = ?
+	`, tableName).Scan(&lastSync)
+
 	if err != nil && err != sql.ErrNoRows {
 		d.Log.Errorf("[%s] Error leyendo sync_log: %v", tableName, err)
 		return err
 	}
+
 	d.Log.Infof("[%s] Última sincronización: %v", tableName, lastSync)
 
-	// --- Descarga Remoto -> Local ---
+	// --- DESCARGA Remoto -> Local ---
 	remoteCols := strings.Join(cols, ",")
-	remoteQuery := fmt.Sprintf("SELECT %s FROM %s", remoteCols, tableName)
-	args := []any{}
+	remoteQuery := fmt.Sprintf(`SELECT %s FROM %s`, remoteCols, tableName)
+
+	var args []any
 	if !lastSync.IsZero() {
-		remoteQuery += " WHERE updated_at > $1"
+		remoteQuery += ` WHERE updated_at > $1`
 		args = append(args, lastSync)
 	}
+
 	rows, err := d.RemoteDB.Query(ctx, remoteQuery, args...)
 	if err != nil {
 		d.Log.Errorf("[%s] Error consultando remoto: %v", tableName, err)
@@ -120,7 +127,7 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	}
 	defer func() {
 		if rErr := txLocal.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [ActualizarProducto] rollback %v", err)
+			d.Log.Errorf("[LOCAL] - Error [ActualizarProducto] rollback: %v", rErr)
 		}
 	}()
 
@@ -136,113 +143,152 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 			upsertAssignments = append(upsertAssignments, fmt.Sprintf("%s = excluded.%s", c, c))
 		}
 	}
-	upsertSQL := fmt.Sprintf(
-		`INSERT INTO %s (%s) VALUES (%s) 
-		 ON CONFLICT(%s) DO UPDATE SET %s
-		 WHERE excluded.updated_at > updated_at`,
-		tableName, strings.Join(cols, ","), placeholders, uniqueCol, strings.Join(upsertAssignments, ", "),
-	)
+
+	upsertSQL := fmt.Sprintf(`
+		INSERT INTO %s (%s) VALUES (%s)
+		ON CONFLICT(%s) DO UPDATE SET %s
+		WHERE excluded.updated_at > %s.updated_at
+	`, tableName, strings.Join(cols, ","), placeholders, uniqueCol, strings.Join(upsertAssignments, ", "), tableName)
+
 	insStmt, err := txLocal.PrepareContext(ctx, upsertSQL)
 	if err != nil {
-		if err := txLocal.Rollback(); err != nil {
-			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [syncGenericModel] rollback %v", err)
-		}
 		return fmt.Errorf("[%s] error preparando upsert local: %w", tableName, err)
 	}
 	defer insStmt.Close()
 
 	remoteCount := 0
+	downloadedUUIDs := []string{}
+
 	for rows.Next() {
 		rawVals := make([]any, len(cols))
 		valPtrs := make([]any, len(cols))
 		for i := range rawVals {
 			valPtrs[i] = &rawVals[i]
 		}
+
 		if err := rows.Scan(valPtrs...); err != nil {
 			d.Log.Errorf("[%s] Error escaneando fila remota: %v", tableName, err)
 			continue
 		}
+
+		// Convertir UUID si viene en bytes
 		for i, colName := range cols {
 			if colName == "uuid" {
-				if uuidBytes, ok := rawVals[i].([16]uint8); ok {
-					rawVals[i] = uuid.UUID(uuidBytes).String()
+				switch v := rawVals[i].(type) {
+				case [16]uint8:
+					rawVals[i] = uuid.UUID(v).String()
 				}
+				downloadedUUIDs = append(downloadedUUIDs, fmt.Sprintf("%v", rawVals[i]))
 			}
 		}
+
 		if err := d.sanitizeRow(tableName, cols, rawVals); err != nil {
 			d.Log.Warn(err.Error())
 			continue
 		}
+
 		if _, err := insStmt.ExecContext(ctx, rawVals...); err != nil {
-			d.Log.Errorf("[%s] Error en UPSERT local (remoto->local): %v", tableName, err)
+			d.Log.Errorf("[%s] Error en UPSERT local: %v", tableName, err)
 			continue
 		}
+
 		remoteCount++
 	}
-	d.Log.Infof("[%s] Se recibieron y procesaron %d registros del servidor remoto.", tableName, remoteCount)
 
-	// --- Subida Local -> Remoto ---
-	localQuery := fmt.Sprintf("SELECT %s FROM %s WHERE updated_at > ? AND updated_at < ?", strings.Join(cols, ","), tableName)
-	localRows, err := txLocal.QueryContext(ctx, localQuery, lastSync, syncStartTime)
-	d.Log.Infof("Estampas de tiempo para depuración lastsync [%s] | Startsync [%s]", lastSync, syncStartTime)
-	if err != nil {
-		return fmt.Errorf("[%s] error consultando locales para push: %w", tableName, err)
-	}
-	defer localRows.Close()
-
-	remotePlaceholders := make([]string, len(cols))
-	for i := range cols {
-		remotePlaceholders[i] = fmt.Sprintf("$%d", i+1)
-	}
-	remoteAssignments := []string{}
-	for _, c := range cols {
-		if c == "uuid" || c == uniqueCol || c == "created_at" {
-			continue
-		}
-		if c == "updated_at" {
-			remoteAssignments = append(remoteAssignments, "updated_at = EXCLUDED.updated_at")
-		} else {
-			remoteAssignments = append(remoteAssignments, fmt.Sprintf("%s = EXCLUDED.%s", c, c))
-		}
-	}
-	remoteInsert := fmt.Sprintf(
-		"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s WHERE EXCLUDED.updated_at > %s.updated_at",
-		tableName, strings.Join(cols, ","), strings.Join(remotePlaceholders, ","), uniqueCol, strings.Join(remoteAssignments, ", "), tableName,
-	)
-
-	var batch pgx.Batch
-	localChanges := 0
-	for localRows.Next() {
-		values := make([]any, len(cols))
-		valPtrs := make([]any, len(cols))
-		for i := range values {
-			valPtrs[i] = &values[i]
-		}
-		if err := localRows.Scan(valPtrs...); err != nil {
-			d.Log.Errorf("[%s] Error escaneando fila local para push: %v", tableName, err)
-			continue
-		}
-		if tableName == "clientes" {
-			d.Log.Errorf("Cliente %+v", &valPtrs)
-		}
-		batch.Queue(remoteInsert, values...)
-		localChanges++
+	d.Log.Infof("[%s] Recibidos [ %d ] registros del servidor remoto", tableName, remoteCount)
+	if len(downloadedUUIDs) > 0 {
+		d.Log.Infof("[%s] UUIDs descargados: %v", tableName, downloadedUUIDs)
 	}
 
-	if localChanges > 0 {
-		d.Log.Infof("[%s] Preparando subida de %d registros al remoto...", tableName, localChanges)
-		br := d.RemoteDB.SendBatch(ctx, &batch)
-		if err := br.Close(); err != nil {
-			d.Log.Errorf("[%s] Error ejecutando batch al remoto: %v", tableName, err)
-		}
+	// Tomar timestamp después de insert remoto->local
+	syncStartTime := time.Now().UTC()
+	d.Log.Infof("[%s] Marca de syncStartTime: %s", tableName, syncStartTime)
+
+	// --- SUBIDA Local -> Remoto ---
+	if lastSync.IsZero() {
+		d.Log.Warnf("[%s] Primera sincronización — NO se suben registros", tableName)
 	} else {
-		d.Log.Infof("[%s] No hay cambios locales para subir.", tableName)
+		localQuery := fmt.Sprintf(`
+		SELECT %s 
+		FROM %s 
+		WHERE updated_at > ? AND updated_at < ?
+	`, strings.Join(cols, ","), tableName)
+
+		localRows, err := txLocal.QueryContext(ctx, localQuery, lastSync, syncStartTime)
+		if err != nil {
+			return fmt.Errorf("[%s] error consultando locales para push: %w", tableName, err)
+		}
+		defer localRows.Close()
+
+		remotePlaceholders := make([]string, len(cols))
+		for i := range cols {
+			remotePlaceholders[i] = fmt.Sprintf("$%d", i+1)
+		}
+
+		remoteAssignments := []string{}
+		for _, c := range cols {
+			if c == "uuid" || c == uniqueCol || c == "created_at" {
+				continue
+			}
+			if c == "updated_at" {
+				remoteAssignments = append(remoteAssignments, "updated_at = EXCLUDED.updated_at")
+			} else {
+				remoteAssignments = append(remoteAssignments, fmt.Sprintf("%s = EXCLUDED.%s", c, c))
+			}
+		}
+
+		remoteInsert := fmt.Sprintf(`
+		INSERT INTO %s (%s) VALUES (%s)
+		ON CONFLICT (%s) DO UPDATE SET %s
+		WHERE EXCLUDED.updated_at > %s.updated_at
+	`, tableName, strings.Join(cols, ","), strings.Join(remotePlaceholders, ","), uniqueCol, strings.Join(remoteAssignments, ", "), tableName)
+
+		var batch pgx.Batch
+		localChanges := 0
+		uploadedUUIDs := []string{}
+
+		for localRows.Next() {
+			values := make([]any, len(cols))
+			valPtrs := make([]any, len(cols))
+			for i := range values {
+				valPtrs[i] = &values[i]
+			}
+
+			if err := localRows.Scan(valPtrs...); err != nil {
+				d.Log.Errorf("[%s] Error escaneando fila local: %v", tableName, err)
+				continue
+			}
+
+			for i, c := range cols {
+				if c == "uuid" {
+					uploadedUUIDs = append(uploadedUUIDs, fmt.Sprintf("%v", values[i]))
+				}
+			}
+
+			batch.Queue(remoteInsert, values...)
+			localChanges++
+		}
+
+		if localChanges > 0 {
+			d.Log.Infof("[%s] Preparando subida de [ %d ] registros al remoto", tableName, localChanges)
+			d.Log.Infof("[%s] UUIDs a subir: %v", tableName, uploadedUUIDs)
+
+			br := d.RemoteDB.SendBatch(ctx, &batch)
+			if err := br.Close(); err != nil {
+				d.Log.Errorf("[%s] Error ejecutando batch remoto: %v", tableName, err)
+			}
+		} else {
+			d.Log.Infof("[%s] No hay cambios locales para subir", tableName)
+		}
 	}
 
-	// Actualizar sync_log local (INSERT/UPDATE)
-	_, err = txLocal.ExecContext(ctx, "INSERT INTO sync_log(model_name, last_sync_timestamp) VALUES (?, ?) ON CONFLICT(model_name) DO UPDATE SET last_sync_timestamp = ?", tableName, syncStartTime, syncStartTime)
+	_, err = txLocal.ExecContext(ctx, `
+		INSERT INTO sync_log(model_name, last_sync_timestamp) 
+		VALUES (?, ?) 
+		ON CONFLICT(model_name) DO UPDATE SET last_sync_timestamp = ?
+	`, tableName, syncStartTime, syncStartTime)
+
 	if err != nil {
-		d.Log.Errorf("[%s] Error actualizando sync_log local: %v", tableName, err)
 		return fmt.Errorf("[%s] error actualizando sync_log: %w", tableName, err)
 	}
 
@@ -250,7 +296,7 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 		return fmt.Errorf("[%s] error confirmando tx local: %w", tableName, err)
 	}
 
-	d.Log.Infof("[%s] Sincronización completa.", tableName)
+	d.Log.Infof("[%s] Sincronización completa", tableName)
 	return nil
 }
 

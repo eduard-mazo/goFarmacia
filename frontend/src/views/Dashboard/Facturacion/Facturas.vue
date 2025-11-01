@@ -100,7 +100,7 @@ const formatDate = (dateString: string) => {
 const columns: ColumnDef<backend.Factura>[] = [
   { accessorKey: "NumeroFactura", header: "N° Factura" },
   {
-    accessorKey: "fecha_emision",
+    accessorKey: "FechaEmision",
     header: ({ column }) =>
       h(
         Button,
@@ -110,7 +110,7 @@ const columns: ColumnDef<backend.Factura>[] = [
         },
         () => ["Fecha", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
       ),
-    cell: ({ row }) => formatDate(row.getValue("fecha_emision")),
+    cell: ({ row }) => formatDate(row.getValue("FechaEmision")),
   },
   {
     accessorFn: (row) => `${row.Cliente.Nombre} ${row.Cliente.Apellido}`,
@@ -156,9 +156,9 @@ const columns: ColumnDef<backend.Factura>[] = [
         () =>
           isLoading
             ? [
-                h(Loader2, { class: "w-4 h-4 mr-2 animate-spin" }),
-                "Cargando...",
-              ]
+              h(Loader2, { class: "w-4 h-4 mr-2 animate-spin" }),
+              "Cargando...",
+            ]
             : [h(Eye, { class: "w-4 h-4 mr-2" }), "Ver Factura"]
       );
     },
@@ -227,43 +227,32 @@ watch(busqueda, () => {
 </script>
 
 <template>
-  <ReciboVentaModal
-    :factura="facturaParaRecibo"
-    @update:open="facturaParaRecibo = null"
-  />
+  <ReciboVentaModal :factura="facturaParaRecibo" @update:open="facturaParaRecibo = null" />
   <div class="w-full">
     <div class="flex items-center py-4">
-      <Input
-        class="max-w-sm h-10"
-        placeholder="Buscar por N° Factura, cliente..."
-        v-model="busqueda"
-      />
+      <Input class="max-w-sm h-10" placeholder="Buscar por N° Factura, cliente..." v-model="busqueda" />
     </div>
     <Card class="py-0">
       <Table>
-        <TableHeader
-          ><TableRow
-            v-for="headerGroup in table.getHeaderGroups()"
-            :key="headerGroup.id"
-            ><TableHead v-for="header in headerGroup.headers" :key="header.id"
-              ><FlexRender
-                v-if="!header.isPlaceholder"
-                :render="header.column.columnDef.header"
-                :props="header.getContext()" /></TableHead></TableRow
-        ></TableHeader>
+        <TableHeader>
+          <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
+            <TableHead v-for="header in headerGroup.headers" :key="header.id">
+              <FlexRender v-if="!header.isPlaceholder" :render="header.column.columnDef.header"
+                :props="header.getContext()" />
+            </TableHead>
+          </TableRow>
+        </TableHeader>
         <TableBody>
-          <template v-if="table.getRowModel().rows?.length"
-            ><TableRow v-for="row in table.getRowModel().rows" :key="row.id"
-              ><TableCell v-for="cell in row.getVisibleCells()" :key="cell.id"
-                ><FlexRender
-                  :render="cell.column.columnDef.cell"
-                  :props="cell.getContext()" /></TableCell></TableRow
-          ></template>
-          <TableRow v-else
-            ><TableCell :colspan="columns.length" class="h-24 text-center"
-              >No se encontraron facturas.</TableCell
-            ></TableRow
-          >
+          <template v-if="table.getRowModel().rows?.length">
+            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
+              <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
+                <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
+              </TableCell>
+            </TableRow>
+          </template>
+          <TableRow v-else>
+            <TableCell :colspan="columns.length" class="h-24 text-center">No se encontraron facturas.</TableCell>
+          </TableRow>
         </TableBody>
       </Table>
     </Card>
@@ -275,48 +264,26 @@ watch(busqueda, () => {
       <div class="flex items-center space-x-4">
         <div class="flex items-center space-x-2">
           <p class="text-sm font-medium">Filas</p>
-          <Select
-            :model-value="`${table.getState().pagination.pageSize}`"
-            @update:model-value="(value) => table.setPageSize(Number(value))"
-          >
+          <Select :model-value="`${table.getState().pagination.pageSize}`"
+            @update:model-value="(value) => table.setPageSize(Number(value))">
             <SelectTrigger class="h-8 w-[70px]">
-              <SelectValue
-                :placeholder="`${table.getState().pagination.pageSize}`"
-              />
+              <SelectValue :placeholder="`${table.getState().pagination.pageSize}`" />
             </SelectTrigger>
             <SelectContent side="top">
-              <SelectItem
-                v-for="size in [5, 10, 15, 20]"
-                :key="size"
-                :value="`${size}`"
-              >
+              <SelectItem v-for="size in [5, 10, 15, 20]" :key="size" :value="`${size}`">
                 {{ size }}
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        <Pagination
-          v-if="pageCount > 1"
-          v-model:page="currentPage"
-          :total="totalFacturas"
-          :items-per-page="pagination.pageSize"
-          :sibling-count="1"
-          show-edges
-        >
+        <Pagination v-if="pageCount > 1" v-model:page="currentPage" :total="totalFacturas"
+          :items-per-page="pagination.pageSize" :sibling-count="1" show-edges>
           <PaginationContent v-slot="{ items }">
             <PaginationPrevious />
             <template v-for="(item, index) in items">
-              <PaginationItem
-                v-if="item.type === 'page'"
-                :key="index"
-                :value="item.value"
-                as-child
-              >
-                <Button
-                  class="w-10 h-10 p-0"
-                  :variant="item.value === currentPage ? 'default' : 'outline'"
-                >
+              <PaginationItem v-if="item.type === 'page'" :key="index" :value="item.value" as-child>
+                <Button class="w-10 h-10 p-0" :variant="item.value === currentPage ? 'default' : 'outline'">
                   {{ item.value }}
                 </Button>
               </PaginationItem>

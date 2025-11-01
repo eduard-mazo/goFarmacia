@@ -234,6 +234,7 @@ func (d *Db) generarNumeroFactura(tx *sql.Tx) (string, error) {
 }
 
 func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
+	d.Log.Infof("Sorting facturas by [%s]", sortBy)
 	var facturas []Factura
 
 	// Base de la query
@@ -262,7 +263,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 	// Construcción de la cláusula ORDER BY de forma segura
 	allowedSortBy := map[string]string{
 		"NumeroFactura": "f.numero_factura",
-		"fecha_emision": "f.fecha_emision",
+		"FechaEmision": "f.fecha_emision",
 		"Cliente":       "c.nombre",
 		"Vendedor":      "v.nombre",
 		"Total":         "f.total",
@@ -349,7 +350,7 @@ func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 
 	// 2. Obtener los detalles de la factura (productos)
 	queryDetalles := `
-		SELECT d.uuid, d.uuid, d.cantidad, d.precio_unitario, d.precio_total,
+		SELECT d.uuid, d.cantidad, d.precio_unitario, d.precio_total,
 			p.uuid, p.codigo, p.nombre
 		FROM detalle_facturas d
 		JOIN productos p ON d.producto_uuid = p.uuid
