@@ -35,6 +35,7 @@ import { backend } from "@/../wailsjs/go/models";
 // Define props to accept a Vendedor object
 const props = defineProps<{
   vendedor: backend.Vendedor;
+  disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -52,11 +53,13 @@ const isDeleteDialogOpen = ref(false);
 
 // --- Handlers ---
 function openEditDialog() {
+  if (props.disabled) return;
   editableVendedor.value = backend.Vendedor.createFrom(props.vendedor);
   isEditDialogOpen.value = true;
 }
 
 function openDeleteDialog() {
+  if (props.disabled) return;
   editableVendedor.value = backend.Vendedor.createFrom(props.vendedor);
   isDeleteDialogOpen.value = true;
 }
@@ -75,7 +78,7 @@ function handleDeleteConfirm() {
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="ghost" class="w-8 h-8 p-0">
+      <Button variant="ghost" class="w-8 h-8 p-0" :disabled="props.disabled">
         <span class="sr-only">Abrir menú</span>
         <MoreHorizontal class="w-4 h-4" />
       </Button>
@@ -83,10 +86,10 @@ function handleDeleteConfirm() {
     <DropdownMenuContent align="end">
       <DropdownMenuLabel>Acciones</DropdownMenuLabel>
       <DropdownMenuSeparator />
-      <DropdownMenuItem @click="openEditDialog">
+      <DropdownMenuItem @click="openEditDialog" :disabled="props.disabled">
         <span>Editar vendedor</span>
       </DropdownMenuItem>
-      <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
+      <DropdownMenuItem @click="openDeleteDialog" class="text-red-600" :disabled="props.disabled">
         <span>Eliminar vendedor</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
@@ -103,34 +106,19 @@ function handleDeleteConfirm() {
       <div class="grid gap-4 py-4">
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="name" class="text-right">Nombre</Label>
-          <Input
-            id="name"
-            v-model="editableVendedor.Nombre"
-            class="col-span-3"
-          />
+          <Input id="name" v-model="editableVendedor.Nombre" class="col-span-3" />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="cedula" class="text-right">Cédula</Label>
-          <Input
-            id="cedula"
-            v-model="editableVendedor.Cedula"
-            class="col-span-3"
-          />
+          <Input id="cedula" v-model="editableVendedor.Cedula" class="col-span-3" readonly disabled />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="email" class="text-right">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            v-model.number="editableVendedor.Email"
-            class="col-span-3"
-          />
+          <Input id="email" type="email" v-model.number="editableVendedor.Email" class="col-span-3" />
         </div>
       </div>
       <DialogFooter>
-        <Button type="submit" @click="handleSaveChanges"
-          >Guardar cambios</Button
-        >
+        <Button type="submit" @click="handleSaveChanges">Guardar cambios</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
@@ -147,10 +135,7 @@ function handleDeleteConfirm() {
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel>Cancelar</AlertDialogCancel>
-        <AlertDialogAction
-          :class="buttonVariants({ variant: 'destructive' })"
-          @click="handleDeleteConfirm"
-        >
+        <AlertDialogAction :class="buttonVariants({ variant: 'destructive' })" @click="handleDeleteConfirm">
           Eliminar
         </AlertDialogAction>
       </AlertDialogFooter>

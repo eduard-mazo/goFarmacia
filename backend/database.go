@@ -98,6 +98,14 @@ type Producto struct {
 	Stock       int        `json:"Stock"`
 }
 
+type ProductoAjusteRequest struct {
+	UUID         string  `json:"UUID"`
+	Nombre       string  `json:"Nombre"`
+	PrecioVenta  float64 `json:"PrecioVenta"`
+	StockDeseado int     `json:"Stock"`
+	VendedorUUID string  `json:"VendedorUUID,omitempty"`
+}
+
 type NuevoProducto struct {
 	UUID         string  `json:"UUID"`
 	VendedorUUID string  `json:"VendedorUUID"`

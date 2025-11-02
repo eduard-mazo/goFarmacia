@@ -71,7 +71,6 @@ func (d *Db) RegistrarProducto(NuevoProducto NuevoProducto) (Producto, error) {
 		UUID:           uuid.New().String(),
 		TipoOperacion:  "INICIAL",
 		CantidadCambio: NuevoProducto.Stock,
-		VendedorUUID:   "SYSTEM_ADMIN",
 		Timestamp:      time.Now(),
 		Sincronizado:   false,
 	}
@@ -80,7 +79,7 @@ func (d *Db) RegistrarProducto(NuevoProducto NuevoProducto) (Producto, error) {
 		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, timestamp, sincronizado)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	if _, err := tx.Exec(opInsert, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, NuevoProducto.Stock, op.VendedorUUID, op.Timestamp, op.Sincronizado); err != nil {
+	if _, err := tx.Exec(opInsert, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, NuevoProducto.Stock, nil, op.Timestamp, op.Sincronizado); err != nil {
 		return Producto{}, fmt.Errorf("error al crear operación de stock inicial: %w", err)
 	}
 
@@ -120,77 +119,83 @@ func (d *Db) EliminarProducto(uuid string) error {
 }
 
 // ActualizarProducto modifica los datos de un producto existente.
-func (d *Db) ActualizarProducto(p Producto) (string, error) {
-	if p.UUID == "" {
-		return "", fmt.Errorf("se requiere un UUID de producto válido para actualizar")
+func (d *Db) ActualizarProducto(req ProductoAjusteRequest) (string, error) {
+	if req.UUID == "" {
+		return "", fmt.Errorf("se requiere UUID de producto válido")
 	}
 
 	tx, err := d.LocalDB.Begin()
 	if err != nil {
-		return "", fmt.Errorf("error al iniciar la transacción: %w", err)
+		return "", fmt.Errorf("error iniciando tx: %w", err)
 	}
 	defer func() {
 		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [ActualizarProducto] rollback %v", err)
+			d.Log.Errorf("[ActualizarProducto] rollback %v", err)
 		}
 	}()
 
-	// 1️⃣ Obtener stock real actual (sumatoria)
+	// 1️⃣ Obtener stock real
 	var stockRealActual int
-	err = tx.QueryRowContext(d.ctx, `SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_uuid = ?`, p.UUID).
+	err = tx.QueryRow(`SELECT COALESCE(SUM(cantidad_cambio),0) 
+		FROM operacion_stocks WHERE producto_uuid = ?`, req.UUID).
 		Scan(&stockRealActual)
 	if err != nil {
-		return "", fmt.Errorf("error al obtener stock real para producto %s: %w", p.UUID, err)
+		return "", fmt.Errorf("error leyendo stock real: %w", err)
 	}
 
-	// 2️⃣ Actualizar campos base del producto
-	update := `
-		UPDATE productos
-		SET nombre = ?, precio_venta = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE uuid = ?
-	`
-	if _, err := tx.ExecContext(d.ctx, update, p.Nombre, p.PrecioVenta, p.UUID); err != nil {
-		return "", fmt.Errorf("error al actualizar producto: %w", err)
+	// 2️⃣ Actualizar producto básico
+	_, err = tx.Exec(`
+		UPDATE productos 
+		SET nombre=?, precio_venta=?, updated_at=CURRENT_TIMESTAMP
+		WHERE uuid=?`,
+		req.Nombre, req.PrecioVenta, req.UUID)
+	if err != nil {
+		return "", fmt.Errorf("error actualizando producto: %w", err)
 	}
 
-	// 3️⃣ Registrar operación de ajuste si hay diferencia
-	cambio := p.Stock - stockRealActual
+	// 3️⃣ Generar operación de ajuste si es necesario
+	cambio := req.StockDeseado - stockRealActual
 	if cambio != 0 {
-		d.Log.Infof("Ajuste de stock para producto UUID %s. Stock real: %d, Stock deseado: %d, Cambio: %d",
-			p.UUID, stockRealActual, p.Stock, cambio)
-
 		op := OperacionStock{
 			UUID:           uuid.New().String(),
-			ProductoUUID:   p.UUID,
-			TipoOperacion:  "AJUSTE",
+			ProductoUUID:   req.UUID,
+			TipoOperacion:  "AJUSTE_MANUAL",
 			CantidadCambio: cambio,
-			VendedorUUID:   "SYSTEM_ADMIN",
+			VendedorUUID:   "",
 			Timestamp:      time.Now(),
 			Sincronizado:   false,
 		}
 
-		ajuste := `
-			INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, vendedor_uuid, timestamp, sincronizado)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`
-		if _, err := tx.Exec(ajuste, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.VendedorUUID, op.Timestamp, op.Sincronizado); err != nil {
-			return "", fmt.Errorf("error al crear operación de ajuste: %w", err)
+		// si el front envía un vendedor significa ajuste manual
+		if req.VendedorUUID != "" {
+			op.TipoOperacion = "AJUSTE_USUARIO"
+			op.VendedorUUID = req.VendedorUUID
+		}
+
+		_, err = tx.Exec(`
+			INSERT INTO operacion_stocks 
+			(uuid, producto_uuid, tipo_operacion, cantidad_cambio, vendedor_uuid, timestamp, sincronizado)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio,
+			op.VendedorUUID, op.Timestamp, op.Sincronizado)
+		if err != nil {
+			return "", fmt.Errorf("error creando ajuste stock: %w", err)
 		}
 	}
 
 	// 4️⃣ Recalcular stock
-	if err := RecalcularYActualizarStock(tx, p.UUID); err != nil {
-		return "", fmt.Errorf("error final al recalcular stock: %w", err)
+	if err := RecalcularYActualizarStock(tx, req.UUID); err != nil {
+		return "", fmt.Errorf("error recalculando stock: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("error al confirmar la transacción: %w", err)
+		return "", fmt.Errorf("error commit: %w", err)
 	}
 
-	go d.syncProductoToRemote(p.UUID)
+	go d.syncProductoToRemote(req.UUID)
 	go d.SincronizarOperacionesStockHaciaRemoto()
 
-	return "Producto actualizado correctamente.", nil
+	return "Producto actualizado correctamente", nil
 }
 
 func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {

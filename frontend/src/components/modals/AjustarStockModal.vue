@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { storeToRefs } from "pinia";
+import { useAuthStore } from "@/stores/auth";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,6 +24,8 @@ const props = defineProps<{
 
 const emit = defineEmits(["update:open", "stock-updated"]);
 
+const authStore = useAuthStore();
+const { user: authenticatedUser } = storeToRefs(authStore);
 const nuevoStock = ref<number>(0);
 const isLoading = ref(false);
 
@@ -44,10 +48,19 @@ async function handleSubmit() {
 
   isLoading.value = true;
   try {
-    const productoActualizado = new backend.Producto({
-      ...props.producto,
-      Stock: Number(nuevoStock.value)
-    });
+    if (!authenticatedUser.value?.UUID) {
+      toast.error("Vendedor no identificado", {
+        description: "Inicie sesión de nuevo.",
+      });
+      return;
+    }
+    const productoActualizado = new backend.ProductoAjusteRequest({
+      UUID: props.producto.UUID,
+      Nombre: props.producto.Nombre,
+      PrecioVenta: props.producto.PrecioVenta,
+      Stock: Number(nuevoStock.value),
+      VendedorUUID: authenticatedUser.value.UUID
+    })
 
     await ActualizarProducto(productoActualizado);
 
@@ -82,28 +95,15 @@ async function handleSubmit() {
         </div>
         <div class="grid grid-cols-3 items-center gap-4">
           <Label for="stock-actual" class="text-right">Stock Actual</Label>
-          <Input
-            id="stock-actual"
-            :model-value="producto.Stock"
-            class="col-span-2 h-10"
-            readonly
-            disabled
-          />
+          <Input id="stock-actual" :model-value="producto.Stock" class="col-span-2 h-10" readonly disabled />
         </div>
         <div class="grid grid-cols-3 items-center gap-4">
           <Label for="stock-nuevo" class="text-right">Nuevo Stock</Label>
-          <Input
-            id="stock-nuevo"
-            v-model="nuevoStock"
-            type="number"
-            class="col-span-2 h-10"
-          />
+          <Input id="stock-nuevo" v-model="nuevoStock" type="number" class="col-span-2 h-10" />
         </div>
       </div>
       <DialogFooter>
-        <Button variant="outline" @click="emit('update:open', false)"
-          >Cancelar</Button
-        >
+        <Button variant="outline" @click="emit('update:open', false)">Cancelar</Button>
         <Button @click="handleSubmit" :disabled="isLoading">
           {{ isLoading ? "Guardando..." : "Guardar Cambios" }}
         </Button>

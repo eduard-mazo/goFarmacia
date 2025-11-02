@@ -234,68 +234,86 @@ func (d *Db) generarNumeroFactura(tx *sql.Tx) (string, error) {
 }
 
 func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrder string) (PaginatedResult, error) {
-	d.Log.Infof("Sorting facturas by [%s]", sortBy)
-	var facturas []Factura
+	var (
+		facturas []Factura
+		args     []any
+		where    string
+	)
 
-	// Base de la query
+	// Base query join
 	baseQuery := `
 		FROM facturas f
 		JOIN clientes c ON f.cliente_uuid = c.uuid
 		JOIN vendedors v ON f.vendedor_uuid = v.uuid
 	`
-	// Construcción de la cláusula WHERE para la búsqueda
-	var whereClause string
-	var args []interface{}
+
+	// Search filter
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		whereClause = "WHERE LOWER(f.numero_factura) LIKE ? OR LOWER(c.nombre) LIKE ? OR LOWER(v.nombre) LIKE ?"
+		where = `
+			WHERE LOWER(f.numero_factura) LIKE ? 
+			   OR LOWER(c.nombre) LIKE ? 
+			   OR LOWER(v.nombre) LIKE ?
+		`
 		args = append(args, searchTerm, searchTerm, searchTerm)
 	}
 
-	// Obtener el total de registros
+	// Count total records
 	var total int64
-	countQuery := "SELECT COUNT(f.uuid) " + baseQuery + whereClause
-	err := d.LocalDB.QueryRow(countQuery, args...).Scan(&total)
-	if err != nil {
-		return PaginatedResult{}, err
+	countQuery := "SELECT COUNT(f.uuid) " + baseQuery + where
+
+	if err := d.LocalDB.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return PaginatedResult{}, fmt.Errorf("Error contando facturas: %w", err)
 	}
 
-	// Construcción de la cláusula ORDER BY de forma segura
+	// Safe ordering options
 	allowedSortBy := map[string]string{
 		"NumeroFactura": "f.numero_factura",
-		"FechaEmision": "f.fecha_emision",
+		"FechaEmision":  "f.fecha_emision",
 		"Cliente":       "c.nombre",
 		"Vendedor":      "v.nombre",
 		"Total":         "f.total",
 	}
-	orderByClause := "ORDER BY f.uuid DESC"
+
+	orderBy := "ORDER BY f.fecha_emision DESC, f.numero_factura DESC"
 	if col, ok := allowedSortBy[sortBy]; ok {
 		order := "ASC"
 		if strings.ToLower(sortOrder) == "desc" {
 			order = "DESC"
 		}
-		orderByClause = fmt.Sprintf("ORDER BY %s %s", col, order)
+		orderBy = fmt.Sprintf("ORDER BY %s %s", col, order)
 	}
 
 	// Paginación
 	offset := (page - 1) * pageSize
-	paginationClause := fmt.Sprintf(" LIMIT %d OFFSET %d", pageSize, offset)
+	pagination := fmt.Sprintf(" LIMIT %d OFFSET %d", pageSize, offset)
 
 	// Query final para obtener los registros
 	selectQuery := `
-		SELECT f.uuid, f.numero_factura, f.fecha_emision, f.total, c.uuid, c.nombre, v.uuid, v.nombre
-	` + baseQuery + whereClause + orderByClause + paginationClause
+		SELECT 
+			f.uuid, 
+			f.numero_factura,
+			f.fecha_emision,
+			f.total,
+			c.uuid,
+			c.nombre,
+			v.uuid,
+			v.nombre
+	` + baseQuery + where + " " + orderBy + pagination
 
 	rows, err := d.LocalDB.Query(selectQuery, args...)
 	if err != nil {
-		return PaginatedResult{}, err
+		return PaginatedResult{}, fmt.Errorf("Error realizando consulta facturas: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var f Factura
-		err := rows.Scan(&f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.Total, &f.Cliente.UUID, &f.Cliente.Nombre, &f.Vendedor.UUID, &f.Vendedor.Nombre)
-		if err != nil {
+		if err := rows.Scan(
+			&f.UUID, &f.NumeroFactura, &f.FechaEmision, &f.Total,
+			&f.Cliente.UUID, &f.Cliente.Nombre,
+			&f.Vendedor.UUID, &f.Vendedor.Nombre,
+		); err != nil {
 			return PaginatedResult{}, err
 		}
 		facturas = append(facturas, f)

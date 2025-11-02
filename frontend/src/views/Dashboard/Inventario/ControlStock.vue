@@ -127,16 +127,16 @@ const columns: ColumnDef<backend.Producto>[] = [
   },
   {
     id: "actions",
-    cell: ({ row }) =>
-      h(
-        Button,
-        {
-          variant: "outline",
-          size: "sm",
-          onClick: () => handleOpenAdjustModal(row.original),
-        },
-        [h(Edit, { class: "w-4 h-4 mr-2" }), "Ajustar"]
-      ),
+    header: "Acciones",
+    cell: ({ row }) => h(
+      Button,
+      {
+        variant: "outline",
+        size: "sm",
+        onClick: () => handleOpenAdjustModal(row.original),
+      },
+      () => [h(Edit, { class: "w-4 h-4 mr-2" }), "Ajustar"]
+    )
   },
 ];
 
@@ -200,46 +200,34 @@ watch(busqueda, () => {
 </script>
 
 <template>
-  <AjustarStockModal
-    v-if="productoSeleccionado"
-    v-model:open="isAdjustModalOpen"
-    :producto="productoSeleccionado"
-    @stock-updated="handleStockUpdated"
-  />
+  <AjustarStockModal v-if="productoSeleccionado" v-model:open="isAdjustModalOpen" :producto="productoSeleccionado"
+    @stock-updated="handleStockUpdated" />
   <div class="w-full">
     <h1 class="text-2xl font-semibold mb-4">Control de Stock</h1>
     <div class="flex items-center py-4">
-      <Input
-        class="max-w-sm h-10"
-        placeholder="Buscar por nombre o código..."
-        v-model="busqueda"
-      />
+      <Input class="max-w-sm h-10" placeholder="Buscar por nombre o código..." v-model="busqueda" />
     </div>
     <div class="rounded-md border">
       <Table>
-        <TableHeader
-          ><TableRow
-            v-for="headerGroup in table.getHeaderGroups()"
-            :key="headerGroup.id"
-            ><TableHead v-for="header in headerGroup.headers" :key="header.id"
-              ><FlexRender
-                v-if="!header.isPlaceholder"
-                :render="header.column.columnDef.header"
-                :props="header.getContext()" /></TableHead></TableRow
-        ></TableHeader>
+        <TableHeader>
+          <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
+            <TableHead v-for="header in headerGroup.headers" :key="header.id">
+              <FlexRender v-if="!header.isPlaceholder" :render="header.column.columnDef.header"
+                :props="header.getContext()" />
+            </TableHead>
+          </TableRow>
+        </TableHeader>
         <TableBody>
-          <template v-if="table.getRowModel().rows?.length"
-            ><TableRow v-for="row in table.getRowModel().rows" :key="row.id"
-              ><TableCell v-for="cell in row.getVisibleCells()" :key="cell.id"
-                ><FlexRender
-                  :render="cell.column.columnDef.cell"
-                  :props="cell.getContext()" /></TableCell></TableRow
-          ></template>
-          <TableRow v-else
-            ><TableCell :colspan="columns.length" class="h-24 text-center"
-              >No se encontraron productos.</TableCell
-            ></TableRow
-          >
+          <template v-if="table.getRowModel().rows?.length">
+            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
+              <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
+                <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
+              </TableCell>
+            </TableRow>
+          </template>
+          <TableRow v-else>
+            <TableCell :colspan="columns.length" class="h-24 text-center">No se encontraron productos.</TableCell>
+          </TableRow>
         </TableBody>
       </Table>
     </div>
@@ -250,47 +238,25 @@ watch(busqueda, () => {
       <div class="flex items-center space-x-4">
         <div class="flex items-center space-x-2">
           <p class="text-sm font-medium">Filas</p>
-          <Select
-            :model-value="`${table.getState().pagination.pageSize}`"
-            @update:model-value="(value) => table.setPageSize(Number(value))"
-          >
+          <Select :model-value="`${table.getState().pagination.pageSize}`"
+            @update:model-value="(value) => table.setPageSize(Number(value))">
             <SelectTrigger class="h-8 w-[70px]">
-              <SelectValue
-                :placeholder="`${table.getState().pagination.pageSize}`"
-              />
+              <SelectValue :placeholder="`${table.getState().pagination.pageSize}`" />
             </SelectTrigger>
             <SelectContent side="top">
-              <SelectItem
-                v-for="size in [5, 10, 15, 20]"
-                :key="size"
-                :value="`${size}`"
-              >
+              <SelectItem v-for="size in [5, 10, 15, 20]" :key="size" :value="`${size}`">
                 {{ size }}
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
-        <Pagination
-          v-if="pageCount > 1"
-          v-model:page="currentPage"
-          :total="totalProductos"
-          :items-per-page="pagination.pageSize"
-          :sibling-count="1"
-          show-edges
-        >
+        <Pagination v-if="pageCount > 1" v-model:page="currentPage" :total="totalProductos"
+          :items-per-page="pagination.pageSize" :sibling-count="1" show-edges>
           <PaginationContent v-slot="{ items }">
             <PaginationPrevious />
             <template v-for="(item, index) in items">
-              <PaginationItem
-                v-if="item.type === 'page'"
-                :key="index"
-                :value="item.value"
-                as-child
-              >
-                <Button
-                  class="w-10 h-10 p-0"
-                  :variant="item.value === currentPage ? 'default' : 'outline'"
-                >
+              <PaginationItem v-if="item.type === 'page'" :key="index" :value="item.value" as-child>
+                <Button class="w-10 h-10 p-0" :variant="item.value === currentPage ? 'default' : 'outline'">
                   {{ item.value }}
                 </Button>
               </PaginationItem>

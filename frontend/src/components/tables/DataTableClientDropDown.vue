@@ -115,26 +115,15 @@ function handleDeleteConfirm() {
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="documento" class="text-right">Cédula</Label>
-          <Input
-            id="documento"
-            v-model="editableClient.NumeroID"
-            class="col-span-3"
-          />
+          <Input id="documento" v-model="editableClient.NumeroID" class="col-span-3" readonly disabled />
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="email" class="text-right">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            v-model.number="editableClient.Email"
-            class="col-span-3"
-          />
+          <Input id="email" type="email" v-model.number="editableClient.Email" class="col-span-3" />
         </div>
       </div>
       <DialogFooter>
-        <Button type="submit" @click="handleSaveChanges"
-          >Guardar cambios</Button
-        >
+        <Button type="submit" @click="handleSaveChanges">Guardar cambios</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
@@ -153,10 +142,7 @@ function handleDeleteConfirm() {
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel>Cancelar</AlertDialogCancel>
-        <AlertDialogAction
-          :class="buttonVariants({ variant: 'destructive' })"
-          @click="handleDeleteConfirm"
-        >
+        <AlertDialogAction :class="buttonVariants({ variant: 'destructive' })" @click="handleDeleteConfirm">
           Eliminar
         </AlertDialogAction>
       </AlertDialogFooter>
