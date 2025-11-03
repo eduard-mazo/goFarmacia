@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // RegistrarCliente crea un nuevo cliente o restaura uno eliminado usando SQL nativo.
@@ -16,9 +18,15 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 	}
 	defer func() {
 		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [RegistrarCliente] rollback %v", err)
+			d.Log.Errorf("[LOCAL] - Error durante [RegistrarCliente] rollback %v", rErr)
 		}
 	}()
+
+	var txTimestamp time.Time = time.Now()
+	cliente.Email = strings.ToLower(cliente.Email)
+	cliente.UUID = uuid.New().String()
+	cliente.CreatedAt = txTimestamp
+	cliente.UpdatedAt = txTimestamp
 
 	var existente struct {
 		UUID      sql.NullString
@@ -36,7 +44,7 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 			cliente.UUID = existente.UUID.String
 			_, err := tx.ExecContext(d.ctx,
 				`UPDATE clientes SET nombre=?, apellido=?, tipo_id=?, telefono=?, email=?, direccion=?, deleted_at=NULL, updated_at=? WHERE uuid=?`,
-				cliente.Nombre, cliente.Apellido, cliente.TipoID, cliente.Telefono, cliente.Email, cliente.Direccion, time.Now(), cliente.UUID,
+				cliente.Nombre, cliente.Apellido, cliente.TipoID, cliente.Telefono, cliente.Email, cliente.Direccion, cliente.UpdatedAt, cliente.UUID,
 			)
 			if err != nil {
 				return Cliente{}, fmt.Errorf("error al restaurar cliente: %w", err)
@@ -46,8 +54,8 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 		}
 	} else {
 		_, err := tx.ExecContext(d.ctx,
-			`INSERT INTO clientes (nombre, apellido, tipo_id, numero_id, telefono, email, direccion, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			cliente.Nombre, cliente.Apellido, cliente.TipoID, cliente.NumeroID, cliente.Telefono, cliente.Email, cliente.Direccion, time.Now(), time.Now(),
+			`INSERT INTO clientes (uuid, nombre, apellido, tipo_id, numero_id, telefono, email, direccion, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			cliente.UUID, cliente.Nombre, cliente.Apellido, cliente.TipoID, cliente.NumeroID, cliente.Telefono, cliente.Email, cliente.Direccion, cliente.CreatedAt, cliente.UpdatedAt,
 		)
 		if err != nil {
 			return Cliente{}, fmt.Errorf("error al registrar nuevo cliente: %w", err)
@@ -82,12 +90,12 @@ func (d *Db) ActualizarCliente(cliente Cliente) (string, error) {
 		WHERE uuid = ?`
 
 	_, err := d.LocalDB.ExecContext(d.ctx, query,
-		cliente.Nombre,
-		cliente.Apellido,
+		strings.ToLower(cliente.Nombre),
+		strings.ToLower(cliente.Apellido),
 		cliente.TipoID,
 		cliente.NumeroID,
 		cliente.Telefono,
-		cliente.Email,
+		strings.ToLower(cliente.Email),
 		cliente.Direccion,
 		time.Now(),
 		cliente.UUID,

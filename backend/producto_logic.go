@@ -11,96 +11,72 @@ import (
 )
 
 // CrearProducto inserta un nuevo producto en la base de datos local.
-func (d *Db) RegistrarProducto(NuevoProducto NuevoProducto) (Producto, error) {
+func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
 	tx, err := d.LocalDB.Begin()
 	if err != nil {
 		return Producto{}, fmt.Errorf("no se pudo iniciar la transacción: %w", err)
 	}
 	defer func() {
 		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [RegistrarProducto] rollback %v", err)
+			d.Log.Errorf("[RegistrarProducto] rollback %v", rErr)
 		}
 	}()
 
+	// Verificar existencia
 	var existente struct {
 		UUID      string
 		DeletedAt sql.NullTime
 	}
-	err = tx.QueryRowContext(d.ctx, "SELECT uuid, deleted_at FROM productos WHERE codigo = ?", NuevoProducto.Codigo).Scan(&existente.UUID, &existente.DeletedAt)
+	err = tx.QueryRowContext(d.ctx, `SELECT uuid, deleted_at FROM productos WHERE codigo = ?`, nuevo.Codigo).Scan(&existente.UUID, &existente.DeletedAt)
 
 	if err != nil && err != sql.ErrNoRows {
 		return Producto{}, fmt.Errorf("error al verificar producto existente: %w", err)
 	}
 
 	switch {
-	case err == nil:
-		if existente.DeletedAt.Valid {
-			// Restaurar producto eliminado
-			d.Log.Infof("Restaurando producto eliminado con UUID: %s", existente.UUID)
-			update := `
-				UPDATE productos
-				SET nombre = ?, precio_venta = ?, stock = 0, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
-				WHERE uuid = ?
-			`
-			if _, err := tx.Exec(update, NuevoProducto.Nombre, NuevoProducto.PrecioVenta, existente.UUID); err != nil {
-				return Producto{}, fmt.Errorf("error al restaurar producto: %w", err)
-			}
-			NuevoProducto.UUID = existente.UUID
-			NuevoProducto.Stock = 0
-		} else {
-			return Producto{}, fmt.Errorf("el código del producto ya está en uso")
+	case err == nil && existente.DeletedAt.Valid:
+		// Restaurar producto
+		_, err = tx.Exec(`
+			UPDATE productos SET nombre=?, precio_venta=?, stock=0, deleted_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE uuid=?`,
+			nuevo.Nombre, nuevo.PrecioVenta, existente.UUID)
+		if err != nil {
+			return Producto{}, fmt.Errorf("error al restaurar producto: %w", err)
 		}
+		nuevo.UUID = existente.UUID
+		nuevo.Stock = 0
+
+	case err == nil:
+		return Producto{}, fmt.Errorf("el código del producto ya está en uso")
 
 	case errors.Is(err, sql.ErrNoRows):
-		// Crear nuevo producto
-		insert := `
+		nuevo.UUID = uuid.New().String()
+		_, err = tx.Exec(`
 			INSERT INTO productos (uuid, nombre, codigo, precio_venta, stock, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`
-		_, err := tx.Exec(insert, uuid.New().String(), NuevoProducto.Nombre, NuevoProducto.Codigo, NuevoProducto.PrecioVenta, NuevoProducto.Stock)
+			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+			nuevo.UUID, nuevo.Nombre, nuevo.Codigo, nuevo.PrecioVenta, nuevo.Stock)
 		if err != nil {
-			return Producto{}, fmt.Errorf("error al registrar nuevo producto: %w", err)
+			return Producto{}, fmt.Errorf("error al registrar producto: %w", err)
 		}
-
-	default:
-		return Producto{}, fmt.Errorf("error al buscar producto: %w", err)
 	}
 
-	// 2️⃣ Crear operación de stock INICIAL
-	op := OperacionStock{
-		UUID:           uuid.New().String(),
-		TipoOperacion:  "INICIAL",
-		CantidadCambio: NuevoProducto.Stock,
-		Timestamp:      time.Now(),
-		Sincronizado:   false,
-	}
-
-	opInsert := `
-		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, timestamp, sincronizado)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`
-	if _, err := tx.Exec(opInsert, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, NuevoProducto.Stock, nil, op.Timestamp, op.Sincronizado); err != nil {
-		return Producto{}, fmt.Errorf("error al crear operación de stock inicial: %w", err)
-	}
-
-	// 3️⃣ Recalcular y actualizar stock
-	if err := RecalcularYActualizarStock(tx, NuevoProducto.UUID); err != nil {
-		return Producto{}, fmt.Errorf("error al calcular stock inicial: %w", err)
+	// Crear operación inicial
+	if err := d.CrearOperacionStock(tx, nuevo.UUID, "INICIAL", nuevo.Stock, "", nil); err != nil {
+		return Producto{}, fmt.Errorf("error al crear operación inicial: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return Producto{}, fmt.Errorf("error al confirmar transacción: %w", err)
 	}
 
-	go d.syncProductoToRemote(NuevoProducto.UUID)
+	go d.syncProductoToRemote(nuevo.UUID)
 	go d.SincronizarOperacionesStockHaciaRemoto()
 
 	return Producto{
-		UUID:        NuevoProducto.UUID,
-		Nombre:      NuevoProducto.Nombre,
-		Codigo:      NuevoProducto.Codigo,
-		PrecioVenta: NuevoProducto.PrecioVenta,
-		Stock:       NuevoProducto.Stock,
+		UUID:        nuevo.UUID,
+		Nombre:      nuevo.Nombre,
+		Codigo:      nuevo.Codigo,
+		PrecioVenta: nuevo.PrecioVenta,
+		Stock:       nuevo.Stock,
 	}, nil
 }
 
@@ -130,20 +106,17 @@ func (d *Db) ActualizarProducto(req ProductoAjusteRequest) (string, error) {
 	}
 	defer func() {
 		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[ActualizarProducto] rollback %v", err)
+			d.Log.Errorf("[ActualizarProducto] rollback %v", rErr)
 		}
 	}()
 
-	// 1️⃣ Obtener stock real
-	var stockRealActual int
-	err = tx.QueryRow(`SELECT COALESCE(SUM(cantidad_cambio),0) 
-		FROM operacion_stocks WHERE producto_uuid = ?`, req.UUID).
-		Scan(&stockRealActual)
+	// 1️⃣ Stock real actual
+	stockActual, err := calcularStockRealLocal(tx, req.UUID)
 	if err != nil {
 		return "", fmt.Errorf("error leyendo stock real: %w", err)
 	}
 
-	// 2️⃣ Actualizar producto básico
+	// 2️⃣ Actualizar info del producto
 	_, err = tx.Exec(`
 		UPDATE productos 
 		SET nombre=?, precio_venta=?, updated_at=CURRENT_TIMESTAMP
@@ -153,45 +126,24 @@ func (d *Db) ActualizarProducto(req ProductoAjusteRequest) (string, error) {
 		return "", fmt.Errorf("error actualizando producto: %w", err)
 	}
 
-	// 3️⃣ Generar operación de ajuste si es necesario
-	cambio := req.StockDeseado - stockRealActual
+	// 3️⃣ Si hay diferencia en stock, crear operación
+	cambio := req.StockDeseado - stockActual
 	if cambio != 0 {
-		op := OperacionStock{
-			UUID:           uuid.New().String(),
-			ProductoUUID:   req.UUID,
-			TipoOperacion:  "AJUSTE_MANUAL",
-			CantidadCambio: cambio,
-			VendedorUUID:   "",
-			Timestamp:      time.Now(),
-			Sincronizado:   false,
-		}
-
-		// si el front envía un vendedor significa ajuste manual
+		tipo := "AJUSTE_MANUAL"
 		if req.VendedorUUID != "" {
-			op.TipoOperacion = "AJUSTE_USUARIO"
-			op.VendedorUUID = req.VendedorUUID
+			tipo = "AJUSTE_USUARIO"
 		}
-
-		_, err = tx.Exec(`
-			INSERT INTO operacion_stocks 
-			(uuid, producto_uuid, tipo_operacion, cantidad_cambio, vendedor_uuid, timestamp, sincronizado)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio,
-			op.VendedorUUID, op.Timestamp, op.Sincronizado)
-		if err != nil {
-			return "", fmt.Errorf("error creando ajuste stock: %w", err)
+		if err := d.CrearOperacionStock(tx, req.UUID, tipo, cambio, req.VendedorUUID, nil); err != nil {
+			return "", err
 		}
 	}
 
-	// 4️⃣ Recalcular stock
-	if err := RecalcularYActualizarStock(tx, req.UUID); err != nil {
-		return "", fmt.Errorf("error recalculando stock: %w", err)
-	}
-
+	// 4️⃣ Confirmar transacción
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("error commit: %w", err)
 	}
 
+	// 5️⃣ Sincronización asincrónica
 	go d.syncProductoToRemote(req.UUID)
 	go d.SincronizarOperacionesStockHaciaRemoto()
 

@@ -20,11 +20,11 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	if err != nil {
 		return Vendedor{}, fmt.Errorf("error al encriptar la contraseña: %w", err)
 	}
-
+	var txTimestamp time.Time = time.Now()
 	vendedor.Email = strings.ToLower(vendedor.Email)
 	vendedor.UUID = uuid.New().String()
-	vendedor.CreatedAt = time.Now()
-	vendedor.UpdatedAt = time.Now()
+	vendedor.CreatedAt = txTimestamp
+	vendedor.UpdatedAt = txTimestamp
 	vendedor.Contrasena = hashedPassword
 
 	ctx := d.ctx
@@ -51,7 +51,7 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 	if existenteUUID.Valid {
 		if deletedAt.Valid {
 			_, err = tx.Exec("UPDATE vendedors SET nombre = ?, apellido = ?, email = ?, contrasena = ?, deleted_at = NULL, updated_at = ? WHERE uuid = ?",
-				vendedor.Nombre, vendedor.Apellido, vendedor.Email, vendedor.Contrasena, time.Now(), existenteUUID.String)
+				vendedor.Nombre, vendedor.Apellido, vendedor.Email, vendedor.Contrasena, vendedor.UpdatedAt, existenteUUID.String)
 			if err != nil {
 				return Vendedor{}, err
 			}
@@ -60,7 +60,8 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 			return Vendedor{}, fmt.Errorf("la cédula o el email ya están registrados en un vendedor activo")
 		}
 	} else {
-		_, err := tx.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", vendedor.UUID, vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, time.Now(), time.Now())
+		_, err := tx.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			vendedor.UUID, vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, vendedor.CreatedAt, vendedor.UpdatedAt)
 		if err != nil {
 			return Vendedor{}, err
 		}
