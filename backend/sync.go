@@ -24,6 +24,7 @@ const (
 
 func (d *Db) RealizarSincronizacionInicial() {
 	go d.SincronizacionInteligente()
+	//go d.NormalizarStock()
 	//go func() {
 	//	if _, err := d.NormalizarStockTodosLosProductos(); err != nil {
 	//		d.Log.Errorf("Error sincronizando operaciones de stock hacia local: %v", err)
@@ -300,25 +301,26 @@ func (d *Db) syncGenericModel(ctx context.Context, tableName, uniqueCol string, 
 	return nil
 }
 
-// SincronizarOperacionesStockHaciaRemoto envía operaciones locales no sincronizadas al remoto.
+// SincronizarOperacionesStockHaciaRemoto envía las operaciones locales no sincronizadas
+// al servidor remoto PostgreSQL, las inserta en bloque y recalcula el stock remoto.
 func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 	if !d.isRemoteDBAvailable() {
-		d.Log.Warn("[REMOTO] DB no disponible, omitiendo sync operaciones stock")
+		d.Log.Warn("[REMOTO] Base de datos remota no disponible, omitiendo sincronización de stock.")
 		return
 	}
 
-	d.Log.Info("[SINCRONIZANDO]: Subiendo operaciones locales y recalculando stock remoto")
+	d.Log.Info("[SYNC STOCK] Iniciando sincronización de operaciones hacia remoto...")
 
-	// 1) Obtener operaciones locales pendientes
-	query := `
+	const selectPendientes = `
 	SELECT uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante,
 		   vendedor_uuid, factura_uuid, timestamp
 	FROM operacion_stocks 
 	WHERE sincronizado = 0
 	`
-	rows, err := d.LocalDB.QueryContext(d.ctx, query)
+
+	rows, err := d.LocalDB.QueryContext(d.ctx, selectPendientes)
 	if err != nil {
-		d.Log.Errorf("[ERROR] leyendo operaciones locales: %v", err)
+		d.Log.Errorf("[SYNC] Error leyendo operaciones locales: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -327,7 +329,8 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		localUUID string
 		op        OperacionStock
 	}
-	var pending []pendingOp
+
+	var pendientes []pendingOp
 	productosAfectados := map[string]bool{}
 
 	for rows.Next() {
@@ -340,40 +343,33 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 			&op.UUID, &op.ProductoUUID, &op.TipoOperacion, &op.CantidadCambio,
 			&stockResult, &vendedorUUID, &facturaUUID, &op.Timestamp,
 		); err != nil {
-			d.Log.Warnf("Error escaneando op stock, saltando: %v", err)
+			d.Log.Warnf("[SYNC] Error leyendo operación de stock, saltando: %v", err)
 			continue
 		}
 
 		if stockResult.Valid {
 			op.StockResultante = int(stockResult.Int64)
 		}
-
-		// ✅ Normalizar NULL vendedor
 		if vendedorUUID.Valid {
 			op.VendedorUUID = vendedorUUID.String
-		} else {
-			op.VendedorUUID = ""
 		}
-
-		// ✅ Normalizar factura NULL
 		if facturaUUID.Valid {
-			u := facturaUUID.String
-			op.FacturaUUID = &u
+			f := facturaUUID.String
+			op.FacturaUUID = &f
 		}
 
-		pending = append(pending, pendingOp{localUUID: op.UUID, op: op})
+		pendientes = append(pendientes, pendingOp{localUUID: op.UUID, op: op})
 		productosAfectados[op.ProductoUUID] = true
 	}
 
-	if len(pending) == 0 {
-		d.Log.Info("[SINCRONIZACIÓN] No hay operaciones de stock pendientes.")
+	if len(pendientes) == 0 {
+		d.Log.Info("[SYNC] No hay operaciones locales pendientes.")
 		return
 	}
 
-	// 2) Tx remota
 	rtx, err := d.RemoteDB.Begin(d.ctx)
 	if err != nil {
-		d.Log.Errorf("No se pudo iniciar tx remota: %v", err)
+		d.Log.Errorf("[SYNC] No se pudo iniciar transacción remota: %v", err)
 		return
 	}
 
@@ -384,27 +380,23 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		}
 	}()
 
-	// 3) COPY a remoto
+	// --- COPY masivo a la tabla remota ---
 	_, err = rtx.CopyFrom(
 		d.ctx,
 		pgx.Identifier{"operacion_stocks"},
-		[]string{"uuid", "producto_uuid", "tipo_operacion", "cantidad_cambio", "stock_resultante", "vendedor_uuid", "factura_uuid", "timestamp"},
-		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
-			o := pending[i].op
-
-			// ✅ enviar NULL si el vendedor no es uuid válido
+		[]string{"uuid", "producto_uuid", "tipo_operacion", "cantidad_cambio", "stock_resultante",
+			"vendedor_uuid", "factura_uuid", "timestamp"},
+		pgx.CopyFromSlice(len(pendientes), func(i int) ([]any, error) {
+			o := pendientes[i].op
 			var vendedor any
-			if o.VendedorUUID == ""  {
-				vendedor = nil
-			} else {
+			d.Log.Infof("Vendedor UUID en la operación: '%s'", o.VendedorUUID)
+			if o.VendedorUUID != "" {
 				vendedor = o.VendedorUUID
 			}
-
 			var factura any
 			if o.FacturaUUID != nil {
 				factura = *o.FacturaUUID
 			}
-
 			return []any{
 				o.UUID, o.ProductoUUID, o.TipoOperacion, o.CantidadCambio,
 				o.StockResultante, vendedor, factura, o.Timestamp,
@@ -413,11 +405,11 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 	)
 
 	if err != nil && !strings.Contains(err.Error(), "duplicate key") {
-		d.Log.Errorf("[REMOTE COPY] error: %v", err)
+		d.Log.Errorf("[SYNC] Error durante COPY remoto: %v", err)
 		return
 	}
 
-	// 4) Recalcular stock remoto
+	// --- Recalcular stock remoto con fuente de verdad ---
 	productList := make([]string, 0, len(productosAfectados))
 	for p := range productosAfectados {
 		productList = append(productList, p)
@@ -434,22 +426,22 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		) sub
 		WHERE p.uuid = sub.producto_uuid;
 	`, productList)
+
 	if err != nil {
-		d.Log.Errorf("[REMOTE STOCK] error: %v", err)
+		d.Log.Errorf("[SYNC] Error recalculando stock remoto: %v", err)
 		return
 	}
 
-	// 5) commit remoto
 	if err := rtx.Commit(d.ctx); err != nil {
-		d.Log.Errorf("[REMOTE COMMIT] %v", err)
+		d.Log.Errorf("[SYNC] Error al confirmar la transacción remota: %v", err)
 		return
 	}
 	commit = true
 
-	// 6) marcar locales sincronizadas
-	ids := make([]any, len(pending))
-	placeholders := make([]string, len(pending))
-	for i, p := range pending {
+	// --- Marcar operaciones locales como sincronizadas ---
+	ids := make([]any, len(pendientes))
+	placeholders := make([]string, len(pendientes))
+	for i, p := range pendientes {
 		ids[i] = p.localUUID
 		placeholders[i] = "?"
 	}
@@ -458,12 +450,12 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		"UPDATE operacion_stocks SET sincronizado = 1 WHERE uuid IN (%s)",
 		strings.Join(placeholders, ","),
 	)
-
 	if _, err := d.LocalDB.ExecContext(d.ctx, localUpdate, ids...); err != nil {
-		d.Log.Errorf("[LOCAL SYNC FLAG] %v", err)
+		d.Log.Errorf("[SYNC] Error actualizando flag de sincronización local: %v", err)
 	}
 
-	d.Log.Infof("[SYNC OK] %d operaciones y %d productos actualizados", len(pending), len(productList))
+	d.Log.Infof("[SYNC COMPLETA] %d operaciones sincronizadas, %d productos recalculados",
+		len(pendientes), len(productList))
 }
 
 func (d *Db) ForzarResincronizacionLocalDesdeRemoto() error {

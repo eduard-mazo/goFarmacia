@@ -55,6 +55,83 @@ func (d *Db) NormalizarStockMasivo() (string, error) {
 	return "Stock normalizado. La base de datos local ahora es un espejo del servidor.", nil
 }
 
+// NormalizarStock recorre todos los productos locales y crea operaciones de ajuste
+// para corregir inconsistencias entre productos.stock y el stock real calculado
+// desde operacion_stocks. Usa CrearOperacionStock() para mantener coherencia.
+func (d *Db) NormalizarStock() error {
+	var vendedorUUID string = "0ad1d9cb-ff15-408f-b0fc-e7dee04aa6b1"
+	d.Log.Info("[NORMALIZANDO STOCK] Iniciando proceso de revisión y ajuste...")
+
+	tx, err := d.LocalDB.Begin()
+	if err != nil {
+		return fmt.Errorf("no se pudo iniciar transacción local: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	rows, err := tx.Query(`SELECT uuid, stock FROM productos`)
+	if err != nil {
+		return fmt.Errorf("error leyendo productos: %w", err)
+	}
+	defer rows.Close()
+
+	totalAjustados := 0
+
+	for rows.Next() {
+		var productoUUID string
+		var stockActual int
+		if err := rows.Scan(&productoUUID, &stockActual); err != nil {
+			d.Log.Warnf("Error escaneando producto: %v", err)
+			continue
+		}
+
+		// Calcular stock real (fuente de verdad)
+		stockReal, err := calcularStockRealLocal(tx, productoUUID)
+		if err != nil {
+			d.Log.Warnf("Error calculando stock real para %s: %v", productoUUID, err)
+			continue
+		}
+
+		// Si el stock actual ya es correcto y positivo, no hacer nada
+		if stockReal == stockActual && stockReal > 0 {
+			continue
+		}
+
+		// Determinar ajuste necesario
+		var ajuste int
+		if stockActual <= 0 && stockReal <= 0 {
+			// Forzar al menos 1 unidad si ambos son 0 o negativos
+			ajuste = 1 - stockActual
+		} else {
+			ajuste = stockReal - stockActual
+		}
+
+		// Crear operación de ajuste
+		err = d.CrearOperacionStock(tx, productoUUID, "AJUSTE_NORMALIZACION", ajuste, vendedorUUID, nil)
+		if err != nil {
+			d.Log.Warnf("Error creando operación de ajuste para %s: %v", productoUUID, err)
+			continue
+		}
+
+		totalAjustados++
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error final leyendo filas de productos: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("error al confirmar la transacción: %w", err)
+	}
+
+	d.Log.Infof("[NORMALIZACIÓN COMPLETA] %d productos ajustados correctamente", totalAjustados)
+	go d.SincronizarOperacionesStockHaciaRemoto()
+	return nil
+}
+
 // NUEVA FUNCIÓN DE AYUDA para forzar la subida de TODAS las operaciones
 func (d *Db) SincronizarTodasLasOperacionesHaciaRemoto() error {
 	d.Log.Info("Iniciando sincronización forzada de TODAS las operaciones de stock hacia el remoto.")
