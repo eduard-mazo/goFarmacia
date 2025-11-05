@@ -59,7 +59,7 @@ func (d *Db) NormalizarStockMasivo() (string, error) {
 // para corregir inconsistencias entre productos.stock y el stock real calculado
 // desde operacion_stocks. Usa CrearOperacionStock() para mantener coherencia.
 func (d *Db) NormalizarStock() error {
-	var vendedorUUID string = "0ad1d9cb-ff15-408f-b0fc-e7dee04aa6b1"
+	var vendedorUUID string = "8f2954d4-6990-4f14-be90-d4b70e8b862a"
 	d.Log.Info("[NORMALIZANDO STOCK] Iniciando proceso de revisión y ajuste...")
 
 	tx, err := d.LocalDB.Begin()
@@ -104,7 +104,7 @@ func (d *Db) NormalizarStock() error {
 		var ajuste int
 		if stockActual <= 0 && stockReal <= 0 {
 			// Forzar al menos 1 unidad si ambos son 0 o negativos
-			ajuste = 1 - stockActual
+			ajuste = 100 - stockActual
 		} else {
 			ajuste = stockReal - stockActual
 		}

@@ -389,7 +389,6 @@ func (d *Db) SincronizarOperacionesStockHaciaRemoto() {
 		pgx.CopyFromSlice(len(pendientes), func(i int) ([]any, error) {
 			o := pendientes[i].op
 			var vendedor any
-			d.Log.Infof("Vendedor UUID en la operación: '%s'", o.VendedorUUID)
 			if o.VendedorUUID != "" {
 				vendedor = o.VendedorUUID
 			}
