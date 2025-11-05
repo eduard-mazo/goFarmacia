@@ -65,7 +65,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 		data.TicketPromedioDia = data.TotalVentasDia / float64(data.NumeroVentasDia)
 	}
 
-	queryVentasInd := "SELECT strftime('%Y-%m-%d %H:%M:%S', fecha_emision), total FROM facturas WHERE fecha_emision BETWEEN ? AND ? ORDER BY fecha_emision ASC"
+	queryVentasInd := "SELECT strftime('%Y-%m-%d %H:%M:%S', datetime(fecha_emision, 'localtime')), total FROM facturas WHERE fecha_emision BETWEEN ? AND ? ORDER BY fecha_emision ASC"
 	rows, err := d.LocalDB.Query(queryVentasInd, inicioDelDia, finDelDia)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener ventas individuales: %w", err)
