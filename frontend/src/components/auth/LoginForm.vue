@@ -63,11 +63,7 @@ async function handleVerifyMFA() {
   <div class="flex flex-col gap-6">
     <Card class="overflow-hidden p-0">
       <CardContent class="grid p-0 md:grid-cols-2">
-        <form
-          v-if="loginStep === 1"
-          @submit.prevent="handleLogin"
-          class="p-6 md:p-8"
-        >
+        <form v-if="loginStep === 1" @submit.prevent="handleLogin" class="p-6 md:p-8">
           <div class="flex flex-col items-center text-center mb-7">
             <h1 class="text-2xl font-bold">¡Bienvenido!</h1>
             <p class="text-balance text-muted-foreground">
@@ -77,30 +73,16 @@ async function handleVerifyMFA() {
           <div class="flex flex-col gap-6">
             <div class="grid gap-2">
               <Label for="email">Correo</Label>
-              <Input
-                id="email"
-                v-model="credentials.Email"
-                type="email"
-                placeholder="m@example.com"
-                required
-              />
+              <Input id="email" v-model="credentials.Email" type="email" placeholder="m@example.com" required />
             </div>
             <div class="grid gap-2">
               <div class="flex items-center">
                 <Label for="password">Contraseña</Label>
-                <a
-                  href="#"
-                  class="ml-auto text-sm underline-offset-2 hover:underline"
-                >
+                <a href="#" class="ml-auto text-sm underline-offset-2 hover:underline">
                   Olvidaste tu contraseña?
                 </a>
               </div>
-              <Input
-                id="password"
-                v-model="credentials.Contrasena"
-                type="password"
-                required
-              />
+              <Input id="password" v-model="credentials.Contrasena" type="password" required />
             </div>
             <Alert v-if="error" variant="destructive">
               <AlertCircle class="w-4 h-4" />
@@ -121,11 +103,7 @@ async function handleVerifyMFA() {
             </div>
           </div>
         </form>
-        <form
-          v-if="loginStep === 2"
-          @submit.prevent="handleVerifyMFA"
-          class="p-4 md:p-6"
-        >
+        <form v-if="loginStep === 2" @submit.prevent="handleVerifyMFA" class="p-4 md:p-6">
           <div class="flex flex-col items-center text-center mb-4">
             <h1 class="text-2xl font-bold">Verificación Requerida</h1>
             <p class="text-balance text-muted-foreground">
@@ -133,39 +111,21 @@ async function handleVerifyMFA() {
             </p>
           </div>
           <Label for="mfa-code" class="mb-4">Código de Autenticación</Label>
-          <Input
-            id="mfa-code"
-            v-model="mfaCode"
-            class="text-center text-lg tracking-[0.5em] mb-2"
-            maxlength="6"
-            autocomplete="one-time-code"
-            placeholder="123456"
-            required
-          />
+          <Input id="mfa-code" v-model="mfaCode" class="text-center text-lg tracking-[0.5em] mb-2" maxlength="6"
+            autocomplete="one-time-code" placeholder="123456" required />
           <Button type="submit" class="w-full mt-2" :disabled="isLoading">
             <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
             {{ isLoading ? "Verificando..." : "Verificar Código" }}
           </Button>
         </form>
         <div class="relative hidden bg-muted md:block">
-          <img
-            src="@/assets/images/Login_luna.png"
-            alt="Image"
-            class="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
-          />
+          <img src="@/assets/images/Login_luna.png" alt="Image"
+            class="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale" />
         </div>
-        <Alert v-if="error" variant="destructive">
-          <AlertCircle class="w-4 h-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>
-            {{ error }}
-          </AlertDescription>
-        </Alert>
       </CardContent>
     </Card>
     <div
-      class="text-balance text-center text-xs text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:text-primary"
-    >
+      class="text-balance text-center text-xs text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:text-primary">
       By clicking continue, you agree to our
       <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>.
     </div>
