@@ -500,6 +500,62 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	d.Log.Info("[SINCRONIZANDO]: Transacciones desde Remoto -> Local")
 
 	ctx := d.ctx
+	var args []any
+
+	// -------------------------------------------------
+	// 1️⃣ LECTURA DE ÚLTIMA FECHA - FACTURAS (FUERA DE TX)
+	// -------------------------------------------------
+	var lastFacturaTimeStr sql.NullString
+	var lastFacturaTime time.Time
+	queryFact := `SELECT MAX(created_at) FROM facturas`
+
+	if err := d.LocalDB.QueryRowContext(ctx, queryFact).Scan(&lastFacturaTimeStr); err != nil {
+		return fmt.Errorf("error al obtener fecha de última factura local: %w", err)
+	}
+
+	if !lastFacturaTimeStr.Valid || lastFacturaTimeStr.String == "" {
+		// Carga inicial: Normalizar a epoch (1970-01-01)
+		d.Log.Info("[SINCRONIZANDO] Facturas: No hay registros locales. Realizando carga inicial completa.")
+		lastFacturaTime = time.Unix(0, 0)
+	} else {
+		if parsedTime, parseErr := parseFlexibleTime(lastFacturaTimeStr.String); parseErr == nil {
+			lastFacturaTime = parsedTime
+			d.Log.Infof("[SINCRONIZANDO] Facturas: Carga incremental desde %v", lastFacturaTime)
+		} else {
+			// Error de parseo, mejor hacer carga inicial
+			d.Log.Warnf("No se pudo parsear la fecha de última factura local '%s': %v. Realizando carga inicial completa.", lastFacturaTimeStr.String, parseErr)
+			lastFacturaTime = time.Unix(0, 0)
+		}
+	}
+
+	// -------------------------------------------------
+	// 2️⃣ LECTURA DE ÚLTIMA FECHA - COMPRAS (FUERA DE TX)
+	// -------------------------------------------------
+	var lastCompraTimeStr sql.NullString
+	var lastCompraTime time.Time
+	queryComp := `SELECT MAX(created_at) FROM compras`
+
+	if err := d.LocalDB.QueryRowContext(ctx, queryComp).Scan(&lastCompraTimeStr); err != nil {
+		return fmt.Errorf("error al obtener fecha de última compra local: %w", err)
+	}
+
+	if !lastCompraTimeStr.Valid || lastCompraTimeStr.String == "" {
+		// Carga inicial
+		d.Log.Info("[SINCRONIZANDO] Compras: No hay registros locales. Realizando carga inicial completa.")
+		lastCompraTime = time.Unix(0, 0)
+	} else {
+		if parsedTime, parseErr := parseFlexibleTime(lastCompraTimeStr.String); parseErr == nil {
+			lastCompraTime = parsedTime
+			d.Log.Infof("[SINCRONIZANDO] Compras: Carga incremental desde %v", lastCompraTime)
+		} else {
+			d.Log.Warnf("No se pudo parsear la fecha de última compra local '%s': %v. Realizando carga inicial completa.", lastCompraTimeStr.String, parseErr)
+			lastCompraTime = time.Unix(0, 0)
+		}
+	}
+
+	// -------------------------------------------------
+	// 3️⃣ INICIO DE TRANSACCIÓN LOCAL (SÓLO PARA ESCRITURAS)
+	// -------------------------------------------------
 	tx, err := d.LocalDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("error al iniciar transacción local: %w", err)
@@ -512,42 +568,16 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 	}()
 
 	// -------------------------------------------------
-	// 1️⃣ FACTURAS
+	// 4️⃣ OBTENER E INSERTAR FACTURAS
 	// -------------------------------------------------
-	var lastFacturaTimeStr sql.NullString
-	var lastFacturaTime sql.NullTime
-	query := `SELECT MAX(created_at) FROM facturas`
-	if err := tx.QueryRowContext(ctx, query).Scan(&lastFacturaTimeStr); err != nil {
-		return fmt.Errorf("error al obtener fecha de última factura local: %w", err)
-	}
-	if lastFacturaTimeStr.Valid && lastFacturaTimeStr.String != "" {
-		if parsedTime, parseErr := parseFlexibleTime(lastFacturaTimeStr.String); parseErr == nil {
-			lastFacturaTime.Time = parsedTime
-			lastFacturaTime.Valid = true
-		} else {
-			d.Log.Warnf("No se pudo parsear la fecha de última factura local '%s': %v", lastFacturaTimeStr.String, parseErr)
-		}
-	}
+	facturasRemotasQuery := `
+		SELECT uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid, subtotal, iva, total,
+		       estado, metodo_pago, created_at, updated_at
+		FROM facturas
+		WHERE COALESCE(created_at, '1970-01-01T00:00:00Z') > $1
+		ORDER BY created_at ASC`
 
-	var facturasRemotasQuery string
-	var args []any
-
-	if lastFacturaTime.Valid {
-		facturasRemotasQuery = `
-			SELECT uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid, subtotal, iva, total,
-			       estado, metodo_pago, created_at, updated_at
-			FROM facturas
-			WHERE created_at > $1
-			ORDER BY created_at ASC`
-		args = append(args, lastFacturaTime.Time)
-	} else {
-		// Carga inicial
-		facturasRemotasQuery = `
-			SELECT uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid, subtotal, iva, total,
-			       estado, metodo_pago, created_at, updated_at
-			FROM facturas
-			ORDER BY created_at ASC`
-	}
+	args = append(args, lastFacturaTime)
 
 	rows, err := d.RemoteDB.Query(ctx, facturasRemotasQuery, args...)
 	if err != nil {
@@ -591,15 +621,17 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 		facturas = append(facturas, f)
 		facturaUUIDsRemotos = append(facturaUUIDsRemotos, f.UUID)
 	}
+	// Cerrar rows explícitamente antes de la siguiente consulta
+	rows.Close()
 
 	d.Log.Infof("Sincronizadas %d nuevas facturas.", len(facturas))
 
 	// -------------------------------------------------
-	// 1.a) DETALLES DE FACTURAS
+	// 4.a) DETALLES DE FACTURAS (Dentro de la misma TX)
 	// -------------------------------------------------
 	if len(facturaUUIDsRemotos) > 0 {
 		placeholders := make([]string, len(facturaUUIDsRemotos))
-		args = make([]any, len(facturaUUIDsRemotos))
+		args = make([]any, len(facturaUUIDsRemotos)) // Reusar args
 		for i, uuid := range facturaUUIDsRemotos {
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 			args[i] = uuid
@@ -649,43 +681,21 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 			}
 			detalleCount++
 		}
+		// Cerrar detalleRows explícitamente
+		detalleRows.Close()
 		d.Log.Infof("Sincronizados %d nuevos detalles de factura.", detalleCount)
 	}
 
 	// -------------------------------------------------
-	// 2️⃣ COMPRAS
+	// 5️⃣ OBTENER E INSERTAR COMPRAS (Dentro de la misma TX)
 	// -------------------------------------------------
-
-	var lastCompraTimeStr sql.NullString
-	var lastCompraTime sql.NullTime
-	if err := tx.QueryRowContext(ctx, "SELECT MAX(created_at) FROM compras").Scan(&lastCompraTimeStr); err != nil {
-		return fmt.Errorf("error al obtener fecha de última compra local: %w", err)
-	}
-
-	if lastCompraTimeStr.Valid && lastCompraTimeStr.String != "" {
-		if parsedTime, parseErr := parseFlexibleTime(lastCompraTimeStr.String); parseErr == nil {
-			lastCompraTime.Time = parsedTime
-			lastCompraTime.Valid = true
-		} else {
-			d.Log.Warnf("No se pudo parsear la fecha de última compra local '%s': %v", lastCompraTimeStr.String, parseErr)
-		}
-	}
-
-	var comprasQuery string
-	args = args[:0]
-	if lastCompraTime.Valid {
-		comprasQuery = `
-			SELECT uuid, fecha, proveedor_uuid, factura_numero, total, created_at, updated_at
-			FROM compras
-			WHERE created_at > $1
-			ORDER BY created_at ASC`
-		args = append(args, lastCompraTime.Time)
-	} else {
-		comprasQuery = `
-			SELECT uuid, fecha, proveedor_uuid, factura_numero, total, created_at, updated_at
-			FROM compras
-			ORDER BY created_at ASC`
-	}
+	args = args[:0] // Limpiar slice de argumentos
+	comprasQuery := `
+		SELECT uuid, fecha, proveedor_uuid, factura_numero, total, created_at, updated_at
+		FROM compras
+		WHERE COALESCE(created_at, '1970-01-01T00:00:00Z') > $1
+		ORDER BY created_at ASC`
+	args = append(args, lastCompraTime)
 
 	compraRows, err := d.RemoteDB.Query(ctx, comprasQuery, args...)
 	if err != nil {
@@ -722,10 +732,11 @@ func (d *Db) sincronizarTransaccionesHaciaLocal() error {
 		}
 		compraCount++
 	}
+	compraRows.Close() // Cerrar explícitamente
 	d.Log.Infof("Sincronizadas %d nuevas compras.", compraCount)
 
 	// -------------------------------------------------
-	// ✅ COMMIT FINAL
+	// ✅ 6️⃣ COMMIT FINAL
 	// -------------------------------------------------
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("error confirmando transacción local: %w", err)
@@ -1223,29 +1234,37 @@ func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
 	d.Log.Info("[SINCRONIZANDO]: Descargando nuevas Operaciones de Stock desde Remoto -> Local")
 	ctx := d.ctx
 
-	// 1. Encontrar la operación más reciente que tenemos localmente para saber desde dónde pedir.
-	var lastSync time.Time
+	// 1. Obtener último timestamp local (Corregido: usando parseFlexibleTime y time.Unix(0,0))
 	var lastSyncStr sql.NullString
 	err := d.LocalDB.QueryRowContext(ctx, "SELECT MAX(timestamp) FROM operacion_stocks").Scan(&lastSyncStr)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("error obteniendo el último timestamp local de op. stock: %w", err)
 	}
 
-	if lastSyncStr.Valid && lastSyncStr.String != "" {
-		// Usamos la función flexible que ya creamos para parsear la fecha de SQLite.
+	var lastSyncTime time.Time
+	if !lastSyncStr.Valid || lastSyncStr.String == "" {
+		d.Log.Info("No hay operaciones locales previas. Se descargará el historial completo de operaciones remotas.")
+		lastSyncTime = time.Unix(0, 0)
+	} else {
 		if parsedTime, parseErr := parseFlexibleTime(lastSyncStr.String); parseErr == nil {
-			lastSync = parsedTime
+			lastSyncTime = parsedTime
+			d.Log.Infof("Sincronizando operaciones de stock desde %v", lastSyncTime)
+		} else {
+			d.Log.Warnf("No se pudo parsear fecha de op. stock local '%s': %v. Realizando carga inicial completa.", lastSyncStr.String, parseErr)
+			lastSyncTime = time.Unix(0, 0)
 		}
 	}
-	// Si lastSync sigue en su valor cero, se descargarán todas las operaciones.
 
-	// 2. Pedir al remoto (Postgres) todas las operaciones más nuevas que la última que tenemos.
+	// 2. Obtener operaciones remotas (Corregido: Query unificada con COALESCE)
 	remoteOpsQuery := `
-		SELECT uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp 
-		FROM operacion_stocks 
-		WHERE timestamp > $1 
-		ORDER BY timestamp ASC`
-	rows, err := d.RemoteDB.Query(ctx, remoteOpsQuery, lastSync)
+        SELECT uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, 
+               vendedor_uuid, factura_uuid, timestamp
+        FROM operacion_stocks
+        WHERE COALESCE(timestamp, '1970-01-01T00:00:00Z') > $1
+        ORDER BY timestamp ASC`
+	args := []any{lastSyncTime}
+
+	rows, err := d.RemoteDB.Query(ctx, remoteOpsQuery, args...)
 	if err != nil {
 		return fmt.Errorf("error obteniendo operaciones de stock remotas: %w", err)
 	}
@@ -1256,77 +1275,102 @@ func (d *Db) sincronizarOperacionesStockHaciaLocal() error {
 
 	for rows.Next() {
 		var op OperacionStock
-		var stockResultante sql.NullInt64
 
-		err := rows.Scan(
-			&op.UUID,
-			&op.ProductoUUID,
-			&op.TipoOperacion,
-			&op.CantidadCambio,
-			&stockResultante,
-			&op.VendedorUUID,
-			&op.FacturaUUID,
-			&op.Timestamp,
-		)
-		if err != nil {
-			d.Log.Warnf("Error al escanear una operación de stock remota, omitiendo: %v", err)
+		// Corregido: Variables temporales Null-safe para TODOS los campos que pueden ser NULL
+		var productoUUID, tipoOperacion, vendedorUUID, facturaUUID sql.NullString
+		var cantidadCambio sql.NullFloat64 // Usar NullFloat64 o NullInt64 según tu struct
+		var stockResultante sql.NullInt64
+		var opTimestamp sql.NullTime
+
+		if err := rows.Scan(
+			&op.UUID,         // Asumiendo que UUID no es NULL
+			&productoUUID,    // dest[1] - Corregido
+			&tipoOperacion,   // dest[2] - Corregido
+			&cantidadCambio,  // dest[3] - Corregido
+			&stockResultante, // dest[4] - Corregido
+			&vendedorUUID,    // dest[5] - Corregido
+			&facturaUUID,     // dest[6] - Corregido
+			&opTimestamp,     // dest[7] - Corregido
+		); err != nil {
+			// Este error ahora solo debería saltar por problemas inesperados, no por NULLs
+			d.Log.Warnf("Error al escanear operación remota: %v", err)
 			continue
 		}
 
-		if stockResultante.Valid {
-			op.StockResultante = int(stockResultante.Int64)
+		// Transferir valores de forma segura
+		op.ProductoUUID = productoUUID.String           // Será "" si es NULL
+		op.TipoOperacion = tipoOperacion.String         // Será "" si es NULL
+		op.CantidadCambio = int(cantidadCambio.Float64) // Será 0.0 si es NULL
+		op.StockResultante = int(stockResultante.Int64) // Será 0 si es NULL
+		op.VendedorUUID = vendedorUUID.String           // Será "" si es NULL
+		op.FacturaUUID = &facturaUUID.String            // Será "" si es NULL
+
+		if opTimestamp.Valid {
+			op.Timestamp = opTimestamp.Time
+		} else {
+			d.Log.Warnf("Operación de stock con UUID %s tiene timestamp NULL, usando valor cero.", op.UUID)
 		}
 
 		newOps = append(newOps, op)
-		productosAfectados[op.ProductoUUID] = true
+
+		// Corregido: No recalcular si el producto_uuid es nulo/vacío
+		if op.ProductoUUID != "" {
+			productosAfectados[op.ProductoUUID] = true
+		}
 	}
+	// Cerrar rows explícitamente antes de la transacción
+	rows.Close()
 
 	if len(newOps) == 0 {
 		d.Log.Info("La base de datos local de operaciones de stock ya está actualizada.")
 		return nil
 	}
 
-	// 3. Insertar las nuevas operaciones en la base de datos local (SQLite) en una única transacción.
+	// 3. Insertar las operaciones en una transacción local
 	tx, err := d.LocalDB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("error al iniciar transacción local para op. stock: %w", err)
+		return fmt.Errorf("error iniciando transacción local: %w", err)
 	}
 	defer func() {
-		if rErr := tx.Rollback(); err != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[REMOTO -> LOCAL] - Error durante [sincronizarOperacionesStockHaciaLocal] rollback %v", err)
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("rollback en sincronizarOperacionesStockHaciaLocal: %v", rErr)
 		}
 	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp, sincronizado)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(uuid) DO NOTHING`)
+        INSERT INTO operacion_stocks (
+            uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante,
+            vendedor_uuid, factura_uuid, timestamp, sincronizado
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(uuid) DO NOTHING`)
 	if err != nil {
-		return fmt.Errorf("error al preparar statement local de op. stock: %w", err)
+		return fmt.Errorf("error al preparar statement local: %w", err)
 	}
 	defer stmt.Close()
-
+	var failatempt int = 0
 	for _, op := range newOps {
-		_, err := stmt.ExecContext(ctx, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, op.FacturaUUID, op.Timestamp)
-		if err != nil {
-			// Logueamos el error pero intentamos continuar con las demás operaciones.
+		if _, err := stmt.ExecContext(ctx,
+			op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio,
+			op.StockResultante, op.VendedorUUID, op.FacturaUUID, op.Timestamp,
+		); err != nil {
+			failatempt++
 			d.Log.Errorf("Error al insertar op. stock local (UUID: %s): %v", op.UUID, err)
 		}
 	}
 
-	// 4. Recalcular el stock local para todos los productos que recibieron nuevos movimientos.
+	// 4. Recalcular stock local
 	d.Log.Infof("Recalculando stock local para %d productos afectados...", len(productosAfectados))
 	for uuid := range productosAfectados {
 		if err := RecalcularYActualizarStock(tx, uuid); err != nil {
-			// Este error es importante, si falla el recálculo, el stock local quedará inconsistente.
-			d.Log.Errorf("CRÍTICO: Error al recalcular stock local para producto %s tras sincronización: %v. Se intentará continuar.", uuid, err)
+			d.Log.Errorf("Error recalculando stock de producto %s: %v", uuid, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("error al confirmar la transacción de sincronización de op. stock: %w", err)
+		return fmt.Errorf("error al confirmar transacción local: %w", err)
 	}
 
-	d.Log.Infof("Sincronizadas %d nuevas operaciones de stock desde el remoto. Stock local actualizado.", len(newOps))
+	d.Log.Infof("Sincronizadas %d operaciones nuevas desde remoto.", len(newOps)-failatempt)
 	return nil
 }
 
