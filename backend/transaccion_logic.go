@@ -115,7 +115,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 			tx,
 			item.ProductoUUID,
 			"VENTA",
-			-item.Cantidad,
+			item.Cantidad,
 			req.VendedorUUID,
 			&factura.UUID,
 		); err != nil {
@@ -180,7 +180,6 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 			d.Log.Errorf("[SYNC] Error sincronizando venta %s: %v", factura.UUID, err)
 		}
 	}()
-	go d.SincronizarOperacionesStockHaciaRemoto()
 
 	return d.ObtenerDetalleFactura(factura.UUID)
 }
@@ -211,9 +210,8 @@ func (d *Db) CrearOperacionStock(
 	case "VENTA", "AJUSTE_NEGATIVO", "DEVOLUCION_CLIENTE":
 		stockResultante = stockPrevio - cambio
 		if stockResultante < 0 {
-			d.Log.Warnf("[CrearOperacionStock] stock negativo para producto %s: previo=%d cambio=%d",
+			fmt.Errorf("stock insuficiente [%s] disponible %d solicitado %d",
 				productoUUID, stockPrevio, cambio)
-			stockResultante = 0
 		}
 	default: // COMPRA, AJUSTE_POSITIVO, DEVOLUCION_PROVEEDOR
 		stockResultante = stockPrevio + cambio

@@ -1078,6 +1078,7 @@ func (d *Db) syncVentaToRemote(facturaUUID string) error {
 
 	d.Log.Infof("[LOCAL -> REMOTO] - Venta %s y sus hijos sincronizados correctamente.", f.UUID)
 	runtime.EventsEmit(d.ctx, "sync:finish", facturaUUID)
+	go d.SincronizarOperacionesStockHaciaRemoto()
 	return nil
 }
 
