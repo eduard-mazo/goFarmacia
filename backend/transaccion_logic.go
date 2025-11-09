@@ -71,21 +71,22 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 	defer func() {
 		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[RegistrarVenta] rollback %v", rErr)
+			d.Log.Errorf("[RegistrarVenta] rollback: %v", rErr)
 		}
 	}()
 
 	// 1️⃣ Generar número de factura
 	numeroFactura, err := d.generarNumeroFactura(tx)
-	d.Log.Infof("Número factura generado [%s]", numeroFactura)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error al generar número de factura: %w", err)
 	}
+	d.Log.Infof("[VENTA] Número de factura generado: %s", numeroFactura)
 
+	now := time.Now()
 	factura := Factura{
 		UUID:          uuid.New().String(),
 		NumeroFactura: numeroFactura,
-		FechaEmision:  time.Now(),
+		FechaEmision:  now,
 		VendedorUUID:  req.VendedorUUID,
 		ClienteUUID:   req.ClienteUUID,
 		Estado:        "PAGADA",
@@ -95,25 +96,21 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	var subtotal float64
 	var detalles []DetalleFactura
 
-	// 2️⃣ Procesar productos y validar stock desde operacion_stocks
+	// 2️⃣ Procesar productos
+	stmtProd, err := tx.Prepare(`SELECT nombre, precio_venta FROM productos WHERE uuid = ?`)
+	if err != nil {
+		return Factura{}, fmt.Errorf("error preparando consulta productos: %w", err)
+	}
+	defer stmtProd.Close()
+
 	for _, item := range req.Productos {
 		var nombre string
-		err := tx.QueryRow(`SELECT nombre FROM productos WHERE uuid=?`, item.ProductoUUID).
-			Scan(&nombre)
-		if err != nil {
-			return Factura{}, fmt.Errorf("producto no encontrado [%s]: %w", item.ProductoUUID, err)
+		var precioVenta float64
+		if err := stmtProd.QueryRow(item.ProductoUUID).Scan(&nombre, &precioVenta); err != nil {
+			return Factura{}, fmt.Errorf("producto [%s] no encontrado: %w", item.ProductoUUID, err)
 		}
 
-		stockActual, err := calcularStockRealLocal(tx, item.ProductoUUID)
-		if err != nil {
-			return Factura{}, fmt.Errorf("error stock %s: %w", nombre, err)
-		}
-		if stockActual < item.Cantidad {
-			return Factura{}, fmt.Errorf("stock insuficiente [%s] disponible %d solicitado %d",
-				nombre, stockActual, item.Cantidad)
-		}
-
-		// Registrar operación de forma centralizada ✅
+		// 2.a Registrar operación de stock centralizada ✅
 		if err := d.CrearOperacionStock(
 			tx,
 			item.ProductoUUID,
@@ -122,7 +119,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 			req.VendedorUUID,
 			&factura.UUID,
 		); err != nil {
-			return Factura{}, err
+			return Factura{}, fmt.Errorf("error registrando operación de stock [%s]: %w", nombre, err)
 		}
 
 		precioTotal := float64(item.Cantidad) * item.PrecioUnitario
@@ -138,51 +135,49 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	}
 
 	factura.Subtotal = subtotal
-	factura.IVA = 0
-	factura.Total = subtotal
+	factura.IVA = subtotal * 0.0 // configurable si aplica
+	factura.Total = factura.Subtotal + factura.IVA
 
 	// 3️⃣ Insertar factura
-	now := time.Now()
 	_, err = tx.Exec(`
-		INSERT INTO facturas
-			(uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid,
-			 subtotal, iva, total, estado, metodo_pago, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO facturas (
+			uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid,
+			subtotal, iva, total, estado, metodo_pago, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		factura.UUID, factura.NumeroFactura, factura.FechaEmision, factura.VendedorUUID,
 		factura.ClienteUUID, factura.Subtotal, factura.IVA, factura.Total,
 		factura.Estado, factura.MetodoPago, now, now)
 	if err != nil {
-		return Factura{}, fmt.Errorf("error creando factura: %w", err)
+		return Factura{}, fmt.Errorf("error insertando factura: %w", err)
 	}
 
 	// 4️⃣ Insertar detalles
 	stmtDet, err := tx.Prepare(`
-		INSERT INTO detalle_facturas
-			(uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total,
-			 created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+		INSERT INTO detalle_facturas (
+			uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		return Factura{}, err
+		return Factura{}, fmt.Errorf("error preparando statement detalle_facturas: %w", err)
 	}
 	defer stmtDet.Close()
 
 	for _, det := range detalles {
-		_, err := stmtDet.Exec(det.UUID, factura.UUID, det.ProductoUUID,
-			det.Cantidad, det.PrecioUnitario, det.PrecioTotal, now, now)
-		if err != nil {
-			return Factura{}, fmt.Errorf("error detalle: %w", err)
+		if _, err := stmtDet.Exec(det.UUID, factura.UUID, det.ProductoUUID,
+			det.Cantidad, det.PrecioUnitario, det.PrecioTotal, now, now); err != nil {
+			return Factura{}, fmt.Errorf("error insertando detalle %s: %w", det.ProductoUUID, err)
 		}
 	}
 
-	// 5️⃣ Commit ✅ — stock actualizado e integrado
+	// 5️⃣ Commit ✅
 	if err := tx.Commit(); err != nil {
-		return Factura{}, fmt.Errorf("commit error: %w", err)
+		return Factura{}, fmt.Errorf("error confirmando transacción de venta: %w", err)
 	}
 
-	// 🔁 Sincronización fuera de transacción
+	// 🔁 Sincronización asincrónica
 	go func() {
 		if err := d.syncVentaToRemote(factura.UUID); err != nil {
-			d.Log.Errorf("error sincronizando venta remota para factura UUID %s: %v", factura.UUID, err)
+			d.Log.Errorf("[SYNC] Error sincronizando venta %s: %v", factura.UUID, err)
 		}
 	}()
 	go d.SincronizarOperacionesStockHaciaRemoto()
@@ -190,28 +185,50 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	return d.ObtenerDetalleFactura(factura.UUID)
 }
 
-// CrearOperacionStock inserta una operación de stock y actualiza el stock del producto.
-func (d *Db) CrearOperacionStock(tx *sql.Tx, productoUUID, tipoOperacion string, cambio int, vendedorUUID string, facturaUUID *string) error {
+// Calcula el stock previo, el resultante y actualiza el producto dentro de la misma transacción.
+func (d *Db) CrearOperacionStock(
+	tx *sql.Tx,
+	productoUUID string,
+	tipoOperacion string,
+	cambio int,
+	vendedorUUID string,
+	facturaUUID *string,
+) error {
+
 	if productoUUID == "" {
-		return fmt.Errorf("productoUUID vacío en CrearOperacionStock")
+		return fmt.Errorf("[CrearOperacionStock] productoUUID vacío")
 	}
 
-	// 1️⃣ Calcular el stock previo dentro de la transacción
+	// 1️⃣ Obtener stock previo dentro de la misma transacción
 	stockPrevio, err := calcularStockRealLocal(tx, productoUUID)
 	if err != nil {
-		return fmt.Errorf("error obteniendo stock previo: %w", err)
+		return fmt.Errorf("[CrearOperacionStock] error obteniendo stock previo: %w", err)
 	}
 
-	// 2️⃣ Calcular el nuevo stock resultante
-	stockResultante := stockPrevio + cambio
+	// 2️⃣ Calcular nuevo stock resultante según tipo de operación
+	var stockResultante int
+	switch tipoOperacion {
+	case "VENTA", "AJUSTE_NEGATIVO", "DEVOLUCION_CLIENTE":
+		stockResultante = stockPrevio - cambio
+		if stockResultante < 0 {
+			d.Log.Warnf("[CrearOperacionStock] stock negativo para producto %s: previo=%d cambio=%d",
+				productoUUID, stockPrevio, cambio)
+			stockResultante = 0
+		}
+	default: // COMPRA, AJUSTE_POSITIVO, DEVOLUCION_PROVEEDOR
+		stockResultante = stockPrevio + cambio
+	}
 
-	// 3️⃣ Insertar la nueva operación
-	insertQuery := `
-		INSERT INTO operacion_stocks 
-			(uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp, sincronizado)
+	// 3️⃣ Insertar operación de stock
+	insertSQL := `
+		INSERT INTO operacion_stocks (
+			uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante,
+			vendedor_uuid, factura_uuid, timestamp, sincronizado
+		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err = tx.Exec(insertQuery,
+
+	_, err = tx.Exec(insertSQL,
 		uuid.New().String(),
 		productoUUID,
 		tipoOperacion,
@@ -223,15 +240,23 @@ func (d *Db) CrearOperacionStock(tx *sql.Tx, productoUUID, tipoOperacion string,
 		false,
 	)
 	if err != nil {
-		return fmt.Errorf("error insertando operación de stock: %w", err)
+		return fmt.Errorf("[CrearOperacionStock] error insertando operación: %w", err)
 	}
 
-	// 4️⃣ Actualizar stock cacheado en productos
-	_, err = tx.Exec(`UPDATE productos SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE uuid = ?`,
-		stockResultante, productoUUID)
+	// 4️⃣ Actualizar stock del producto
+	_, err = tx.Exec(`
+		UPDATE productos 
+		SET stock = ?, updated_at = CURRENT_TIMESTAMP 
+		WHERE uuid = ?`,
+		stockResultante,
+		productoUUID,
+	)
 	if err != nil {
-		return fmt.Errorf("error actualizando stock del producto: %w", err)
+		return fmt.Errorf("[CrearOperacionStock] error actualizando stock producto: %w", err)
 	}
+
+	d.Log.Debugf("[CrearOperacionStock] %s -> Stock previo %d, cambio %+d, nuevo %d",
+		productoUUID, stockPrevio, cambio, stockResultante)
 
 	return nil
 }
