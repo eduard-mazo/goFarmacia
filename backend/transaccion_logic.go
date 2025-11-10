@@ -210,7 +210,7 @@ func (d *Db) CrearOperacionStock(
 	case "VENTA", "AJUSTE_NEGATIVO", "DEVOLUCION_CLIENTE":
 		stockResultante = stockPrevio - cambio
 		if stockResultante < 0 {
-			fmt.Errorf("stock insuficiente [%s] disponible %d solicitado %d",
+			return fmt.Errorf("stock insuficiente [%s] disponible %d solicitado %d",
 				productoUUID, stockPrevio, cambio)
 		}
 	default: // COMPRA, AJUSTE_POSITIVO, DEVOLUCION_PROVEEDOR
