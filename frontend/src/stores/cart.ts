@@ -99,7 +99,7 @@ export const useCartStore = defineStore("cart", () => {
         toast.warning("Stock máximo alcanzado", {
           description: `El stock disponible es de ${item.Stock} unidades.`,
         });
-      } else if (nuevaCantidad <= 0) {
+      } else if (nuevaCantidad < 0) {
         removeFromCart(productoUUID);
       }
     }
