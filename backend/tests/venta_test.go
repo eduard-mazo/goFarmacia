@@ -103,8 +103,8 @@ func crearProductoTest(t *testing.T, db *backend.Db, stock int) string {
 
 	// Crear operación de stock inicial (fuente de verdad para el cálculo de stock)
 	_, err = db.DB.Exec(`
-		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, timestamp, sincronizado)
-		VALUES ($1, $2, 'INICIAL', $3, $3, 'TEST-SYSTEM', NOW(), false)
+		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, timestamp, sincronizado)
+		VALUES ($1, $2, 'INICIAL', $3, $3, NOW(), false)
 	`, uuid.New().String(), productoUUID, stock)
 	require.NoError(t, err)
 

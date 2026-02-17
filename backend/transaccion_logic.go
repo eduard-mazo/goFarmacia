@@ -96,7 +96,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	var subtotal float64
 	var detalles []DetalleFactura
 
-	// 2. Procesar productos
+	// 2. Validar productos y calcular totales
 	stmtProd, err := tx.Prepare(`SELECT nombre, precio_venta FROM productos WHERE uuid = $1`)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error preparando consulta productos: %w", err)
@@ -108,18 +108,6 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		var precioVenta float64
 		if err := stmtProd.QueryRow(item.ProductoUUID).Scan(&nombre, &precioVenta); err != nil {
 			return Factura{}, fmt.Errorf("producto [%s] no encontrado: %w", item.ProductoUUID, err)
-		}
-
-		// 2.a Registrar operación de stock centralizada
-		if err := d.CrearOperacionStock(
-			tx,
-			item.ProductoUUID,
-			"VENTA",
-			item.Cantidad,
-			req.VendedorUUID,
-			&factura.UUID,
-		); err != nil {
-			return Factura{}, fmt.Errorf("error registrando operación de stock [%s]: %w", nombre, err)
 		}
 
 		precioTotal := float64(item.Cantidad) * item.PrecioUnitario
@@ -138,7 +126,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	factura.IVA = subtotal * 0.0 // configurable si aplica
 	factura.Total = factura.Subtotal + factura.IVA
 
-	// 3. Insertar factura
+	// 3. Insertar factura (antes de operaciones de stock para satisfacer FK)
 	_, err = tx.Exec(`
 		INSERT INTO facturas (
 			uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid,
@@ -151,7 +139,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		return Factura{}, fmt.Errorf("error insertando factura: %w", err)
 	}
 
-	// 4. Insertar detalles
+	// 4. Registrar operaciones de stock e insertar detalles
 	stmtDet, err := tx.Prepare(`
 		INSERT INTO detalle_facturas (
 			uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total,
@@ -163,6 +151,18 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	defer stmtDet.Close()
 
 	for _, det := range detalles {
+		// Registrar operación de stock
+		if err := d.CrearOperacionStock(
+			tx,
+			det.ProductoUUID,
+			"VENTA",
+			det.Cantidad,
+			req.VendedorUUID,
+			&factura.UUID,
+		); err != nil {
+			return Factura{}, fmt.Errorf("error registrando operación de stock [%s]: %w", det.ProductoUUID, err)
+		}
+
 		if _, err := stmtDet.Exec(det.UUID, factura.UUID, det.ProductoUUID,
 			det.Cantidad, det.PrecioUnitario, det.PrecioTotal, now, now); err != nil {
 			return Factura{}, fmt.Errorf("error insertando detalle %s: %w", det.ProductoUUID, err)
