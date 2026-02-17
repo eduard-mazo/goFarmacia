@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// CrearProducto inserta un nuevo producto en la base de datos local.
+// RegistrarProducto inserta un nuevo producto en la base de datos local.
 func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
-	tx, err := d.LocalDB.Begin()
+	tx, err := d.DB.Begin()
 	if err != nil {
 		return Producto{}, fmt.Errorf("no se pudo iniciar la transacción: %w", err)
 	}
@@ -27,7 +27,7 @@ func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
 		UUID      string
 		DeletedAt sql.NullTime
 	}
-	err = tx.QueryRowContext(d.ctx, `SELECT uuid, deleted_at FROM productos WHERE codigo = ?`, nuevo.Codigo).Scan(&existente.UUID, &existente.DeletedAt)
+	err = tx.QueryRowContext(d.ctx, `SELECT uuid, deleted_at FROM productos WHERE codigo = $1`, nuevo.Codigo).Scan(&existente.UUID, &existente.DeletedAt)
 
 	if err != nil && err != sql.ErrNoRows {
 		return Producto{}, fmt.Errorf("error al verificar producto existente: %w", err)
@@ -37,7 +37,7 @@ func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
 	case err == nil && existente.DeletedAt.Valid:
 		// Restaurar producto
 		_, err = tx.Exec(`
-			UPDATE productos SET nombre=?, precio_venta=?, stock=0, deleted_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE uuid=?`,
+			UPDATE productos SET nombre=$1, precio_venta=$2, stock=0, deleted_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE uuid=$3`,
 			nuevo.Nombre, nuevo.PrecioVenta, existente.UUID)
 		if err != nil {
 			return Producto{}, fmt.Errorf("error al restaurar producto: %w", err)
@@ -52,7 +52,7 @@ func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
 		nuevo.UUID = uuid.New().String()
 		_, err = tx.Exec(`
 			INSERT INTO productos (uuid, nombre, codigo, precio_venta, stock, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+			VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 			nuevo.UUID, nuevo.Nombre, nuevo.Codigo, nuevo.PrecioVenta, nuevo.Stock)
 		if err != nil {
 			return Producto{}, fmt.Errorf("error al registrar producto: %w", err)
@@ -68,9 +68,6 @@ func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
 		return Producto{}, fmt.Errorf("error al confirmar transacción: %w", err)
 	}
 
-	go d.syncProductoToRemote(nuevo.UUID)
-	go d.SincronizarOperacionesStockHaciaRemoto()
-
 	return Producto{
 		UUID:        nuevo.UUID,
 		Nombre:      nuevo.Nombre,
@@ -80,17 +77,15 @@ func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
 	}, nil
 }
 
-// ObtenerProductosPaginado recupera una lista paginada de productos con búsqueda.
 // EliminarProducto realiza un borrado lógico (soft delete) de un producto.
 func (d *Db) EliminarProducto(uuid string) error {
-	query := "UPDATE productos SET deleted_at = ? WHERE uuid = ?"
+	query := "UPDATE productos SET deleted_at = $1 WHERE uuid = $2"
 
-	_, err := d.LocalDB.Exec(query, time.Now(), uuid)
+	_, err := d.DB.Exec(query, time.Now(), uuid)
 	if err != nil {
 		return fmt.Errorf("error al eliminar producto: %w", err)
 	}
 
-	go d.syncProductoToRemote(uuid)
 	return nil
 }
 
@@ -100,7 +95,7 @@ func (d *Db) ActualizarProducto(req ProductoAjusteRequest) (string, error) {
 		return "", fmt.Errorf("se requiere UUID de producto válido")
 	}
 
-	tx, err := d.LocalDB.Begin()
+	tx, err := d.DB.Begin()
 	if err != nil {
 		return "", fmt.Errorf("error iniciando tx: %w", err)
 	}
@@ -110,23 +105,23 @@ func (d *Db) ActualizarProducto(req ProductoAjusteRequest) (string, error) {
 		}
 	}()
 
-	// 1️⃣ Stock real actual
+	// 1. Stock real actual
 	stockActual, err := calcularStockRealLocal(tx, req.UUID)
 	if err != nil {
 		return "", fmt.Errorf("error leyendo stock real: %w", err)
 	}
 
-	// 2️⃣ Actualizar info del producto
+	// 2. Actualizar info del producto
 	_, err = tx.Exec(`
-		UPDATE productos 
-		SET nombre=?, precio_venta=?, updated_at=CURRENT_TIMESTAMP
-		WHERE uuid=?`,
+		UPDATE productos
+		SET nombre=$1, precio_venta=$2, updated_at=CURRENT_TIMESTAMP
+		WHERE uuid=$3`,
 		req.Nombre, req.PrecioVenta, req.UUID)
 	if err != nil {
 		return "", fmt.Errorf("error actualizando producto: %w", err)
 	}
 
-	// 3️⃣ Si hay diferencia en stock, crear operación
+	// 3. Si hay diferencia en stock, crear operación
 	cambio := req.StockDeseado - stockActual
 	if cambio != 0 {
 		tipo := "AJUSTE_MANUAL"
@@ -138,14 +133,10 @@ func (d *Db) ActualizarProducto(req ProductoAjusteRequest) (string, error) {
 		}
 	}
 
-	// 4️⃣ Confirmar transacción
+	// 4. Confirmar transacción
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("error commit: %w", err)
 	}
-
-	// 5️⃣ Sincronización asincrónica
-	go d.syncProductoToRemote(req.UUID)
-	go d.SincronizarOperacionesStockHaciaRemoto()
 
 	return "Producto actualizado correctamente", nil
 }
@@ -157,15 +148,17 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 	baseQuery := "FROM productos WHERE deleted_at IS NULL"
 	var whereClause string
 	var args []interface{}
+	argIdx := 1
 
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		whereClause = " AND (LOWER(nombre) LIKE ? OR LOWER(codigo) LIKE ?)" // Espacio al inicio
+		whereClause = fmt.Sprintf(" AND (LOWER(nombre) LIKE $%d OR LOWER(codigo) LIKE $%d)", argIdx, argIdx+1)
 		args = append(args, searchTerm, searchTerm)
+		argIdx += 2
 	}
 
 	countQuery := "SELECT COUNT(uuid) " + baseQuery + whereClause
-	if err := d.LocalDB.QueryRowContext(d.ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := d.DB.QueryRowContext(d.ctx, countQuery, args...).Scan(&total); err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al contar productos: %w", err)
 	}
 
@@ -188,7 +181,7 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 	offset := (page - 1) * pageSize
 	selectQuery += fmt.Sprintf(" LIMIT %d OFFSET %d", pageSize, offset)
 
-	rows, err := d.LocalDB.QueryContext(d.ctx, selectQuery, args...)
+	rows, err := d.DB.QueryContext(d.ctx, selectQuery, args...)
 	if err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al obtener productos paginados: %w", err)
 	}
@@ -208,9 +201,9 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 // ObtenerProductoPorUUID busca un producto por su UUID.
 func (d *Db) ObtenerProductoPorUUID(uuid string) (Producto, error) {
 	var p Producto
-	query := "SELECT uuid, codigo, nombre, precio_venta, stock FROM productos WHERE uuid = ? AND deleted_at IS NULL"
+	query := "SELECT uuid, codigo, nombre, precio_venta, stock FROM productos WHERE uuid = $1 AND deleted_at IS NULL"
 
-	err := d.LocalDB.QueryRow(query, uuid).Scan(&p.UUID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock)
+	err := d.DB.QueryRow(query, uuid).Scan(&p.UUID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock)
 	if err != nil {
 		return Producto{}, fmt.Errorf("error al buscar producto por UUID %s: %w", uuid, err)
 	}
@@ -221,18 +214,18 @@ func (d *Db) ObtenerProductoPorUUID(uuid string) (Producto, error) {
 func (d *Db) ObtenerHistorialStock(productoUUID string) ([]OperacionStock, error) {
 
 	query := `
-		SELECT 
-			uuid, producto_uuid, tipo_operacion, cantidad_cambio, 
+		SELECT
+			uuid, producto_uuid, tipo_operacion, cantidad_cambio,
 			stock_resultante, vendedor_uuid, factura_uuid, timestamp, sincronizado
-		FROM 
+		FROM
 			operacion_stocks
-		WHERE 
-			producto_uuid = ?
-		ORDER BY 
+		WHERE
+			producto_uuid = $1
+		ORDER BY
 			timestamp DESC
 	`
 
-	rows, err := d.LocalDB.QueryContext(d.ctx, query, productoUUID)
+	rows, err := d.DB.QueryContext(d.ctx, query, productoUUID)
 	if err != nil {
 		return []OperacionStock{}, fmt.Errorf("error al ejecutar la consulta de historial de stock: %w", err)
 	}
@@ -256,7 +249,7 @@ func (d *Db) ObtenerHistorialStock(productoUUID string) ([]OperacionStock, error
 
 		if err != nil {
 			d.Log.Errorf("Error al escanear una fila del historial de stock: %v", err)
-			continue // Opcional: podrías devolver el error si prefieres que la operación falle por completo.
+			continue
 		}
 
 		historial = append(historial, op)
@@ -273,13 +266,13 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 	if len(ajustes) == 0 {
 		return "No hay ajustes para procesar.", nil
 	}
-	tx, err := d.LocalDB.BeginTx(d.ctx, nil)
+	tx, err := d.DB.BeginTx(d.ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción masiva: %w", err)
 	}
 	defer func() {
 		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [ActualizarStockMasivo] rollback %v", err)
+			d.Log.Errorf("[LOCAL] - Error durante [ActualizarStockMasivo] rollback %v", rErr)
 		}
 	}()
 	// 1. Preparar IDs para la consulta en lote.
@@ -290,14 +283,16 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 		mapaAjustes[a.ProductoUUID] = a.NuevoStock
 	}
 
-	// Implementación de consulta IN (...) para SQLite
+	// Construir query IN (...) con placeholders $N para PostgreSQL
+	placeholders := make([]string, len(productoUUIDs))
 	args := make([]interface{}, len(productoUUIDs))
 	for i, p_uuid := range productoUUIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = p_uuid
 	}
 	query := `SELECT producto_uuid, COALESCE(SUM(cantidad_cambio), 0)
 			  FROM operacion_stocks
-			  WHERE producto_uuid IN (?` + strings.Repeat(",?", len(productoUUIDs)-1) + `)
+			  WHERE producto_uuid IN (` + strings.Join(placeholders, ",") + `)
 			  GROUP BY producto_uuid`
 
 	// 2. Obtener stocks reales actuales en una sola consulta.
@@ -319,24 +314,24 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 
 	// 3. Preparar la sentencia para la inserción en lote de ajustes.
 	stmt, err := tx.PrepareContext(d.ctx, `
-		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, vendedor_uuid, timestamp) 
-		VALUES (?, ?, 'AJUSTE', ?, 1, ?)`)
+		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, vendedor_uuid, timestamp)
+		VALUES ($1, $2, 'AJUSTE', $3, $4, $5)`)
 	if err != nil {
 		return "", fmt.Errorf("error al preparar la inserción de ajustes: %w", err)
 	}
 	defer stmt.Close()
 
 	// 4. Calcular cambios y ejecutar la inserción en lote.
-	for _, uuid := range productoUUIDs {
-		cantidadCambio := mapaAjustes[uuid] - stocksReales[uuid]
+	for _, pUUID := range productoUUIDs {
+		cantidadCambio := mapaAjustes[pUUID] - stocksReales[pUUID]
 		if cantidadCambio != 0 {
-			if _, err := stmt.ExecContext(d.ctx, uuid, uuid, cantidadCambio, time.Now()); err != nil {
-				return "", fmt.Errorf("error al insertar ajuste para producto UUID %s: %w", uuid, err)
+			if _, err := stmt.ExecContext(d.ctx, uuid.New().String(), pUUID, cantidadCambio, "SYSTEM-ADMIN", time.Now()); err != nil {
+				return "", fmt.Errorf("error al insertar ajuste para producto UUID %s: %w", pUUID, err)
 			}
 		}
 	}
 
-	// 5. ¡Uso de la función auxiliar en bucle para cada producto afectado!
+	// 5. Recalcular stock para cada producto afectado
 	for _, p_uuid := range productoUUIDs {
 		if err := RecalcularYActualizarStock(tx, p_uuid); err != nil {
 			return "", fmt.Errorf("error al recalcular stock en lote para producto UUID %s: %w", p_uuid, err)
@@ -346,8 +341,6 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("error al confirmar la transacción masiva: %w", err)
 	}
-
-	go d.SincronizarOperacionesStockHaciaRemoto()
 
 	return "Stock actualizado masivamente.", nil
 }

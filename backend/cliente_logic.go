@@ -12,7 +12,7 @@ import (
 
 // RegistrarCliente crea un nuevo cliente o restaura uno eliminado usando SQL nativo.
 func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
-	tx, err := d.LocalDB.BeginTx(d.ctx, nil)
+	tx, err := d.DB.BeginTx(d.ctx, nil)
 	if err != nil {
 		return Cliente{}, fmt.Errorf("error al iniciar la transacción: %w", err)
 	}
@@ -32,7 +32,7 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 		UUID      sql.NullString
 		DeletedAt sql.NullTime
 	}
-	err = tx.QueryRowContext(d.ctx, "SELECT uuid, deleted_at FROM clientes WHERE numero_id = ?", cliente.NumeroID).Scan(&existente.UUID, &existente.DeletedAt)
+	err = tx.QueryRowContext(d.ctx, "SELECT uuid, deleted_at FROM clientes WHERE numero_id = $1", cliente.NumeroID).Scan(&existente.UUID, &existente.DeletedAt)
 
 	if err != nil && err != sql.ErrNoRows {
 		return Cliente{}, fmt.Errorf("error al verificar cliente existente: %w", err)
@@ -43,7 +43,7 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 			d.Log.Infof("Restaurando cliente eliminado con UUID: %s", existente.UUID.String)
 			cliente.UUID = existente.UUID.String
 			_, err := tx.ExecContext(d.ctx,
-				`UPDATE clientes SET nombre=?, apellido=?, tipo_id=?, telefono=?, email=?, direccion=?, deleted_at=NULL, updated_at=? WHERE uuid=?`,
+				`UPDATE clientes SET nombre=$1, apellido=$2, tipo_id=$3, telefono=$4, email=$5, direccion=$6, deleted_at=NULL, updated_at=$7 WHERE uuid=$8`,
 				cliente.Nombre, cliente.Apellido, cliente.TipoID, cliente.Telefono, cliente.Email, cliente.Direccion, cliente.UpdatedAt, cliente.UUID,
 			)
 			if err != nil {
@@ -54,7 +54,7 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 		}
 	} else {
 		_, err := tx.ExecContext(d.ctx,
-			`INSERT INTO clientes (uuid, nombre, apellido, tipo_id, numero_id, telefono, email, direccion, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO clientes (uuid, nombre, apellido, tipo_id, numero_id, telefono, email, direccion, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 			cliente.UUID, cliente.Nombre, cliente.Apellido, cliente.TipoID, cliente.NumeroID, cliente.Telefono, cliente.Email, cliente.Direccion, cliente.CreatedAt, cliente.UpdatedAt,
 		)
 		if err != nil {
@@ -66,7 +66,6 @@ func (d *Db) RegistrarCliente(cliente Cliente) (Cliente, error) {
 		return Cliente{}, fmt.Errorf("error al confirmar transacción: %w", err)
 	}
 
-	go d.syncClienteToRemote(cliente.UUID)
 	return cliente, nil
 }
 
@@ -76,20 +75,19 @@ func (d *Db) ActualizarCliente(cliente Cliente) (string, error) {
 		return "", errors.New("se requiere un UUID de cliente válido")
 	}
 
-	// Sentencia SQL para actualizar todos los campos relevantes.
 	query := `
-		UPDATE clientes SET 
-			nombre = ?, 
-			apellido = ?, 
-			tipo_id = ?,
-			numero_id = ?, 
-			telefono = ?, 
-			email = ?, 
-			direccion = ?, 
-			updated_at = ? 
-		WHERE uuid = ?`
+		UPDATE clientes SET
+			nombre = $1,
+			apellido = $2,
+			tipo_id = $3,
+			numero_id = $4,
+			telefono = $5,
+			email = $6,
+			direccion = $7,
+			updated_at = $8
+		WHERE uuid = $9`
 
-	_, err := d.LocalDB.ExecContext(d.ctx, query,
+	_, err := d.DB.ExecContext(d.ctx, query,
 		strings.ToLower(cliente.Nombre),
 		strings.ToLower(cliente.Apellido),
 		cliente.TipoID,
@@ -105,22 +103,19 @@ func (d *Db) ActualizarCliente(cliente Cliente) (string, error) {
 		return "", fmt.Errorf("error al actualizar cliente: %w", err)
 	}
 
-	go d.syncClienteToRemote(cliente.UUID)
 	return "Cliente actualizado correctamente.", nil
 }
 
 // EliminarCliente realiza un borrado lógico (soft delete) de un cliente.
 func (d *Db) EliminarCliente(uuid string) (string, error) {
-	query := "UPDATE clientes SET deleted_at = ? WHERE uuid = ?"
+	query := "UPDATE clientes SET deleted_at = $1 WHERE uuid = $2"
 
-	_, err := d.LocalDB.Exec(query, time.Now(), uuid)
+	_, err := d.DB.Exec(query, time.Now(), uuid)
 	if err != nil {
 		return "", fmt.Errorf("error al eliminar cliente: %w", err)
 	}
 
-	go d.syncClienteToRemote(uuid)
-
-	return "Cliente eliminado localmente. Sincronizando...", nil
+	return "Cliente eliminado.", nil
 }
 
 // ObtenerClientesPaginado recupera una lista paginada de clientes con opción de búsqueda.
@@ -129,24 +124,28 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrd
 	var total int64
 
 	var countArgs []interface{}
+	argIdx := 1
 	countQuery := "SELECT COUNT(*) FROM clientes WHERE deleted_at IS NULL"
 	if search != "" {
-		countQuery += " AND (LOWER(nombre) LIKE ? OR LOWER(apellido) LIKE ? OR numero_id LIKE ?)"
+		countQuery += fmt.Sprintf(" AND (LOWER(nombre) LIKE $%d OR LOWER(apellido) LIKE $%d OR numero_id LIKE $%d)", argIdx, argIdx+1, argIdx+2)
 		searchTerm := "%" + strings.ToLower(search) + "%"
 		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm)
+		argIdx += 3
 	}
 
-	err := d.LocalDB.QueryRowContext(d.ctx, countQuery, countArgs...).Scan(&total)
+	err := d.DB.QueryRowContext(d.ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al contar clientes: %w", err)
 	}
 
 	var queryArgs []interface{}
+	queryArgIdx := 1
 	query := "SELECT uuid, nombre, apellido, tipo_id, numero_id, telefono, email, direccion FROM clientes WHERE deleted_at IS NULL"
 	if search != "" {
-		query += " AND (LOWER(nombre) LIKE ? OR LOWER(apellido) LIKE ? OR numero_id LIKE ?)"
+		query += fmt.Sprintf(" AND (LOWER(nombre) LIKE $%d OR LOWER(apellido) LIKE $%d OR numero_id LIKE $%d)", queryArgIdx, queryArgIdx+1, queryArgIdx+2)
 		searchTerm := "%" + strings.ToLower(search) + "%"
 		queryArgs = append(queryArgs, searchTerm, searchTerm, searchTerm)
+		queryArgIdx += 3
 	}
 
 	if sortBy != "" {
@@ -169,11 +168,11 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrd
 		}
 	}
 
-	query += " LIMIT ? OFFSET ?"
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", queryArgIdx, queryArgIdx+1)
 	offset := (page - 1) * pageSize
 	queryArgs = append(queryArgs, pageSize, offset)
 
-	rows, err := d.LocalDB.QueryContext(d.ctx, query, queryArgs...)
+	rows, err := d.DB.QueryContext(d.ctx, query, queryArgs...)
 	if err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al obtener clientes paginados: %w", err)
 	}
@@ -193,9 +192,9 @@ func (d *Db) ObtenerClientesPaginado(page, pageSize int, search, sortBy, sortOrd
 // ObtenerClientePorID busca un cliente por su ID.
 func (d *Db) ObtenerClientePorID(uuid string) (Cliente, error) {
 	var c Cliente
-	query := "SELECT uuid, tipo_id, numero_id, nombre, direccion, telefono, email FROM clientes WHERE uuid = ? AND deleted_at IS NULL"
+	query := "SELECT uuid, tipo_id, numero_id, nombre, direccion, telefono, email FROM clientes WHERE uuid = $1 AND deleted_at IS NULL"
 
-	err := d.LocalDB.QueryRow(query, uuid).Scan(&c.UUID, &c.TipoID, &c.NumeroID, &c.Nombre, &c.Direccion, &c.Telefono, &c.Email)
+	err := d.DB.QueryRow(query, uuid).Scan(&c.UUID, &c.TipoID, &c.NumeroID, &c.Nombre, &c.Direccion, &c.Telefono, &c.Email)
 	if err != nil {
 		return Cliente{}, fmt.Errorf("error al buscar cliente por ID %s: %w", uuid, err)
 	}

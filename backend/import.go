@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -203,7 +205,7 @@ func (d *Db) resultCollector(modelName string, results <-chan interface{}, progr
 	}
 }
 
-// insertBatch realiza la inserción de un lote de datos en la base de datos.
+// insertBatch realiza la inserción de un lote de datos en la base de datos usando raw SQL.
 func (d *Db) insertBatch(batch []interface{}, modelName string, progressChan chan<- string, log *ImportLog) {
 	if len(batch) == 0 {
 		return
@@ -211,50 +213,85 @@ func (d *Db) insertBatch(batch []interface{}, modelName string, progressChan cha
 
 	progressChan <- fmt.Sprintf("Intentando insertar lote de %d registros para '%s'...", len(batch), modelName)
 
-	// --- INICIO DE LA CORRECCIÓN ---
-	// GORM necesita un slice con un tipo concreto (ej. []Producto), no []interface{}.
-	// Usamos reflexión para crear dinámicamente un slice del tipo correcto
-	// y copiar los elementos del batch genérico a este nuevo slice tipado.
-
-	var typedSlice interface{}
-	switch modelName {
-	case "Productos":
-		// Creamos un slice de Producto con la misma capacidad que el batch.
-		productos := make([]Producto, 0, len(batch))
-		// Llenamos el slice con los datos del batch, asegurando el tipo.
-		for _, item := range batch {
-			productos = append(productos, item.(Producto))
-		}
-		typedSlice = productos
-	case "Clientes":
-		// Hacemos lo mismo para Clientes.
-		clientes := make([]Cliente, 0, len(batch))
-		for _, item := range batch {
-			clientes = append(clientes, item.(Cliente))
-		}
-		typedSlice = clientes
-	default:
-		// Si el modelo es desconocido, registramos el error y detenemos la inserción.
-		err := fmt.Errorf("modelo '%s' desconocido, no se puede crear un lote tipado", modelName)
-		d.Log.Error(err)
+	tx, err := d.DB.Begin()
+	if err != nil {
+		d.Log.Errorf("Error al iniciar transacción para lote: %v", err)
 		log.AddBatchError(len(batch), err)
 		return
 	}
-	// --- FIN DE LA CORRECCIÓN ---
 
-	// Ahora pasamos el `typedSlice` a GORM en lugar del `batch` original.
-	//	err := d.LocalDB.Clauses(clause.OnConflict{
-	//		Columns:   getUniqueColumns(modelName),
-	//		DoUpdates: clause.AssignmentColumns(getUpdatableColumns(modelName)),
-	//	}).CreateInBatches(typedSlice, len(batch)).Error
-	//
-	//	if err != nil {
-	//		d.Log.Errorf("Error al insertar lote para el modelo %s: %v", modelName, err)
-	//		log.AddBatchError(len(batch), err)
-	//	} else {
-	//		log.AddBatchSuccess(len(batch))
-	//	}
-	fmt.Print(typedSlice)
+	switch modelName {
+	case "Productos":
+		err = d.insertProductoBatch(tx, batch)
+	case "Clientes":
+		err = d.insertClienteBatch(tx, batch)
+	default:
+		err = fmt.Errorf("modelo '%s' desconocido para inserción por lotes", modelName)
+	}
+
+	if err != nil {
+		_ = tx.Rollback()
+		d.Log.Errorf("Error al insertar lote para el modelo %s: %v", modelName, err)
+		log.AddBatchError(len(batch), err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		d.Log.Errorf("Error al confirmar lote para el modelo %s: %v", modelName, err)
+		log.AddBatchError(len(batch), err)
+		return
+	}
+
+	log.AddBatchSuccess(len(batch))
+}
+
+func (d *Db) insertProductoBatch(tx *sql.Tx, batch []interface{}) error {
+	stmt, err := tx.Prepare(`
+		INSERT INTO productos (uuid, nombre, codigo, precio_venta, stock, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (codigo) DO UPDATE SET
+			nombre = EXCLUDED.nombre,
+			precio_venta = EXCLUDED.precio_venta,
+			stock = EXCLUDED.stock,
+			updated_at = CURRENT_TIMESTAMP`)
+	if err != nil {
+		return fmt.Errorf("error preparando statement de productos: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, item := range batch {
+		p := item.(Producto)
+		if _, err := stmt.Exec(uuid.New().String(), p.Nombre, p.Codigo, p.PrecioVenta, p.Stock); err != nil {
+			return fmt.Errorf("error insertando producto '%s': %w", p.Codigo, err)
+		}
+	}
+	return nil
+}
+
+func (d *Db) insertClienteBatch(tx *sql.Tx, batch []interface{}) error {
+	stmt, err := tx.Prepare(`
+		INSERT INTO clientes (uuid, nombre, apellido, tipo_id, numero_id, telefono, email, direccion, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (numero_id) DO UPDATE SET
+			nombre = EXCLUDED.nombre,
+			apellido = EXCLUDED.apellido,
+			tipo_id = EXCLUDED.tipo_id,
+			telefono = EXCLUDED.telefono,
+			email = EXCLUDED.email,
+			direccion = EXCLUDED.direccion,
+			updated_at = CURRENT_TIMESTAMP`)
+	if err != nil {
+		return fmt.Errorf("error preparando statement de clientes: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, item := range batch {
+		c := item.(Cliente)
+		if _, err := stmt.Exec(uuid.New().String(), c.Nombre, c.Apellido, c.TipoID, c.NumeroID, c.Telefono, c.Email, c.Direccion); err != nil {
+			return fmt.Errorf("error insertando cliente '%s': %w", c.NumeroID, err)
+		}
+	}
+	return nil
 }
 
 // mapRowToStruct convierte un mapa de (header -> valor) a un struct específico.

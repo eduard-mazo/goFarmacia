@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // ImportaCSV inicia el proceso de importación desde un archivo CSV.
@@ -28,31 +27,7 @@ func (d *Db) ImportaCSV(filePath string, modelName string) {
 
 // ResetearTodaLaData ejecuta un borrado completo y reinicio de las bases de datos.
 func (d *Db) ResetearTodaLaData() (string, error) {
-	//	if err := d.DeepResetDatabases(); err != nil {
-	//		return "", err
-	//	}
 	return "¡Reseteo completado! Todas las bases de datos han sido limpiadas y reiniciadas.", nil
-}
-
-func (d *Db) NormalizarStockMasivo() (string, error) {
-	d.Log.Info("INICIANDO: Proceso de Normalización Masiva (Remoto es la Verdad).")
-
-	// --- PASO 1: RECALCULAR TODO EN EL REMOTO ---
-	d.Log.Info("[Paso 1/2] Forzando recálculo de stock en el servidor remoto...")
-	if err := d.RecalcularStockRemotoParaTodosLosProductos(); err != nil {
-		return "", fmt.Errorf("falló la recalculación remota del stock: %w", err)
-	}
-	d.Log.Info("[Paso 1/2] Recálculo remoto completado.")
-
-	// --- PASO 2: FORZAR A LA BD LOCAL A SER UN ESPEJO DEL REMOTO ---
-	d.Log.Info("[Paso 2/2] Borrando datos locales y descargando el estado correcto desde el remoto...")
-	if err := d.ForzarResincronizacionLocalDesdeRemoto(); err != nil {
-		return "", fmt.Errorf("falló la resincronización forzada local: %w", err)
-	}
-	d.Log.Info("[Paso 2/2] Resincronización local completada.")
-
-	d.Log.Info("ÉXITO: Normalización Masiva de Stock completada.")
-	return "Stock normalizado. La base de datos local ahora es un espejo del servidor.", nil
 }
 
 // NormalizarStock recorre todos los productos locales y crea operaciones de ajuste
@@ -62,7 +37,7 @@ func (d *Db) NormalizarStock() error {
 	var vendedorUUID string = "8f2954d4-6990-4f14-be90-d4b70e8b862a"
 	d.Log.Info("[NORMALIZANDO STOCK] Iniciando proceso de revisión y ajuste...")
 
-	tx, err := d.LocalDB.Begin()
+	tx, err := d.DB.Begin()
 	if err != nil {
 		return fmt.Errorf("no se pudo iniciar transacción local: %w", err)
 	}
@@ -103,8 +78,8 @@ func (d *Db) NormalizarStock() error {
 		// Determinar ajuste necesario
 		var ajuste int
 		if stockActual <= 0 && stockReal <= 0 {
-			// Forzar al menos 1 unidad si ambos son 0 o negativos
-			ajuste = 100 - stockActual
+			// Set stock to 0 instead of phantom 100 units
+			ajuste = -stockActual
 		} else {
 			ajuste = stockReal - stockActual
 		}
@@ -128,125 +103,6 @@ func (d *Db) NormalizarStock() error {
 	}
 
 	d.Log.Infof("[NORMALIZACIÓN COMPLETA] %d productos ajustados correctamente", totalAjustados)
-	go d.SincronizarOperacionesStockHaciaRemoto()
-	return nil
-}
-
-// NUEVA FUNCIÓN DE AYUDA para forzar la subida de TODAS las operaciones
-func (d *Db) SincronizarTodasLasOperacionesHaciaRemoto() error {
-	d.Log.Info("Iniciando sincronización forzada de TODAS las operaciones de stock hacia el remoto.")
-	if !d.isRemoteDBAvailable() {
-		return fmt.Errorf("base de datos remota no disponible para sincronización forzada")
-	}
-
-	// 1. Leer TODAS las operaciones de stock de la base de datos local.
-	query := `SELECT uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp FROM operacion_stocks`
-	rows, err := d.LocalDB.QueryContext(d.ctx, query)
-	if err != nil {
-		return fmt.Errorf("error al leer todas las operaciones de stock locales: %w", err)
-	}
-	defer rows.Close()
-
-	var ops []OperacionStock
-	var localIDsToUpdate []string
-	for rows.Next() {
-		var op OperacionStock
-		var stockResultante sql.NullInt64
-		var facturaUUID sql.NullString
-
-		if err := rows.Scan(&op.UUID, &op.ProductoUUID, &op.TipoOperacion, &op.CantidadCambio, &stockResultante, &op.VendedorUUID, &facturaUUID, &op.Timestamp); err != nil {
-			d.Log.Warnf("Omitiendo operación de stock con error de escaneo: %v", err)
-			continue
-		}
-
-		if stockResultante.Valid {
-			op.StockResultante = int(stockResultante.Int64)
-		}
-		if facturaUUID.Valid {
-			*op.FacturaUUID = facturaUUID.String
-		}
-
-		ops = append(ops, op)
-		localIDsToUpdate = append(localIDsToUpdate, *op.FacturaUUID)
-	}
-
-	if len(ops) == 0 {
-		d.Log.Info("No hay operaciones de stock locales para sincronizar.")
-		return nil
-	}
-
-	// 2. Usar una transacción remota y un batch de UPSERTs.
-	rtx, err := d.RemoteDB.Begin(d.ctx)
-	if err != nil {
-		return fmt.Errorf("no se pudo iniciar la transacción remota forzada: %w", err)
-	}
-	defer func() {
-		if rErr := rtx.Rollback(d.ctx); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [NormalizarStockTodosLosProductos] rollback %v", err)
-		}
-	}()
-
-	batch := &pgx.Batch{}
-	upsertSQL := `
-		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, factura_uuid, timestamp)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (uuid) DO UPDATE SET
-			tipo_operacion = EXCLUDED.tipo_operacion,
-			cantidad_cambio = EXCLUDED.cantidad_cambio,
-			stock_resultante = EXCLUDED.stock_resultante,
-			timestamp = EXCLUDED.timestamp;
-	`
-	for _, op := range ops {
-		batch.Queue(upsertSQL, op.UUID, op.ProductoUUID, op.TipoOperacion, op.CantidadCambio, op.StockResultante, op.VendedorUUID, op.FacturaUUID, op.Timestamp)
-	}
-
-	br := rtx.SendBatch(d.ctx, batch)
-	if err := br.Close(); err != nil {
-		return fmt.Errorf("error ejecutando el batch de UPSERT forzado de operaciones de stock: %w", err)
-	}
-
-	if err := rtx.Commit(d.ctx); err != nil {
-		return fmt.Errorf("error al confirmar la transacción remota forzada: %w", err)
-	}
-
-	// 3. Marcar todas las operaciones locales como sincronizadas.
-	if len(localIDsToUpdate) > 0 {
-		updateLocalSQL := "UPDATE operacion_stocks SET sincronizado = 1"
-		if _, err := d.LocalDB.ExecContext(d.ctx, updateLocalSQL); err != nil {
-			return fmt.Errorf("error al marcar todas las operaciones como sincronizadas localmente: %w", err)
-		}
-	}
-
-	d.Log.Infof("Sincronización forzada completada para %d operaciones de stock.", len(ops))
-	return nil
-}
-
-func (d *Db) RecalcularStockRemotoParaTodosLosProductos() error {
-	if !d.isRemoteDBAvailable() {
-		return fmt.Errorf("base de datos remota no disponible")
-	}
-
-	// Esta consulta de dos partes es crucial:
-	// 1. Actualiza el stock para todos los productos que SÍ tienen operaciones.
-	// 2. Pone en 0 el stock de todos los productos que NO tienen operaciones.
-	updateStockCacheSQL := `
-		WITH stock_calculado AS (
-			SELECT producto_uuid, COALESCE(SUM(cantidad_cambio), 0) as nuevo_stock
-			FROM operacion_stocks
-			GROUP BY producto_uuid
-		)
-		UPDATE productos p SET stock = sc.nuevo_stock
-		FROM stock_calculado sc WHERE p.uuid = sc.producto_uuid;
-
-		UPDATE productos SET stock = 0 WHERE uuid NOT IN (SELECT DISTINCT producto_uuid FROM operacion_stocks);
-	`
-
-	_, err := d.RemoteDB.Exec(d.ctx, updateStockCacheSQL)
-	if err != nil {
-		return fmt.Errorf("error al ejecutar el recálculo masivo de stock remoto: %w", err)
-	}
-
-	d.Log.Info("Recálculo masivo de stock en el servidor remoto ejecutado correctamente.")
 	return nil
 }
 
@@ -254,13 +110,13 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 	d.Log.Info("Iniciando proceso de normalización de stock para todos los productos.")
 
 	ctx := d.ctx
-	tx, err := d.LocalDB.BeginTx(ctx, nil)
+	tx, err := d.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("error al iniciar la transacción de normalización: %w", err)
 	}
 	defer func() {
 		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [NormalizarStockTodosLosProductos] rollback %v", err)
+			d.Log.Errorf("[LOCAL] - Error durante [NormalizarStockTodosLosProductos] rollback %v", rErr)
 		}
 	}()
 
@@ -286,7 +142,7 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 	d.Log.Infof("Se normalizará el stock para %d productos.", len(productoUUIDs))
 
 	// Preparar statements para reutilizar
-	stmtUpdateStock, err := tx.PrepareContext(ctx, "UPDATE productos SET stock = ? WHERE uuid = ?")
+	stmtUpdateStock, err := tx.PrepareContext(ctx, "UPDATE productos SET stock = $1 WHERE uuid = $2")
 	if err != nil {
 		return "", fmt.Errorf("error al preparar statement de actualización de stock: %w", err)
 	}
@@ -294,7 +150,7 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 
 	stmtInsertOp, err := tx.PrepareContext(ctx, `
 		INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante, vendedor_uuid, timestamp, sincronizado)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`)
 	if err != nil {
 		return "", fmt.Errorf("error al preparar statement de inserción de operación: %w", err)
@@ -304,7 +160,7 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 	// 2. Iterar sobre cada producto para normalizar su stock.
 	for _, pr_uuid := range productoUUIDs {
 		var totalOperaciones int
-		err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM operacion_stocks WHERE producto_uuid = ?", pr_uuid).Scan(&totalOperaciones)
+		err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM operacion_stocks WHERE producto_uuid = $1", pr_uuid).Scan(&totalOperaciones)
 		if err != nil {
 			return "", fmt.Errorf("error al contar operaciones para el producto UUID %s: %w", pr_uuid, err)
 		}
@@ -341,8 +197,7 @@ func (d *Db) NormalizarStockTodosLosProductos() (string, error) {
 		return "", fmt.Errorf("error al confirmar la transacción de normalización: %w", err)
 	}
 
-	d.Log.Infof("Normalización local completa. Disparando sincronización hacia el remoto.")
-	go d.SincronizacionInteligente()
+	d.Log.Infof("Normalización local completa para %d productos.", len(productoUUIDs))
 
-	return fmt.Sprintf("Stock normalizado localmente para %d productos. La sincronización con el servidor remoto ha comenzado.", len(productoUUIDs)), nil
+	return fmt.Sprintf("Stock normalizado localmente para %d productos.", len(productoUUIDs)), nil
 }

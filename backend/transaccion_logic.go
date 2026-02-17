@@ -19,7 +19,7 @@ func RecalcularYActualizarStock(dbExecutor interface{}, productoUUID string) err
 	var stockCalculado int
 
 	// SQL para calcular el stock real desde la fuente de verdad (operacion_stocks)
-	query := "SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_uuid = ?"
+	query := "SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_uuid = $1"
 
 	// Ejecutar la query de cálculo de stock
 	switch txOrDb := dbExecutor.(type) {
@@ -35,7 +35,7 @@ func RecalcularYActualizarStock(dbExecutor interface{}, productoUUID string) err
 	}
 
 	// SQL para actualizar la caché en la tabla de productos
-	updateQuery := "UPDATE productos SET stock = ? WHERE uuid = ?"
+	updateQuery := "UPDATE productos SET stock = $1 WHERE uuid = $2"
 
 	// Ejecutar la query de actualización
 	switch txOrDb := dbExecutor.(type) {
@@ -54,7 +54,7 @@ func RecalcularYActualizarStock(dbExecutor interface{}, productoUUID string) err
 // calcularStockRealLocal es una función auxiliar para obtener el stock real dentro de una transacción.
 func calcularStockRealLocal(tx *sql.Tx, productoUUID string) (int, error) {
 	var stockCalculado int
-	query := "SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_uuid = ?"
+	query := "SELECT COALESCE(SUM(cantidad_cambio), 0) FROM operacion_stocks WHERE producto_uuid = $1"
 	err := tx.QueryRow(query, productoUUID).Scan(&stockCalculado)
 	if err != nil {
 		return 0, err
@@ -65,7 +65,7 @@ func calcularStockRealLocal(tx *sql.Tx, productoUUID string) (int, error) {
 // ---- LÓGICA DE TRANSACCIONES (VENTAS) REFACTORIZADA ----
 
 func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
-	tx, err := d.LocalDB.Begin()
+	tx, err := d.DB.Begin()
 	if err != nil {
 		return Factura{}, fmt.Errorf("error al iniciar transacción: %w", err)
 	}
@@ -75,7 +75,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		}
 	}()
 
-	// 1️⃣ Generar número de factura
+	// 1. Generar número de factura
 	numeroFactura, err := d.generarNumeroFactura(tx)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error al generar número de factura: %w", err)
@@ -96,8 +96,8 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	var subtotal float64
 	var detalles []DetalleFactura
 
-	// 2️⃣ Procesar productos
-	stmtProd, err := tx.Prepare(`SELECT nombre, precio_venta FROM productos WHERE uuid = ?`)
+	// 2. Procesar productos
+	stmtProd, err := tx.Prepare(`SELECT nombre, precio_venta FROM productos WHERE uuid = $1`)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error preparando consulta productos: %w", err)
 	}
@@ -110,7 +110,7 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 			return Factura{}, fmt.Errorf("producto [%s] no encontrado: %w", item.ProductoUUID, err)
 		}
 
-		// 2.a Registrar operación de stock centralizada ✅
+		// 2.a Registrar operación de stock centralizada
 		if err := d.CrearOperacionStock(
 			tx,
 			item.ProductoUUID,
@@ -138,12 +138,12 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 	factura.IVA = subtotal * 0.0 // configurable si aplica
 	factura.Total = factura.Subtotal + factura.IVA
 
-	// 3️⃣ Insertar factura
+	// 3. Insertar factura
 	_, err = tx.Exec(`
 		INSERT INTO facturas (
 			uuid, numero_factura, fecha_emision, vendedor_uuid, cliente_uuid,
 			subtotal, iva, total, estado, metodo_pago, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		factura.UUID, factura.NumeroFactura, factura.FechaEmision, factura.VendedorUUID,
 		factura.ClienteUUID, factura.Subtotal, factura.IVA, factura.Total,
 		factura.Estado, factura.MetodoPago, now, now)
@@ -151,12 +151,12 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		return Factura{}, fmt.Errorf("error insertando factura: %w", err)
 	}
 
-	// 4️⃣ Insertar detalles
+	// 4. Insertar detalles
 	stmtDet, err := tx.Prepare(`
 		INSERT INTO detalle_facturas (
 			uuid, factura_uuid, producto_uuid, cantidad, precio_unitario, precio_total,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
 	if err != nil {
 		return Factura{}, fmt.Errorf("error preparando statement detalle_facturas: %w", err)
 	}
@@ -169,17 +169,10 @@ func (d *Db) RegistrarVenta(req VentaRequest) (Factura, error) {
 		}
 	}
 
-	// 5️⃣ Commit ✅
+	// 5. Commit
 	if err := tx.Commit(); err != nil {
 		return Factura{}, fmt.Errorf("error confirmando transacción de venta: %w", err)
 	}
-
-	// 🔁 Sincronización asincrónica
-	go func() {
-		if err := d.syncVentaToRemote(factura.UUID); err != nil {
-			d.Log.Errorf("[SYNC] Error sincronizando venta %s: %v", factura.UUID, err)
-		}
-	}()
 
 	return d.ObtenerDetalleFactura(factura.UUID)
 }
@@ -198,13 +191,13 @@ func (d *Db) CrearOperacionStock(
 		return fmt.Errorf("[CrearOperacionStock] productoUUID vacío")
 	}
 
-	// 1️⃣ Obtener stock previo dentro de la misma transacción
+	// 1. Obtener stock previo dentro de la misma transacción
 	stockPrevio, err := calcularStockRealLocal(tx, productoUUID)
 	if err != nil {
 		return fmt.Errorf("[CrearOperacionStock] error obteniendo stock previo: %w", err)
 	}
 
-	// 2️⃣ Calcular nuevo stock resultante según tipo de operación
+	// 2. Calcular nuevo stock resultante según tipo de operación
 	var stockResultante int
 	switch tipoOperacion {
 	case "VENTA", "AJUSTE_NEGATIVO", "DEVOLUCION_CLIENTE":
@@ -213,17 +206,17 @@ func (d *Db) CrearOperacionStock(
 			return fmt.Errorf("stock insuficiente [%s] disponible %d solicitado %d",
 				productoUUID, stockPrevio, cambio)
 		}
-	default: // COMPRA, AJUSTE_POSITIVO, DEVOLUCION_PROVEEDOR
+	default: // COMPRA, AJUSTE_POSITIVO, DEVOLUCION_PROVEEDOR, INICIAL, etc.
 		stockResultante = stockPrevio + cambio
 	}
 
-	// 3️⃣ Insertar operación de stock
+	// 3. Insertar operación de stock
 	insertSQL := `
 		INSERT INTO operacion_stocks (
 			uuid, producto_uuid, tipo_operacion, cantidad_cambio, stock_resultante,
 			vendedor_uuid, factura_uuid, timestamp, sincronizado
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 
 	_, err = tx.Exec(insertSQL,
@@ -241,11 +234,11 @@ func (d *Db) CrearOperacionStock(
 		return fmt.Errorf("[CrearOperacionStock] error insertando operación: %w", err)
 	}
 
-	// 4️⃣ Actualizar stock del producto
+	// 4. Actualizar stock del producto
 	_, err = tx.Exec(`
-		UPDATE productos 
-		SET stock = ?, updated_at = CURRENT_TIMESTAMP 
-		WHERE uuid = ?`,
+		UPDATE productos
+		SET stock = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE uuid = $2`,
 		stockResultante,
 		productoUUID,
 	)
@@ -260,30 +253,24 @@ func (d *Db) CrearOperacionStock(
 }
 
 func (d *Db) generarNumeroFactura(tx *sql.Tx) (string, error) {
-	var maxNum sql.NullInt64 // Usamos NullInt64 para manejar el caso de que la tabla esté vacía
+	var maxNum sql.NullInt64
 
-	// Esta consulta extrae la parte numérica (asumiendo el prefijo "FAC-")
-	// la convierte a INTEGER y encuentra el máximo.
-	// COALESCE devuelve 0 si no se encuentran facturas (ej. tabla vacía).
 	query := `
-		SELECT COALESCE(MAX(CAST(SUBSTR(numero_factura, 5) AS INTEGER)), 0) 
-		FROM facturas 
+		SELECT COALESCE(MAX(CAST(SUBSTR(numero_factura, 5) AS INTEGER)), 0)
+		FROM facturas
 		WHERE numero_factura LIKE 'FAC-%'`
 
 	err := tx.QueryRow(query).Scan(&maxNum)
 	if err != nil {
-		// Si falla la consulta (que no debería, por COALESCE), retornamos error.
 		return "", fmt.Errorf("error al consultar max numero_factura: %w", err)
 	}
 
-	nuevoNumero := 1000 // Número base inicial
+	nuevoNumero := 1000
 
 	if maxNum.Valid && maxNum.Int64 > 0 {
-		// Si encontramos un número máximo, le sumamos 1
 		nuevoNumero = int(maxNum.Int64) + 1
 	}
 
-	// Aseguramos que el nuevo número nunca sea menor que el base
 	if nuevoNumero < 1000 {
 		nuevoNumero = 1000
 	}
@@ -305,22 +292,24 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 		JOIN vendedors v ON f.vendedor_uuid = v.uuid
 	`
 
+	argIdx := 1
 	// Search filter
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		where = `
-			WHERE LOWER(f.numero_factura) LIKE ? 
-			   OR LOWER(c.nombre) LIKE ? 
-			   OR LOWER(v.nombre) LIKE ?
-		`
+		where = fmt.Sprintf(`
+			WHERE LOWER(f.numero_factura) LIKE $%d
+			   OR LOWER(c.nombre) LIKE $%d
+			   OR LOWER(v.nombre) LIKE $%d
+		`, argIdx, argIdx+1, argIdx+2)
 		args = append(args, searchTerm, searchTerm, searchTerm)
+		argIdx += 3
 	}
 
 	// Count total records
 	var total int64
 	countQuery := "SELECT COUNT(f.uuid) " + baseQuery + where
 
-	if err := d.LocalDB.QueryRow(countQuery, args...).Scan(&total); err != nil {
+	if err := d.DB.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return PaginatedResult{}, fmt.Errorf("Error contando facturas: %w", err)
 	}
 
@@ -348,8 +337,8 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 
 	// Query final para obtener los registros
 	selectQuery := `
-		SELECT 
-			f.uuid, 
+		SELECT
+			f.uuid,
 			f.numero_factura,
 			f.fecha_emision,
 			f.total,
@@ -359,7 +348,7 @@ func (d *Db) ObtenerFacturasPaginado(page, pageSize int, search, sortBy, sortOrd
 			v.nombre
 	` + baseQuery + where + " " + orderBy + pagination
 
-	rows, err := d.LocalDB.Query(selectQuery, args...)
+	rows, err := d.DB.Query(selectQuery, args...)
 	if err != nil {
 		return PaginatedResult{}, fmt.Errorf("Error realizando consulta facturas: %w", err)
 	}
@@ -409,10 +398,9 @@ func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 						JOIN clientes c ON f.cliente_uuid = c.uuid
 						JOIN vendedors v ON f.vendedor_uuid = v.uuid
 					WHERE
-						f.uuid = ?
+						f.uuid = $1
 	`
-	// Escaneamos los IDs y también los datos anidados para tener el objeto completo
-	err := d.LocalDB.QueryRow(queryFactura, facturaUUID).Scan(
+	err := d.DB.QueryRow(queryFactura, facturaUUID).Scan(
 		&factura.UUID, &factura.NumeroFactura, &factura.FechaEmision, &factura.Subtotal, &factura.IVA, &factura.Total, &factura.Estado, &factura.MetodoPago,
 		&factura.ClienteUUID, &factura.Cliente.UUID, &factura.Cliente.Nombre, &factura.Cliente.Apellido, &factura.Cliente.NumeroID,
 		&factura.VendedorUUID, &factura.Vendedor.UUID, &factura.Vendedor.Nombre, &factura.Vendedor.Apellido,
@@ -430,9 +418,9 @@ func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 			p.uuid, p.codigo, p.nombre
 		FROM detalle_facturas d
 		JOIN productos p ON d.producto_uuid = p.uuid
-		WHERE d.factura_uuid = ?
+		WHERE d.factura_uuid = $1
 	`
-	rows, err := d.LocalDB.Query(queryDetalles, facturaUUID)
+	rows, err := d.DB.Query(queryDetalles, facturaUUID)
 	if err != nil {
 		d.Log.Errorf("Error al consultar los detalles para la factura UUID %s: %v", facturaUUID, err)
 		return factura, err
@@ -465,13 +453,13 @@ func (d *Db) ObtenerDetalleFactura(facturaUUID string) (Factura, error) {
 }
 
 func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
-	tx, err := d.LocalDB.Begin()
+	tx, err := d.DB.Begin()
 	if err != nil {
 		return Compra{}, fmt.Errorf("error al iniciar transacción de compra: %w", err)
 	}
 	defer func() {
-		if rErr := tx.Rollback(); err != nil && !errors.Is(rErr, sql.ErrTxDone) {
-			d.Log.Errorf("[LOCAL] - Error durante [RegistrarCompra] rollback %v", err)
+		if rErr := tx.Rollback(); rErr != nil && !errors.Is(rErr, sql.ErrTxDone) {
+			d.Log.Errorf("[LOCAL] - Error durante [RegistrarCompra] rollback %v", rErr)
 		}
 	}()
 
@@ -481,26 +469,27 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 	}
 
 	compra := Compra{
+		UUID:          uuid.New().String(),
 		Fecha:         time.Now(),
 		ProveedorUUID: req.ProveedorUUID,
 		FacturaNumero: req.FacturaNumero,
 		Total:         totalCompra,
 	}
 
-	_, err = tx.Exec("INSERT INTO compras (uuid, fecha, proveedor_uuid, factura_numero, total) VALUES (?, ?, ?, ?, ?)",
+	_, err = tx.Exec("INSERT INTO compras (uuid, fecha, proveedor_uuid, factura_numero, total) VALUES ($1, $2, $3, $4, $5)",
 		compra.UUID, compra.Fecha, compra.ProveedorUUID, compra.FacturaNumero, compra.Total)
 	if err != nil {
 		return Compra{}, fmt.Errorf("error al crear la compra: %w", err)
 	}
 
 	// Preparar statements para inserciones masivas
-	stmtDetalles, err := tx.Prepare("INSERT INTO detalle_compras (compra_uuid, producto_uuid, cantidad, precio_compra_unitario) VALUES (?, ?, ?, ?)")
+	stmtDetalles, err := tx.Prepare("INSERT INTO detalle_compras (compra_uuid, producto_uuid, cantidad, precio_compra_unitario) VALUES ($1, $2, $3, $4)")
 	if err != nil {
 		return Compra{}, err
 	}
 	defer stmtDetalles.Close()
 
-	stmtOps, err := tx.Prepare("INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, vendedor_uuid, timestamp) VALUES (?, ?, ?, ?, ?, ?)")
+	stmtOps, err := tx.Prepare("INSERT INTO operacion_stocks (uuid, producto_uuid, tipo_operacion, cantidad_cambio, vendedor_uuid, timestamp) VALUES ($1, $2, $3, $4, $5, $6)")
 	if err != nil {
 		return Compra{}, err
 	}
@@ -529,8 +518,5 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 		return Compra{}, fmt.Errorf("error al confirmar transacción de compra: %w", err)
 	}
 
-	go d.syncCompraToRemote(compra.UUID)
-
-	// Aquí se debería devolver la compra completa, similar a ObtenerDetalleFactura
 	return compra, nil
 }

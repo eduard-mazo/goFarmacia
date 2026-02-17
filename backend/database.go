@@ -11,16 +11,16 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq" // PostgreSQL driver
 	"github.com/sirupsen/logrus"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/database/sqlite3"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
+
+// ==================== STRUCTS ====================
 
 type OperacionStock struct {
 	UUID            string    `json:"UUID"`
@@ -157,31 +157,6 @@ type Proveedor struct {
 	Email     string     `json:"Email"`
 }
 
-type Compra struct {
-	CreatedAt     time.Time       `json:"CreatedAt" ts_type:"string"`
-	UpdatedAt     time.Time       `json:"UpdatedAt" ts_type:"string"`
-	DeletedAt     *time.Time      `json:"DeletedAt" ts_type:"string"`
-	UUID          string          `json:"uuid"`
-	Fecha         time.Time       `json:"Fecha" ts_type:"string"`
-	ProveedorUUID string          `json:"proveedor_uuid"`
-	Proveedor     Proveedor       `json:"proveedor"`
-	FacturaNumero string          `json:"FacturaNumero"`
-	Total         float64         `json:"Total"`
-	Detalles      []DetalleCompra `json:"Detalles"`
-}
-
-type DetalleCompra struct {
-	CreatedAt            time.Time  `json:"CreatedAt" ts_type:"string"`
-	UpdatedAt            time.Time  `json:"UpdatedAt" ts_type:"string"`
-	DeletedAt            *time.Time `json:"DeletedAt" ts_type:"string"`
-	UUID                 string     `json:"UUID"`
-	CompraUUID           uint       `json:"coCompraUUIDmpra_uuid"`
-	ProductoUUID         string     `json:"ProductoUUID"`
-	Producto             Producto   `json:"Producto"`
-	Cantidad             int        `json:"Cantidad"`
-	PrecioCompraUnitario float64    `json:"PrecioCompraUnitario"`
-}
-
 type VentaRequest struct {
 	ClienteUUID  string          `json:"ClienteUUID"`
 	VendedorUUID string          `json:"VendedorUUID"`
@@ -193,23 +168,6 @@ type ProductoVenta struct {
 	ProductoUUID   string  `json:"ProductoUUID"`
 	Cantidad       int     `json:"Cantidad"`
 	PrecioUnitario float64 `json:"PrecioUnitario"`
-}
-
-type LoginRequest struct {
-	Email      string `json:"Email"`
-	Contrasena string `json:"Contrasena"`
-}
-
-type CompraRequest struct {
-	ProveedorUUID string               `json:"ProveedorUUID"`
-	FacturaNumero string               `json:"FacturaNumero"`
-	Productos     []ProductoCompraInfo `json:"Productos"`
-}
-
-type ProductoCompraInfo struct {
-	ProductoUUID         string  `json:"ProductoUUID"`
-	Cantidad             int     `json:"Cantidad"`
-	PrecioCompraUnitario float64 `json:"PrecioCompraUnitario"`
 }
 
 type PaginatedResult struct {
@@ -227,13 +185,47 @@ type VendedorUpdateRequest struct {
 	ContrasenaNueva  string `json:"ContrasenaNueva,omitempty"`
 }
 
+type LoginRequest struct {
+	Email      string `json:"Email"`
+	Contrasena string `json:"Contrasena"`
+}
+
+type Compra struct {
+	UUID          string          `json:"UUID"`
+	Fecha         time.Time       `json:"Fecha" ts_type:"string"`
+	ProveedorUUID string          `json:"ProveedorUUID"`
+	FacturaNumero string          `json:"FacturaNumero"`
+	Total         float64         `json:"Total"`
+	Detalles      []DetalleCompra `json:"Detalles"`
+}
+
+type DetalleCompra struct {
+	UUID                 string  `json:"UUID"`
+	CompraUUID           string  `json:"CompraUUID"`
+	ProductoUUID         string  `json:"ProductoUUID"`
+	Cantidad             int     `json:"Cantidad"`
+	PrecioCompraUnitario float64 `json:"PrecioCompraUnitario"`
+}
+
+type CompraRequest struct {
+	ProveedorUUID string           `json:"ProveedorUUID"`
+	FacturaNumero string           `json:"FacturaNumero"`
+	Productos     []CompraProducto `json:"Productos"`
+}
+
+type CompraProducto struct {
+	ProductoUUID         string  `json:"ProductoUUID"`
+	Cantidad             int     `json:"Cantidad"`
+	PrecioCompraUnitario float64 `json:"PrecioCompraUnitario"`
+}
+
+// ==================== DATABASE ====================
+
 type Db struct {
-	ctx       context.Context
-	LocalDB   *sql.DB
-	RemoteDB  *pgxpool.Pool
-	Log       *logrus.Logger
-	syncMutex sync.Mutex
-	jwtKey    []byte
+	ctx    context.Context
+	DB     *sql.DB // ✅ Una única conexión PostgreSQL
+	Log    *logrus.Logger
+	jwtKey []byte
 }
 
 var (
@@ -286,27 +278,18 @@ func isConsoleAvailable() bool {
 func (d *Db) Startup(ctx context.Context) {
 	d.ctx = ctx
 	d.initDB()
-	d.RealizarSincronizacionInicial()
 }
 
 func (d *Db) initDB() {
 	var err error
 
-	localDBPath := "farmacia.db"
-	localDSN := fmt.Sprintf("file:%s?_cache=shared&_journal_mode=WAL&_foreign_keys=1", localDBPath)
-
-	d.LocalDB, err = d.NewLocalDB(localDSN)
-	if err != nil {
-		d.Log.Fatalf("Fallo al conectar la Base de datos local SQLite: %v", err)
-	}
-	d.Log.Info("Conección a la Base de datos local SQLite establecida.")
-
-	d.runMigrations("sqlite3", localDBPath)
-
+	// Cargar variables de entorno
 	err = godotenv.Load()
 	if err != nil {
 		d.Log.Fatalf("Error al cargar archivo .env: %v", err)
 	}
+
+	// Cargar JWT Secret
 	secret := os.Getenv("JWT_SECRET_KEY")
 	if secret == "" {
 		d.Log.Fatalf("La variable de entorno JWT_SECRET_KEY no está configurada.")
@@ -314,67 +297,53 @@ func (d *Db) initDB() {
 	d.jwtKey = []byte(secret)
 	d.Log.Info("Clave secreta JWT cargada exitosamente.")
 
-	remoteDSN := os.Getenv("DATABASE_URL")
-	if remoteDSN != "" {
-		d.RemoteDB, err = d.NewRemoteDB(remoteDSN)
-		if err != nil {
-			d.Log.Warnf("No se pudo conectar a la Base de datos remota PostgreSQL, se trabajará OFFLINE: %v", err)
-			d.RemoteDB = nil
-		} else {
-			d.Log.Info("Base de datos remota PostgreSQL conectada exitosamente.")
-			d.runMigrations("postgres", remoteDSN)
-		}
-	} else {
-		d.Log.Warn("DATABASE_URL no está configurada. Se trabajará OFFLINE.")
+	// ✅ Conectar a PostgreSQL local
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		d.Log.Fatalf("DATABASE_URL no está configurada en .env")
 	}
+
+	d.DB, err = d.NewPostgresDB(dbURL)
+	if err != nil {
+		d.Log.Fatalf("Fallo al conectar con PostgreSQL: %v", err)
+	}
+	d.Log.Info("Conexión a PostgreSQL local establecida exitosamente.")
+
+	// Ejecutar migraciones
+	d.runMigrations("postgres", dbURL)
 }
 
-func (d *Db) isRemoteDBAvailable() bool {
-	if d.RemoteDB == nil {
-		return false
+func (d *Db) NewPostgresDB(connString string) (*sql.DB, error) {
+	if connString == "" {
+		return nil, fmt.Errorf("string de conexión no proporcionado")
 	}
-	ctx, cancel := context.WithTimeout(d.ctx, 3*time.Second)
-	defer cancel()
-	return d.RemoteDB.Ping(ctx) == nil
-}
 
-func (d *Db) NewLocalDB(dsn string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("postgres", connString)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+
+	// Configurar pool de conexiones
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
-	if err := db.PingContext(d.ctx); err != nil {
-		return nil, fmt.Errorf("No se puede hacer ping con Base de datos local SQLite: %w", err)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+
+	// Verificar conexión
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("no se puede hacer ping a PostgreSQL: %w", err)
 	}
+
 	return db, nil
 }
 
-func (d *Db) NewRemoteDB(connString string) (*pgxpool.Pool, error) {
-	if connString == "" {
-		return nil, fmt.Errorf("String de conexión a Base de datos remota no proporcionada")
-	}
-
-	pool, err := pgxpool.New(d.ctx, connString)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := pool.Ping(d.ctx); err != nil {
-		return nil, fmt.Errorf("No se puede hacer ping con Base de datos remota PostgreSQL: %w", err)
-	}
-
-	return pool, nil
-}
-
 func (d *Db) Close() {
-	if d.LocalDB != nil {
-		d.LocalDB.Close()
-	}
-	if d.RemoteDB != nil {
-		d.RemoteDB.Close()
+	if d.DB != nil {
+		d.DB.Close()
+		d.Log.Info("Conexión a PostgreSQL cerrada.")
 	}
 }
 
@@ -385,49 +354,50 @@ func (d *Db) runMigrations(dbType string, dsn string) {
 	}
 
 	sourceURL := fmt.Sprintf("file://backend/db/migrations/%s", dbType)
-	var databaseURL string
-	if dbType == "sqlite3" {
-		databaseURL = "sqlite3://" + dsn
-	} else {
-		databaseURL = dsn
-	}
 
 	d.Log.Infof("[MIGRATIONS] Iniciando migraciones para '%s' desde '%s'", dbType, sourceURL)
 
-	// ✅ Protegemos con timeout si es remoto (evita bloqueos)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		m, err := migrate.New(sourceURL, databaseURL)
-		if err != nil {
-			done <- fmt.Errorf("Error al inicializar instancia de migración para '%s': %v", dbType, err)
-			return
-		}
-
-		err = m.Up()
-		if err != nil && err != migrate.ErrNoChange {
-			done <- fmt.Errorf("¡¡¡ERROR CRÍTICO al aplicar migración para '%s'!!!: %v", dbType, err)
-		} else if err == migrate.ErrNoChange {
-			d.Log.Infof("Migración para '%s': No hay cambios que aplicar. Esquema actualizado.", dbType)
-			done <- nil
-		} else {
-			d.Log.Infof("Migración para '%s' aplicada exitosamente.", dbType)
-			done <- nil
-		}
-
-		_, _ = m.Close()
-	}()
-
-	select {
-	case <-ctx.Done():
-		d.Log.Errorf("Timeout al ejecutar migraciones para '%s' (más de 10s). Se omite.", dbType)
-	case err := <-done:
-		if err != nil {
-			d.Log.Error(err)
-		}
+	m, err := migrate.New(sourceURL, dsn)
+	if err != nil {
+		d.Log.Errorf("Error al inicializar instancia de migración para '%s': %v", dbType, err)
+		return
 	}
+	defer m.Close()
 
-	d.Log.Infof("[MIGRATIONS] Finalizadas migraciones para '%s'", dbType)
+	err = m.Up()
+	if err != nil && err != migrate.ErrNoChange {
+		d.Log.Errorf("¡¡¡ERROR CRÍTICO al aplicar migración para '%s'!!!: %v", dbType, err)
+	} else if err == migrate.ErrNoChange {
+		d.Log.Infof("Migración para '%s': No hay cambios que aplicar. Esquema actualizado.", dbType)
+	} else {
+		d.Log.Infof("Migración para '%s' aplicada exitosamente.", dbType)
+	}
+}
+
+// ==================== HELPER METHODS ====================
+
+func (d *Db) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	return d.DB.BeginTx(ctx, nil)
+}
+
+func (d *Db) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return d.DB.QueryRowContext(ctx, query, args...)
+}
+
+func (d *Db) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return d.DB.QueryContext(ctx, query, args...)
+}
+
+func (d *Db) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return d.DB.ExecContext(ctx, query, args...)
+}
+
+// NewTestDb creates a Db instance for testing with an existing *sql.DB connection.
+func NewTestDb(db *sql.DB, ctx context.Context, log *logrus.Logger) *Db {
+	return &Db{
+		DB:     db,
+		ctx:    ctx,
+		Log:    log,
+		jwtKey: []byte("test-secret-key"),
+	}
 }

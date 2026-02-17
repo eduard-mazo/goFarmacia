@@ -44,9 +44,9 @@ func (d *Db) GenerateJWT(vendedor Vendedor) (string, error) {
 func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 	var vendedor Vendedor
 
-	// Buscar vendedor en SQLite
-	err := d.LocalDB.QueryRow(
-		"SELECT uuid, email FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+	// Buscar vendedor en PostgreSQL
+	err := d.DB.QueryRow(
+		"SELECT uuid, email FROM vendedors WHERE email = $1 AND deleted_at IS NULL",
 		email,
 	).Scan(&vendedor.UUID, &vendedor.Email)
 	if err != nil {
@@ -65,17 +65,14 @@ func (d *Db) GenerarMFA(email string) (MFASetupResponse, error) {
 	}
 
 	vendedor.MFASecret = key.Secret()
-	_, err = d.LocalDB.Exec(
-		"UPDATE vendedors SET mfa_secret = ?, updated_at = ? WHERE uuid = ?",
+	_, err = d.DB.Exec(
+		"UPDATE vendedors SET mfa_secret = $1, updated_at = $2 WHERE uuid = $3",
 		vendedor.MFASecret, time.Now(), vendedor.UUID,
 	)
 	if err != nil {
 		return MFASetupResponse{}, errors.New("no se pudo guardar la clave MFA")
 	}
 
-	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(vendedor.UUID)
-	}
 	var buf bytes.Buffer
 	img, err := key.Image(200, 200)
 	if err != nil {
@@ -127,8 +124,8 @@ func (d *Db) AuthMiddleware(next http.Handler) http.Handler {
 func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 	var vendedor Vendedor
 
-	err := d.LocalDB.QueryRow(
-		"SELECT uuid, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+	err := d.DB.QueryRow(
+		"SELECT uuid, mfa_secret FROM vendedors WHERE email = $1 AND deleted_at IS NULL",
 		email,
 	).Scan(&vendedor.UUID, &vendedor.MFASecret)
 	if err != nil {
@@ -147,16 +144,12 @@ func (d *Db) HabilitarMFA(email string, code string) (bool, error) {
 	}
 
 	// Habilitar MFA
-	_, err = d.LocalDB.Exec(
-		"UPDATE vendedors SET mfa_enabled = 1, updated_at = ? WHERE uuid = ?",
+	_, err = d.DB.Exec(
+		"UPDATE vendedors SET mfa_enabled = TRUE, updated_at = $1 WHERE uuid = $2",
 		time.Now(), vendedor.UUID,
 	)
 	if err != nil {
 		return false, errors.New("no se pudo habilitar MFA")
-	}
-
-	if d.isRemoteDBAvailable() {
-		go d.syncVendedorToRemote(vendedor.UUID)
 	}
 
 	return true, nil
@@ -174,8 +167,8 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 	}
 
 	var vendedor Vendedor
-	err = d.LocalDB.QueryRow(
-		"SELECT uuid, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = ? AND deleted_at IS NULL",
+	err = d.DB.QueryRow(
+		"SELECT uuid, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = $1 AND deleted_at IS NULL",
 		claims.Email,
 	).Scan(&vendedor.UUID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.MFAEnabled, &vendedor.MFASecret)
 	if err != nil {

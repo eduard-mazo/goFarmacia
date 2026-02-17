@@ -56,8 +56,8 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	data.ProductosSinStock = make([]Producto, 0)
 	data.MetodosPago = make([]map[string]interface{}, 0)
 
-	queryTotalVentas := "SELECT COALESCE(SUM(total), 0), COUNT(uuid) FROM facturas WHERE fecha_emision BETWEEN ? AND ?"
-	err = d.LocalDB.QueryRow(queryTotalVentas, inicioDelDia, finDelDia).Scan(&data.TotalVentasDia, &data.NumeroVentasDia)
+	queryTotalVentas := "SELECT COALESCE(SUM(total), 0), COUNT(uuid) FROM facturas WHERE fecha_emision BETWEEN $1 AND $2"
+	err = d.DB.QueryRow(queryTotalVentas, inicioDelDia, finDelDia).Scan(&data.TotalVentasDia, &data.NumeroVentasDia)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener total de ventas: %w", err)
 	}
@@ -65,8 +65,8 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 		data.TicketPromedioDia = data.TotalVentasDia / float64(data.NumeroVentasDia)
 	}
 
-	queryVentasInd := "SELECT strftime('%Y-%m-%d %H:%M:%S', datetime(fecha_emision, 'localtime')), total FROM facturas WHERE fecha_emision BETWEEN ? AND ? ORDER BY fecha_emision ASC"
-	rows, err := d.LocalDB.Query(queryVentasInd, inicioDelDia, finDelDia)
+	queryVentasInd := "SELECT TO_CHAR(fecha_emision, 'YYYY-MM-DD HH24:MI:SS'), total FROM facturas WHERE fecha_emision BETWEEN $1 AND $2 ORDER BY fecha_emision ASC"
+	rows, err := d.DB.Query(queryVentasInd, inicioDelDia, finDelDia)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener ventas individuales: %w", err)
 	}
@@ -84,11 +84,11 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 		FROM detalle_facturas df
 		JOIN productos p ON p.uuid = df.producto_uuid
 		JOIN facturas f ON f.uuid = df.factura_uuid
-		WHERE f.fecha_emision BETWEEN ? AND ?
+		WHERE f.fecha_emision BETWEEN $1 AND $2
 		GROUP BY p.nombre
 		ORDER BY cantidad DESC
 		LIMIT 5`
-	rows, err = d.LocalDB.Query(queryTopProd, inicioDelDia, finDelDia)
+	rows, err = d.DB.Query(queryTopProd, inicioDelDia, finDelDia)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener top productos: %w", err)
 	}
@@ -102,8 +102,8 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	}
 
 	// 5. Obtener distribución de Métodos de Pago.
-	queryMetodos := "SELECT metodo_pago, COUNT(*) as count FROM facturas WHERE fecha_emision BETWEEN ? AND ? GROUP BY metodo_pago"
-	rows, err = d.LocalDB.Query(queryMetodos, inicioDelDia, finDelDia)
+	queryMetodos := "SELECT metodo_pago, COUNT(*) as count FROM facturas WHERE fecha_emision BETWEEN $1 AND $2 GROUP BY metodo_pago"
+	rows, err = d.DB.Query(queryMetodos, inicioDelDia, finDelDia)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener métodos de pago: %w", err)
 	}
@@ -119,7 +119,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 
 	// 6. Obtener Top 5 Productos sin stock.
 	querySinStock := "SELECT uuid, codigo, nombre, precio_venta, stock FROM productos WHERE stock <= 0 AND deleted_at IS NULL ORDER BY nombre ASC LIMIT 5"
-	rows, err = d.LocalDB.Query(querySinStock)
+	rows, err = d.DB.Query(querySinStock)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener productos sin stock: %w", err)
 	}
@@ -137,11 +137,11 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 		SELECT v.nombre, SUM(f.total) as total_vendido
 		FROM facturas f
 		JOIN vendedors v ON v.uuid = f.vendedor_uuid
-		WHERE f.fecha_emision BETWEEN ? AND ?
+		WHERE f.fecha_emision BETWEEN $1 AND $2
 		GROUP BY v.nombre
 		ORDER BY total_vendido DESC
 		LIMIT 1`
-	err = d.LocalDB.QueryRow(queryTopVendedor, inicioDelDia, finDelDia).Scan(&data.TopVendedor.NombreCompleto, &data.TopVendedor.TotalVendido)
+	err = d.DB.QueryRow(queryTopVendedor, inicioDelDia, finDelDia).Scan(&data.TopVendedor.NombreCompleto, &data.TopVendedor.TotalVendido)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			data.TopVendedor = VendedorRendimiento{NombreCompleto: "N/A", TotalVendido: 0}
@@ -155,8 +155,8 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 
 func (d *Db) ObtenerFechasConVentas() ([]string, error) {
 	var fechas []string
-	query := "SELECT DISTINCT strftime('%Y-%m-%d', fecha_emision) FROM facturas ORDER BY 1"
-	rows, err := d.LocalDB.Query(query)
+	query := "SELECT DISTINCT TO_CHAR(fecha_emision, 'YYYY-MM-DD') FROM facturas ORDER BY 1"
+	rows, err := d.DB.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("error al obtener fechas con ventas: %w", err)
 	}
