@@ -98,6 +98,12 @@ const routes = [
           import("@/views/Dashboard/Configuracion/General.vue"),
         meta: { role: "admin" },
       },
+      {
+        path: "perfil",
+        name: "MiPerfil",
+        component: () =>
+          import("@/views/Dashboard/Perfil/MiPerfil.vue"),
+      },
     ],
   },
   {

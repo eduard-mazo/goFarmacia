@@ -1,9 +1,3 @@
-<script lang="ts">
-export const iframeHeight = "800px"
-export const description
-  = "A simple sidebar with navigation grouped by section."
-</script>
-
 <script setup lang="ts">
 import {
   SidebarInset,
@@ -15,10 +9,10 @@ import { Toaster } from "vue-sonner";
 
 <template>
   <Toaster richColors position="top-right" />
-  <SidebarProvider>
+  <SidebarProvider class="h-full min-h-0">
     <AppSidebar />
-    <SidebarInset>
-      <main class="flex flex-1 flex-col overflow-auto bg-muted/20">
+    <SidebarInset class="min-h-0">
+      <main class="flex flex-1 flex-col h-full overflow-auto bg-muted/20">
         <router-view />
       </main>
     </SidebarInset>
