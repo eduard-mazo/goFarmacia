@@ -1,10 +1,17 @@
 ALTER TABLE operacion_stocks ADD COLUMN IF NOT EXISTS factura_uuid UUID;
 
--- Rellenar con el UUID de la factura correspondiente
-UPDATE operacion_stocks os
-SET factura_uuid = f.uuid
-FROM facturas f
-WHERE os.factura_id = f.id AND os.factura_uuid IS NULL;
+-- Solo rellenar si la columna factura_id todavía existe (puede haber sido eliminada en migraciones posteriores)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'operacion_stocks' AND column_name = 'factura_id'
+  ) THEN
+    UPDATE operacion_stocks os
+    SET factura_uuid = f.uuid
+    FROM facturas f
+    WHERE os.factura_id = f.id AND os.factura_uuid IS NULL;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_operacion_stocks_factura_uuid ON operacion_stocks (factura_uuid);
 

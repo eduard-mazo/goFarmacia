@@ -136,15 +136,15 @@ const currentNav = computed(() =>
   <Sidebar v-bind="props">
     <SidebarHeader>
       <NavUser />
-      <div v-if="modeStore.isAdmin" class="px-2 pb-2">
+      <div class="px-2 pb-2">
         <Tabs
           :model-value="modeStore.currentMode"
           @update:model-value="(v) => modeStore.setMode(v as AppMode)"
           class="w-full"
         >
-          <TabsList class="w-full grid grid-cols-2">
+          <TabsList class="w-full" :class="modeStore.isAdmin ? 'grid grid-cols-2' : 'grid grid-cols-1'">
             <TabsTrigger value="pos">POS</TabsTrigger>
-            <TabsTrigger value="erp">ERP</TabsTrigger>
+            <TabsTrigger v-if="modeStore.isAdmin" value="erp">ERP</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>

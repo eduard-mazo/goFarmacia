@@ -1,10 +1,18 @@
 -- Agrega factura_uuid y normaliza con facturas.uuid
 ALTER TABLE detalle_facturas ADD COLUMN IF NOT EXISTS factura_uuid UUID;
 
-UPDATE detalle_facturas df
-SET factura_uuid = f.uuid
-FROM facturas f
-WHERE df.factura_id = f.id AND df.factura_uuid IS NULL;
+-- Solo rellenar si la columna factura_id todavía existe (puede haber sido eliminada en migraciones posteriores)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'detalle_facturas' AND column_name = 'factura_id'
+  ) THEN
+    UPDATE detalle_facturas df
+    SET factura_uuid = f.uuid
+    FROM facturas f
+    WHERE df.factura_id = f.id AND df.factura_uuid IS NULL;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_detalle_facturas_factura_uuid ON detalle_facturas (factura_uuid);
 
