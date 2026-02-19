@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 	"io"
@@ -18,8 +19,11 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
+
+//go:embed db/migrations
+var migrationsFS embed.FS
 
 // ==================== STRUCTS ====================
 
@@ -265,6 +269,30 @@ func isConsoleAvailable() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
+// baseDir devuelve el directorio del ejecutable en producción,
+// o el CWD en modo desarrollo (wails dev corre desde la raíz del proyecto).
+func baseDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "."
+	}
+	return filepath.Dir(exe)
+}
+
+// findEnvFile busca .env en: 1) directorio del exe, 2) CWD.
+func findEnvFile() string {
+	candidates := []string{
+		filepath.Join(baseDir(), ".env"),
+		".env",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return candidates[0] // retorna el primero para que el error sea descriptivo
+}
+
 func (d *Db) Startup(ctx context.Context) {
 	d.ctx = ctx
 	d.initDB()
@@ -273,9 +301,8 @@ func (d *Db) Startup(ctx context.Context) {
 func (d *Db) initDB() {
 	var err error
 
-	// Crear archivo de log ahora — solo se llama durante el startup real,
-	// no en las inicializaciones previas de Wails (que solo llaman GetDbInstance).
-	logDir := "logs"
+	// Crear archivo de log junto al ejecutable (producción) o en CWD (dev)
+	logDir := filepath.Join(baseDir(), "logs")
 	_ = os.MkdirAll(logDir, 0755)
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	logFile := filepath.Join(logDir, fmt.Sprintf("app_%s.log", timestamp))
@@ -289,8 +316,10 @@ func (d *Db) initDB() {
 	}
 	d.Log.Info("Logger inicializado correctamente.")
 
-	// Cargar variables de entorno
-	err = godotenv.Load()
+	// Cargar variables de entorno: busca junto al exe, luego en CWD
+	envFile := findEnvFile()
+	d.Log.Infof("Cargando .env desde: %s", envFile)
+	err = godotenv.Load(envFile)
 	if err != nil {
 		d.Log.Fatalf("Error al cargar archivo .env: %v", err)
 	}
@@ -359,11 +388,15 @@ func (d *Db) runMigrations(dbType string, dsn string) {
 		return
 	}
 
-	sourceURL := fmt.Sprintf("file://backend/db/migrations/%s", dbType)
+	d.Log.Infof("[MIGRATIONS] Iniciando migraciones para '%s' (embebidas)", dbType)
 
-	d.Log.Infof("[MIGRATIONS] Iniciando migraciones para '%s' desde '%s'", dbType, sourceURL)
+	src, err := iofs.New(migrationsFS, fmt.Sprintf("db/migrations/%s", dbType))
+	if err != nil {
+		d.Log.Errorf("[MIGRATIONS] Error al crear fuente iofs para '%s': %v", dbType, err)
+		return
+	}
 
-	m, err := migrate.New(sourceURL, dsn)
+	m, err := migrate.NewWithSourceInstance("iofs", src, dsn)
 	if err != nil {
 		d.Log.Errorf("Error al inicializar instancia de migración para '%s': %v", dbType, err)
 		return
