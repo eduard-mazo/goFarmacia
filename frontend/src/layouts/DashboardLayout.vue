@@ -18,7 +18,7 @@ import { Toaster } from "vue-sonner";
   <SidebarProvider>
     <AppSidebar />
     <SidebarInset>
-      <main class="flex flex-1 flex-col gap-2 p-2 lg:gap-2 lg:p-2 bg-white">
+      <main class="flex flex-1 flex-col overflow-auto bg-muted/20">
         <router-view />
       </main>
     </SidebarInset>

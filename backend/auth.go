@@ -32,6 +32,7 @@ func (d *Db) GenerateJWT(vendedor Vendedor) (string, error) {
 		UserUUID: vendedor.UUID,
 		Nombre:   vendedor.Nombre,
 		Cedula:   vendedor.Cedula,
+		Role:     vendedor.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
@@ -168,9 +169,9 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 
 	var vendedor Vendedor
 	err = d.DB.QueryRow(
-		"SELECT uuid, email, nombre, cedula, mfa_enabled, mfa_secret FROM vendedors WHERE email = $1 AND deleted_at IS NULL",
+		"SELECT uuid, email, nombre, cedula, role, mfa_enabled, mfa_secret FROM vendedors WHERE email = $1 AND deleted_at IS NULL",
 		claims.Email,
-	).Scan(&vendedor.UUID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.MFAEnabled, &vendedor.MFASecret)
+	).Scan(&vendedor.UUID, &vendedor.Email, &vendedor.Nombre, &vendedor.Cedula, &vendedor.Role, &vendedor.MFAEnabled, &vendedor.MFASecret)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return response, errors.New("usuario no encontrado")
@@ -192,6 +193,7 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 		Email:    vendedor.Email,
 		Nombre:   vendedor.Nombre,
 		Cedula:   vendedor.Cedula,
+		Role:     vendedor.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},

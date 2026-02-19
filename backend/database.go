@@ -39,6 +39,7 @@ type Claims struct {
 	Email    string `json:"Email"`
 	Nombre   string `json:"Nombre"`
 	Cedula   string `json:"Cedula"`
+	Role     string `json:"Role"`
 	MFAStep  string `json:"MFAStep,omitempty"`
 	jwt.RegisteredClaims
 }
@@ -71,6 +72,7 @@ type Vendedor struct {
 	Contrasena string     `json:"Contrasena"`
 	MFASecret  string     `json:"-"`
 	MFAEnabled bool       `json:"MFAEnabled"`
+	Role       string     `json:"Role"`
 }
 
 type Cliente struct {

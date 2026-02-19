@@ -34,7 +34,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, ChevronDown, PlusCircle } from "lucide-vue-next";
+import { ArrowUpDown, ChevronDown, PlusCircle, Search } from "lucide-vue-next";
 import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
@@ -271,27 +271,43 @@ watch(busqueda, () => {
 
 <template>
   <CrearProductoModal v-model:open="isCreateModalOpen" @product-created="handleProductCreated" />
-  <div class="w-full">
-    <div class="flex items-center py-4 gap-2">
-      <Input class="max-w-sm h-10" placeholder="Buscar por nombre o código..." :model-value="busqueda"
-        @update:model-value="busqueda = String($event)" />
-      <Button @click="isCreateModalOpen = true" class="h-10">
-        <PlusCircle class="w-4 h-4 mr-2" />Agregar Producto
+  <div class="p-6 space-y-6">
+    <!-- Page header -->
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Productos</h1>
+        <p class="text-sm text-muted-foreground mt-0.5">Gestiona el catálogo de productos de la farmacia</p>
+      </div>
+      <Button @click="isCreateModalOpen = true" class="h-9 gap-2">
+        <PlusCircle class="w-4 h-4" />Agregar Producto
       </Button>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="flex items-center gap-3">
+      <div class="relative flex-1 max-w-xs">
+        <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Input class="pl-9 h-9" placeholder="Buscar por nombre o código..." :model-value="busqueda"
+          @update:model-value="busqueda = String($event)" />
+      </div>
       <DropdownMenu>
-        <DropdownMenuTrigger as-child><Button variant="outline" class="ml-auto h-10">Columnas
-            <ChevronDown class="ml-2 h-4 w-4" />
-          </Button></DropdownMenuTrigger>
+        <DropdownMenuTrigger as-child>
+          <Button variant="outline" class="h-9 gap-2">
+            Columnas <ChevronDown class="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuCheckboxItem v-for="column in table
-            .getAllColumns()
-            .filter((column) => column.getCanHide())" :key="column.id" class="capitalize"
-            :model-value="column.getIsVisible()" @update:model-value="(value) => column.toggleVisibility(!!value)">{{
-              column.id }}</DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem v-for="column in table.getAllColumns().filter(c => c.getCanHide())"
+            :key="column.id" class="capitalize" :model-value="column.getIsVisible()"
+            @update:model-value="(v) => column.toggleVisibility(!!v)">
+            {{ column.id }}
+          </DropdownMenuCheckboxItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-    <Card class="py-0">
+
+    <!-- Table -->
+    <div class="rounded-lg border bg-card shadow-sm overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
@@ -310,27 +326,27 @@ watch(busqueda, () => {
             </TableRow>
           </template>
           <TableRow v-else>
-            <TableCell :colspan="columns.length" class="h-24 text-center">No se encontraron resultados.</TableCell>
+            <TableCell :colspan="columns.length" class="h-32 text-center text-muted-foreground">
+              No se encontraron productos.
+            </TableCell>
           </TableRow>
         </TableBody>
       </Table>
-    </Card>
-    <div class="flex items-center justify-between space-x-2 py-4">
-      <div class="flex-1 text-sm text-muted-foreground">
-        Total, {{ totalProductos }} producto(s).
-      </div>
-      <div class="flex items-center space-x-4">
-        <div class="flex items-center space-x-2">
-          <p class="text-sm font-medium">Filas</p>
+    </div>
+
+    <!-- Pagination footer -->
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-muted-foreground">{{ totalProductos }} producto(s) en total</p>
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2">
+          <p class="text-sm text-muted-foreground">Filas</p>
           <Select :model-value="`${table.getState().pagination.pageSize}`"
             @update:model-value="(value) => table.setPageSize(Number(value))">
-            <SelectTrigger class="h-8 w-[70px]">
+            <SelectTrigger class="h-8 w-[68px]">
               <SelectValue :placeholder="`${table.getState().pagination.pageSize}`" />
             </SelectTrigger>
             <SelectContent side="top">
-              <SelectItem v-for="size in [5, 10, 15, 20]" :key="size" :value="`${size}`">
-                {{ size }}
-              </SelectItem>
+              <SelectItem v-for="size in [5, 10, 15, 20]" :key="size" :value="`${size}`">{{ size }}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -340,7 +356,7 @@ watch(busqueda, () => {
             <PaginationPrevious />
             <template v-for="(item, index) in items">
               <PaginationItem v-if="item.type === 'page'" :key="index" :value="item.value" as-child>
-                <Button class="w-10 h-10 p-0" :variant="item.value === currentPage ? 'default' : 'outline'">
+                <Button class="w-9 h-9 p-0" :variant="item.value === currentPage ? 'default' : 'outline'">
                   {{ item.value }}
                 </Button>
               </PaginationItem>

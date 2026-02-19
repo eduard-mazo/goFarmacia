@@ -2,15 +2,12 @@
 import type {
   ColumnDef,
   PaginationState,
-  SortingState,
 } from "@tanstack/vue-table";
 import {
   FlexRender,
   getCoreRowModel,
-  getSortedRowModel,
   useVueTable,
 } from "@tanstack/vue-table";
-// --- NUEVAS IMPORTACIONES ---
 import {
   Select,
   SelectContent,
@@ -32,7 +29,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, ChevronDown, PlusCircle, Search } from "lucide-vue-next";
+import { ChevronDown, PlusCircle, Search } from "lucide-vue-next";
 import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
@@ -45,80 +42,58 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import DropdownAction from "@/components/tables/DataTableClientDropDown.vue";
-import CrearClienteModal from "@/components/modals/CrearClienteModal.vue";
+import DropdownAction from "@/components/tables/DataTableProveedorDropDown.vue";
+import CrearProveedorModal from "@/components/modals/CrearProveedorModal.vue";
 import { backend } from "@/../wailsjs/go/models";
 import {
-  ObtenerClientesPaginado,
-  EliminarCliente,
-  ActualizarCliente,
+  ObtenerProveedoresPaginado,
+  EliminarProveedor,
+  ActualizarProveedor,
 } from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
 
-interface ObtenerClientePaginadoResponse {
-  Records: backend.Cliente[];
+interface ObtenerProveedorPaginadoResponse {
+  Records: backend.Proveedor[];
   TotalRecords: number;
 }
 
-const listaClientes = ref<backend.Cliente[]>([]);
-const totalClientes = ref(0);
+const listaProveedores = ref<backend.Proveedor[]>([]);
+const totalProveedores = ref(0);
 const busqueda = ref("");
-const sorting = ref<SortingState>([]);
 const isCreateModalOpen = ref(false);
 const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 10 });
 
-const cargarClientes = async () => {
+const cargarProveedores = async () => {
   try {
     const currentPage: number = pagination.value.pageIndex + 1;
-    let sortBy = "";
-    let sortOrder = "asc";
-    if (sorting.value.length > 0) {
-      sortBy = sorting.value[0]!.id;
-      sortOrder = sorting.value[0]!.desc ? "desc" : "asc";
-    }
-    const response: ObtenerClientePaginadoResponse =
-      await ObtenerClientesPaginado(
+    const response: ObtenerProveedorPaginadoResponse =
+      await ObtenerProveedoresPaginado(
         currentPage,
         pagination.value.pageSize,
-        busqueda.value,
-        sortBy,
-        sortOrder
+        busqueda.value
       );
-    listaClientes.value = response.Records || [];
-    totalClientes.value = response.TotalRecords || 0;
+    listaProveedores.value = response.Records || [];
+    totalProveedores.value = response.TotalRecords || 0;
   } catch (error) {
-    toast.error("Error al cargar clientes", { description: `${error}` });
+    toast.error("Error al cargar proveedores", { description: `${error}` });
   }
 };
 
-const columns: ColumnDef<backend.Cliente>[] = [
+const columns: ColumnDef<backend.Proveedor>[] = [
   {
     accessorKey: "Nombre",
-    header: ({ column }) =>
-      h(
-        Button,
-        {
-          variant: "ghost",
-          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-        },
-        () => ["Nombre", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
-      ),
+    header: "Nombre",
     cell: ({ row }) =>
       h(
         "div",
         { class: "uppercase max-w-[600px] truncate" },
-        `${row.original.Nombre} ${row.original.Apellido}`
+        row.getValue("Nombre")
       ),
   },
   {
-    accessorKey: "Documento",
-    header: "Documento",
-    cell: ({ row }) =>
-      h(
-        "div",
-        { class: "uppercase" },
-        `${row.original.TipoID} ${row.original.NumeroID}`
-      ),
+    accessorKey: "Telefono",
+    header: "Teléfono",
+    cell: ({ row }) => h("div", {}, row.getValue("Telefono")),
   },
   {
     accessorKey: "Email",
@@ -131,9 +106,9 @@ const columns: ColumnDef<backend.Cliente>[] = [
     cell: ({ row }) =>
       h("div", { class: "relative" }, [
         h(DropdownAction, {
-          cliente: row.original,
-          onEdit: (c: backend.Cliente) => handleEdit(c),
-          onDelete: (c: backend.Cliente) => handleDelete(c),
+          proveedor: row.original,
+          onEdit: (p: backend.Proveedor) => handleEdit(p),
+          onDelete: (p: backend.Proveedor) => handleDelete(p),
         }),
       ]),
   },
@@ -141,26 +116,20 @@ const columns: ColumnDef<backend.Cliente>[] = [
 
 const table = useVueTable({
   get data() {
-    return listaClientes.value;
+    return listaProveedores.value;
   },
   columns,
   manualPagination: true,
-  manualSorting: true,
   getCoreRowModel: getCoreRowModel(),
-  getSortedRowModel: getSortedRowModel(),
   get pageCount() {
-    return Math.ceil(totalClientes.value / pagination.value.pageSize);
+    return Math.ceil(totalProveedores.value / pagination.value.pageSize);
   },
   state: {
-    get sorting() {
-      return sorting.value;
-    },
     get pagination() {
       return pagination.value;
     },
   },
   onPaginationChange: (updater) => valueUpdater(updater, pagination),
-  onSortingChange: (updater) => valueUpdater(updater, sorting),
 });
 
 const pageCount = computed(() => table.getPageCount());
@@ -169,63 +138,57 @@ const currentPage = computed({
   set: (newPage) => table.setPageIndex(newPage - 1),
 });
 
-async function handleEdit(cliente: backend.Cliente) {
+async function handleEdit(proveedor: backend.Proveedor) {
   try {
-    await ActualizarCliente(cliente);
-    await cargarClientes();
-    toast.success("Cliente editado con éxito", {
-      description: `Nombre: ${cliente.Nombre}, ID: ${cliente.NumeroID}`,
+    await ActualizarProveedor(proveedor);
+    await cargarProveedores();
+    toast.success("Proveedor editado con éxito", {
+      description: `Nombre: ${proveedor.Nombre}`,
     });
   } catch (error) {
     toast.error("Error al actualizar", { description: `${error}` });
   }
 }
-async function handleDelete(cliente: backend.Cliente) {
+
+async function handleDelete(proveedor: backend.Proveedor) {
   try {
-    await EliminarCliente(cliente.UUID);
-    await cargarClientes();
-    toast.warning("Cliente eliminado con éxito", {
-      description: `Nombre: ${cliente.Nombre}, ID: ${cliente.NumeroID}`,
+    await EliminarProveedor(proveedor.uuid);
+    await cargarProveedores();
+    toast.warning("Proveedor eliminado con éxito", {
+      description: `Nombre: ${proveedor.Nombre}`,
     });
   } catch (error) {
     toast.error("Error al eliminar", { description: `${error}` });
   }
 }
-function handleClienteCreated() {
-  cargarClientes();
+
+function handleProveedorCreated() {
+  cargarProveedores();
 }
 
-onMounted(cargarClientes);
-watch(pagination, cargarClientes, { deep: true });
-watch(
-  sorting,
-  () => {
-    pagination.value.pageIndex = 0;
-    cargarClientes();
-  },
-  { deep: true }
-);
+onMounted(cargarProveedores);
+watch(pagination, cargarProveedores, { deep: true });
 let debounceTimer: number;
 watch(busqueda, () => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     pagination.value.pageIndex = 0;
-    cargarClientes();
+    cargarProveedores();
   }, 150);
 });
 </script>
 
 <template>
-  <CrearClienteModal v-model:open="isCreateModalOpen" @client-created="handleClienteCreated" />
+  <CrearProveedorModal v-model:open="isCreateModalOpen" @proveedor-created="handleProveedorCreated" />
   <div class="p-6 space-y-6">
     <!-- Page header -->
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">Clientes</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">Gestiona la base de clientes de la farmacia</p>
+        <h1 class="text-2xl font-semibold tracking-tight">Proveedores</h1>
+        <p class="text-sm text-muted-foreground mt-0.5">Gestiona los proveedores y distribuidores</p>
       </div>
       <Button @click="isCreateModalOpen = true" class="h-9 gap-2">
-        <PlusCircle class="w-4 h-4" />Agregar Cliente
+        <PlusCircle class="w-4 h-4" />Agregar Proveedor
       </Button>
     </div>
 
@@ -233,7 +196,7 @@ watch(busqueda, () => {
     <div class="flex items-center gap-3">
       <div class="relative flex-1 max-w-xs">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <Input class="pl-9 h-9" placeholder="Buscar por nombre, documento..." :model-value="busqueda"
+        <Input class="pl-9 h-9" placeholder="Buscar por nombre, email..." :model-value="busqueda"
           @update:model-value="busqueda = String($event)" />
       </div>
       <DropdownMenu>
@@ -273,7 +236,7 @@ watch(busqueda, () => {
           </template>
           <TableRow v-else>
             <TableCell :colspan="columns.length" class="h-32 text-center text-muted-foreground">
-              No se encontraron clientes.
+              No se encontraron proveedores.
             </TableCell>
           </TableRow>
         </TableBody>
@@ -282,7 +245,7 @@ watch(busqueda, () => {
 
     <!-- Pagination footer -->
     <div class="flex items-center justify-between">
-      <p class="text-sm text-muted-foreground">{{ totalClientes }} cliente(s) en total</p>
+      <p class="text-sm text-muted-foreground">{{ totalProveedores }} proveedor(es) en total</p>
       <div class="flex items-center gap-4">
         <div class="flex items-center gap-2">
           <p class="text-sm text-muted-foreground">Filas</p>
@@ -296,7 +259,7 @@ watch(busqueda, () => {
             </SelectContent>
           </Select>
         </div>
-        <Pagination v-if="pageCount > 1" v-model:page="currentPage" :total="totalClientes"
+        <Pagination v-if="pageCount > 1" v-model:page="currentPage" :total="totalProveedores"
           :items-per-page="pagination.pageSize" :sibling-count="1" show-edges>
           <PaginationContent v-slot="{ items }">
             <PaginationPrevious />

@@ -197,8 +197,11 @@ func (d *Db) CrearOperacionStock(
 		return fmt.Errorf("[CrearOperacionStock] error obteniendo stock previo: %w", err)
 	}
 
-	// 2. Calcular nuevo stock resultante según tipo de operación
+	// 2. Calcular nuevo stock resultante según tipo de operación.
+	// Para operaciones de reducción, cantidad_cambio se almacena como NEGATIVO
+	// para que SUM(cantidad_cambio) sea la fuente de verdad del stock real.
 	var stockResultante int
+	var dbCambio int
 	switch tipoOperacion {
 	case "VENTA", "AJUSTE_NEGATIVO", "DEVOLUCION_CLIENTE":
 		stockResultante = stockPrevio - cambio
@@ -206,8 +209,10 @@ func (d *Db) CrearOperacionStock(
 			return fmt.Errorf("stock insuficiente [%s] disponible %d solicitado %d",
 				productoUUID, stockPrevio, cambio)
 		}
-	default: // COMPRA, AJUSTE_POSITIVO, DEVOLUCION_PROVEEDOR, INICIAL, etc.
+		dbCambio = -cambio // negativo → SUM resta correctamente
+	default: // COMPRA, AJUSTE_POSITIVO, DEVOLUCION_PROVEEDOR, INICIAL, AJUSTE_MANUAL, etc.
 		stockResultante = stockPrevio + cambio
+		dbCambio = cambio // puede ya ser negativo para ajustes manuales de reducción
 	}
 
 	// 3. Insertar operación de stock
@@ -219,13 +224,19 @@ func (d *Db) CrearOperacionStock(
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 
+	// Pass nil (NULL) when vendedorUUID is empty to avoid invalid UUID cast error
+	var vendedorArg interface{}
+	if vendedorUUID != "" {
+		vendedorArg = vendedorUUID
+	}
+
 	_, err = tx.Exec(insertSQL,
 		uuid.New().String(),
 		productoUUID,
 		tipoOperacion,
-		cambio,
+		dbCambio,
 		stockResultante,
-		vendedorUUID,
+		vendedorArg,
 		facturaUUID,
 		time.Now(),
 		false,
@@ -502,8 +513,8 @@ func (d *Db) RegistrarCompra(req CompraRequest) (Compra, error) {
 			return Compra{}, fmt.Errorf("error al crear detalle de compra: %w", err)
 		}
 
-		// Insertar operación de stock
-		_, err = stmtOps.Exec(uuid.New().String(), p.ProductoUUID, "COMPRA", p.Cantidad, "SYSTEM-ADMIN", time.Now())
+		// Insertar operación de stock (nil vendedor_uuid → NULL, avoids invalid UUID cast)
+		_, err = stmtOps.Exec(uuid.New().String(), p.ProductoUUID, "COMPRA", p.Cantidad, nil, time.Now())
 		if err != nil {
 			return Compra{}, fmt.Errorf("error creando operación de stock por compra: %w", err)
 		}

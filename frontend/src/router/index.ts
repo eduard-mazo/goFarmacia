@@ -31,30 +31,72 @@ const routes = [
         component: () => import("@/views/Dashboard/Facturacion/POS.vue"),
       },
       {
+        path: "facturas",
+        name: "Facturas",
+        component: () => import("@/views/Dashboard/Facturacion/Facturas.vue"),
+      },
+      // ERP routes — admin only
+      {
+        path: "erp",
+        name: "DashboardERP",
+        component: () => import("@/views/Dashboard/DashboardERP.vue"),
+        meta: { role: "admin" },
+      },
+      {
         path: "vendedores",
         name: "Vendedores",
-        component: () => import("@/views/Dashboard/Personas/Vendedores.vue"),
+        component: () =>
+          import("@/views/Dashboard/Personas/Vendedores.vue"),
+        meta: { role: "admin" },
       },
       {
         path: "productos",
         name: "Productos",
-        component: () => import("@/views/Dashboard/Catalogo/Productos.vue"),
+        component: () =>
+          import("@/views/Dashboard/Catalogo/Productos.vue"),
+        meta: { role: "admin" },
       },
       {
         path: "clientes",
         name: "Clientes",
-        component: () => import("@/views/Dashboard/Personas/Clientes.vue"),
+        component: () =>
+          import("@/views/Dashboard/Personas/Clientes.vue"),
+        meta: { role: "admin" },
       },
       {
-        path: "facturas",
-        name: "Facturas",
-        component: () => import("@/views/Dashboard/Facturacion/Facturas.vue"),
+        path: "proveedores",
+        name: "Proveedores",
+        component: () =>
+          import("@/views/Dashboard/Personas/Proveedores.vue"),
+        meta: { role: "admin" },
       },
       {
         path: "controlStock",
         name: "ControlStock",
         component: () =>
           import("@/views/Dashboard/Inventario/ControlStock.vue"),
+        meta: { role: "admin" },
+      },
+      {
+        path: "reportes/ventas",
+        name: "ReporteVentas",
+        component: () =>
+          import("@/views/Dashboard/Reportes/ReporteVentas.vue"),
+        meta: { role: "admin" },
+      },
+      {
+        path: "reportes/inventario",
+        name: "ReporteInventario",
+        component: () =>
+          import("@/views/Dashboard/Reportes/ReporteInventario.vue"),
+        meta: { role: "admin" },
+      },
+      {
+        path: "configuracion",
+        name: "Configuracion",
+        component: () =>
+          import("@/views/Dashboard/Configuracion/General.vue"),
+        meta: { role: "admin" },
       },
     ],
   },
@@ -99,7 +141,13 @@ router.beforeEach((to, _, next) => {
   } else if (isPublic && authStore.isAuthenticated) {
     next({ name: "DashboardHome" });
   } else {
-    next();
+    // Role-based guard
+    const requiredRole = to.meta.role as string | undefined;
+    if (requiredRole && authStore.currentUser?.Role !== requiredRole) {
+      next({ name: "DashboardHome" });
+    } else {
+      next();
+    }
   }
 });
 

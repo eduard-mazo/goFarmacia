@@ -28,7 +28,7 @@ const debounceTimer = ref<number | undefined>(undefined);
 // Observador para la búsqueda con debounce
 watch(busqueda, (nuevoValor) => {
   clearTimeout(debounceTimer.value);
-  if (nuevoValor.length < 2) {
+  if (!nuevoValor.trim()) {
     clientes.value = [];
     return;
   }

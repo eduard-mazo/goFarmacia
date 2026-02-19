@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from "vue";
+import type { LucideIcon } from "lucide-vue-next";
 import type { SidebarProps } from "@/components/ui/sidebar";
 import {
   LayoutDashboard,
@@ -9,7 +11,10 @@ import {
   Users,
   Contact,
   UserCog,
-  Receipt,
+  Truck,
+  BarChart3,
+  PackageSearch,
+  Settings,
 } from "lucide-vue-next";
 import NavMain from "@/components/layout/NavMain.vue";
 import NavUser from "@/components/layout/NavUser.vue";
@@ -19,79 +24,133 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useModeStore } from "@/stores/mode";
+import type { AppMode } from "@/stores/mode";
+
 const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: "icon",
 });
 
-const data = {
-  navMain: [
-    {
-      title: "Dashboard",
-      url: "/dashboard",
-      icon: LayoutDashboard,
-    },
-    {
-      title: "Facturación",
-      icon: Receipt,
-      items: [
-        {
-          title: "Punto de venta POS",
-          url: "/dashboard/pos",
-          icon: Store,
-        },
-        {
-          title: "Facturas",
-          url: "/dashboard/facturas",
-          icon: History,
-        },
-      ],
-    },
-    {
-      title: "Catalogo",
-      icon: Package,
-      items: [
-        {
-          title: "Productos",
-          url: "/dashboard/productos",
-        },
-      ],
-    },
-    {
-      title: "Inventario",
-      icon: Warehouse,
-      items: [
-        {
-          title: "Control de Stock",
-          url: "/dashboard/controlStock",
-        },
-      ],
-    },
-    {
-      title: "Personas",
-      icon: Users,
-      items: [
-        {
-          title: "Información Clientes",
-          url: "/dashboard/clientes",
-          icon: Contact,
-        },
-        {
-          title: "Información Vendedores",
-          url: "/dashboard/vendedores",
-          icon: UserCog,
-        },
-      ],
-    },
-  ],
+const modeStore = useModeStore();
+
+type NavItem = {
+  title: string;
+  url?: string;
+  icon?: LucideIcon;
+  items?: { title: string; url: string; icon?: LucideIcon }[];
 };
+
+const posNav: NavItem[] = [
+  {
+    title: "Dashboard",
+    url: "/dashboard",
+    icon: LayoutDashboard,
+  },
+  {
+    title: "Punto de Venta",
+    url: "/dashboard/pos",
+    icon: Store,
+  },
+  {
+    title: "Facturas",
+    url: "/dashboard/facturas",
+    icon: History,
+  },
+];
+
+const erpNav: NavItem[] = [
+  {
+    title: "Dashboard ERP",
+    url: "/dashboard/erp",
+    icon: LayoutDashboard,
+  },
+  {
+    title: "Catálogo",
+    icon: Package,
+    items: [
+      {
+        title: "Productos",
+        url: "/dashboard/productos",
+      },
+    ],
+  },
+  {
+    title: "Inventario",
+    icon: Warehouse,
+    items: [
+      {
+        title: "Control de Stock",
+        url: "/dashboard/controlStock",
+      },
+    ],
+  },
+  {
+    title: "Personas",
+    icon: Users,
+    items: [
+      {
+        title: "Clientes",
+        url: "/dashboard/clientes",
+        icon: Contact,
+      },
+      {
+        title: "Vendedores",
+        url: "/dashboard/vendedores",
+        icon: UserCog,
+      },
+      {
+        title: "Proveedores",
+        url: "/dashboard/proveedores",
+        icon: Truck,
+      },
+    ],
+  },
+  {
+    title: "Reportes",
+    icon: BarChart3,
+    items: [
+      {
+        title: "Ventas",
+        url: "/dashboard/reportes/ventas",
+      },
+      {
+        title: "Inventario",
+        url: "/dashboard/reportes/inventario",
+        icon: PackageSearch,
+      },
+    ],
+  },
+  {
+    title: "Configuración",
+    url: "/dashboard/configuracion",
+    icon: Settings,
+  },
+];
+
+const currentNav = computed(() =>
+  modeStore.currentMode === "pos" ? posNav : erpNav
+);
 </script>
 <template>
   <Sidebar v-bind="props">
     <SidebarHeader>
       <NavUser />
+      <div v-if="modeStore.isAdmin" class="px-2 pb-2">
+        <Tabs
+          :model-value="modeStore.currentMode"
+          @update:model-value="(v) => modeStore.setMode(v as AppMode)"
+          class="w-full"
+        >
+          <TabsList class="w-full grid grid-cols-2">
+            <TabsTrigger value="pos">POS</TabsTrigger>
+            <TabsTrigger value="erp">ERP</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
     </SidebarHeader>
     <SidebarContent>
-      <NavMain :items="data.navMain" />
+      <NavMain :items="currentNav" />
     </SidebarContent>
     <SidebarRail />
   </Sidebar>

@@ -31,7 +31,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, ChevronDown } from "lucide-vue-next";
+import { ArrowUpDown, ChevronDown, Search } from "lucide-vue-next";
 import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
@@ -240,111 +240,87 @@ watch(busqueda, () => {
 </script>
 
 <template>
-  <div class="w-full">
-    <div class="flex items-center py-4 gap-2">
-      <Input
-        class="max-w-sm h-10"
-        placeholder="Buscar por nombre, cédula..."
-        :model-value="busqueda"
-        @update:model-value="busqueda = String($event)"
-      />
+  <div class="p-6 space-y-6">
+    <!-- Page header -->
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Vendedores</h1>
+      <p class="text-sm text-muted-foreground mt-0.5">Administra el equipo de vendedores</p>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="flex items-center gap-3">
+      <div class="relative flex-1 max-w-xs">
+        <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Input class="pl-9 h-9" placeholder="Buscar por nombre, cédula..." :model-value="busqueda"
+          @update:model-value="busqueda = String($event)" />
+      </div>
       <DropdownMenu>
-        <DropdownMenuTrigger as-child
-          ><Button variant="outline" class="ml-auto h-10"
-            >Columnas <ChevronDown class="ml-2 h-4 w-4" /></Button
-        ></DropdownMenuTrigger>
-        <DropdownMenuContent align="end"
-          ><DropdownMenuCheckboxItem
-            v-for="column in table
-              .getAllColumns()
-              .filter((column) => column.getCanHide())"
-            :key="column.id"
-            class="capitalize"
-            :model-value="column.getIsVisible()"
-            @update:model-value="(value) => column.toggleVisibility(!!value)"
-            >{{ column.id }}</DropdownMenuCheckboxItem
-          ></DropdownMenuContent
-        >
+        <DropdownMenuTrigger as-child>
+          <Button variant="outline" class="h-9 gap-2">
+            Columnas <ChevronDown class="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuCheckboxItem v-for="column in table.getAllColumns().filter(c => c.getCanHide())"
+            :key="column.id" class="capitalize" :model-value="column.getIsVisible()"
+            @update:model-value="(v) => column.toggleVisibility(!!v)">
+            {{ column.id }}
+          </DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
       </DropdownMenu>
     </div>
-    <div class="rounded-md border">
+
+    <!-- Table -->
+    <div class="rounded-lg border bg-card shadow-sm overflow-hidden">
       <Table>
-        <TableHeader
-          ><TableRow
-            v-for="headerGroup in table.getHeaderGroups()"
-            :key="headerGroup.id"
-            ><TableHead v-for="header in headerGroup.headers" :key="header.id"
-              ><FlexRender
-                v-if="!header.isPlaceholder"
-                :render="header.column.columnDef.header"
-                :props="header.getContext()" /></TableHead></TableRow
-        ></TableHeader>
+        <TableHeader>
+          <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
+            <TableHead v-for="header in headerGroup.headers" :key="header.id">
+              <FlexRender v-if="!header.isPlaceholder" :render="header.column.columnDef.header"
+                :props="header.getContext()" />
+            </TableHead>
+          </TableRow>
+        </TableHeader>
         <TableBody>
-          <template v-if="table.getRowModel().rows?.length"
-            ><TableRow v-for="row in table.getRowModel().rows" :key="row.id"
-              ><TableCell v-for="cell in row.getVisibleCells()" :key="cell.id"
-                ><FlexRender
-                  :render="cell.column.columnDef.cell"
-                  :props="cell.getContext()" /></TableCell></TableRow
-          ></template>
-          <TableRow v-else
-            ><TableCell :colspan="columns.length" class="h-24 text-center"
-              >No se encontraron resultados.</TableCell
-            ></TableRow
-          >
+          <template v-if="table.getRowModel().rows?.length">
+            <TableRow v-for="row in table.getRowModel().rows" :key="row.id">
+              <TableCell v-for="cell in row.getVisibleCells()" :key="cell.id">
+                <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
+              </TableCell>
+            </TableRow>
+          </template>
+          <TableRow v-else>
+            <TableCell :colspan="columns.length" class="h-32 text-center text-muted-foreground">
+              No se encontraron vendedores.
+            </TableCell>
+          </TableRow>
         </TableBody>
       </Table>
     </div>
-    <div class="flex items-center justify-between space-x-2 py-4">
-      <div class="flex-1 text-sm text-muted-foreground">
-        Total, {{ totalVendedores }} vendedor(es).
-      </div>
 
-      <div class="flex items-center space-x-4">
-        <div class="flex items-center space-x-2">
-          <p class="text-sm font-medium">Filas</p>
-          <Select
-            :model-value="`${table.getState().pagination.pageSize}`"
-            @update:model-value="(value) => table.setPageSize(Number(value))"
-          >
-            <SelectTrigger class="h-8 w-[70px]">
-              <SelectValue
-                :placeholder="`${table.getState().pagination.pageSize}`"
-              />
+    <!-- Pagination footer -->
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-muted-foreground">{{ totalVendedores }} vendedor(es) en total</p>
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2">
+          <p class="text-sm text-muted-foreground">Filas</p>
+          <Select :model-value="`${table.getState().pagination.pageSize}`"
+            @update:model-value="(value) => table.setPageSize(Number(value))">
+            <SelectTrigger class="h-8 w-[68px]">
+              <SelectValue :placeholder="`${table.getState().pagination.pageSize}`" />
             </SelectTrigger>
             <SelectContent side="top">
-              <SelectItem
-                v-for="size in [5, 10, 15, 20]"
-                :key="size"
-                :value="`${size}`"
-              >
-                {{ size }}
-              </SelectItem>
+              <SelectItem v-for="size in [5, 10, 15, 20]" :key="size" :value="`${size}`">{{ size }}</SelectItem>
             </SelectContent>
           </Select>
         </div>
-
-        <Pagination
-          v-if="pageCount > 1"
-          v-model:page="currentPage"
-          :total="totalVendedores"
-          :items-per-page="pagination.pageSize"
-          :sibling-count="1"
-          show-edges
-        >
+        <Pagination v-if="pageCount > 1" v-model:page="currentPage" :total="totalVendedores"
+          :items-per-page="pagination.pageSize" :sibling-count="1" show-edges>
           <PaginationContent v-slot="{ items }">
             <PaginationPrevious />
             <template v-for="(item, index) in items">
-              <PaginationItem
-                v-if="item.type === 'page'"
-                :key="index"
-                :value="item.value"
-                as-child
-              >
-                <Button
-                  class="w-10 h-10 p-0"
-                  :variant="item.value === currentPage ? 'default' : 'outline'"
-                >
+              <PaginationItem v-if="item.type === 'page'" :key="index" :value="item.value" as-child>
+                <Button class="w-9 h-9 p-0" :variant="item.value === currentPage ? 'default' : 'outline'">
                   {{ item.value }}
                 </Button>
               </PaginationItem>

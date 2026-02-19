@@ -37,7 +37,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, Edit } from "lucide-vue-next";
+import { ArrowUpDown, Edit, Search } from "lucide-vue-next";
 import { backend } from "@/../wailsjs/go/models";
 import { ObtenerProductosPaginado } from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
@@ -202,12 +202,25 @@ watch(busqueda, () => {
 <template>
   <AjustarStockModal v-if="productoSeleccionado" v-model:open="isAdjustModalOpen" :producto="productoSeleccionado"
     @stock-updated="handleStockUpdated" />
-  <div class="w-full">
-    <h1 class="text-2xl font-semibold mb-4">Control de Stock</h1>
-    <div class="flex items-center py-4">
-      <Input class="max-w-sm h-10" placeholder="Buscar por nombre o código..." v-model="busqueda" />
+  <div class="p-6 space-y-6">
+    <!-- Page header -->
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Control de Stock</h1>
+      <p class="text-sm text-muted-foreground mt-0.5">
+        Supervisa y ajusta los niveles de inventario. Stock bajo
+        <span class="text-yellow-600 font-medium">≤ 10</span> · Agotado
+        <span class="text-red-600 font-medium">= 0</span>
+      </p>
     </div>
-    <div class="rounded-md border">
+
+    <!-- Toolbar -->
+    <div class="relative max-w-xs">
+      <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+      <Input class="pl-9 h-9" placeholder="Buscar por nombre o código..." v-model="busqueda" />
+    </div>
+
+    <!-- Table -->
+    <div class="rounded-lg border bg-card shadow-sm overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
@@ -226,27 +239,27 @@ watch(busqueda, () => {
             </TableRow>
           </template>
           <TableRow v-else>
-            <TableCell :colspan="columns.length" class="h-24 text-center">No se encontraron productos.</TableCell>
+            <TableCell :colspan="columns.length" class="h-32 text-center text-muted-foreground">
+              No se encontraron productos.
+            </TableCell>
           </TableRow>
         </TableBody>
       </Table>
     </div>
-    <div class="flex items-center justify-between space-x-2 py-4">
-      <div class="flex-1 text-sm text-muted-foreground">
-        Total, {{ totalProductos }} producto(s).
-      </div>
-      <div class="flex items-center space-x-4">
-        <div class="flex items-center space-x-2">
-          <p class="text-sm font-medium">Filas</p>
+
+    <!-- Pagination footer -->
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-muted-foreground">{{ totalProductos }} producto(s) en total</p>
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2">
+          <p class="text-sm text-muted-foreground">Filas</p>
           <Select :model-value="`${table.getState().pagination.pageSize}`"
             @update:model-value="(value) => table.setPageSize(Number(value))">
-            <SelectTrigger class="h-8 w-[70px]">
+            <SelectTrigger class="h-8 w-[68px]">
               <SelectValue :placeholder="`${table.getState().pagination.pageSize}`" />
             </SelectTrigger>
             <SelectContent side="top">
-              <SelectItem v-for="size in [5, 10, 15, 20]" :key="size" :value="`${size}`">
-                {{ size }}
-              </SelectItem>
+              <SelectItem v-for="size in [5, 10, 15, 20]" :key="size" :value="`${size}`">{{ size }}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -256,7 +269,7 @@ watch(busqueda, () => {
             <PaginationPrevious />
             <template v-for="(item, index) in items">
               <PaginationItem v-if="item.type === 'page'" :key="index" :value="item.value" as-child>
-                <Button class="w-10 h-10 p-0" :variant="item.value === currentPage ? 'default' : 'outline'">
+                <Button class="w-9 h-9 p-0" :variant="item.value === currentPage ? 'default' : 'outline'">
                   {{ item.value }}
                 </Button>
               </PaginationItem>

@@ -37,6 +37,18 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 		}
 	}()
 
+	// Determinar rol: primer vendedor = admin, los demás = cajero
+	var vendedorCount int
+	err = tx.QueryRow("SELECT COUNT(*) FROM vendedors WHERE deleted_at IS NULL").Scan(&vendedorCount)
+	if err != nil {
+		return Vendedor{}, fmt.Errorf("error al contar vendedores: %w", err)
+	}
+	if vendedorCount == 0 {
+		vendedor.Role = "admin"
+	} else {
+		vendedor.Role = "cajero"
+	}
+
 	var deletedAt sql.NullTime
 	var existenteUUID sql.NullString
 	err = tx.QueryRow("SELECT uuid, deleted_at FROM vendedors WHERE cedula = $1 OR email = $2",
@@ -47,8 +59,8 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 
 	if existenteUUID.Valid {
 		if deletedAt.Valid {
-			_, err = tx.Exec("UPDATE vendedors SET nombre = $1, apellido = $2, email = $3, contrasena = $4, deleted_at = NULL, updated_at = $5 WHERE uuid = $6",
-				vendedor.Nombre, vendedor.Apellido, vendedor.Email, vendedor.Contrasena, vendedor.UpdatedAt, existenteUUID.String)
+			_, err = tx.Exec("UPDATE vendedors SET nombre = $1, apellido = $2, email = $3, contrasena = $4, deleted_at = NULL, updated_at = $5, role = $6 WHERE uuid = $7",
+				vendedor.Nombre, vendedor.Apellido, vendedor.Email, vendedor.Contrasena, vendedor.UpdatedAt, vendedor.Role, existenteUUID.String)
 			if err != nil {
 				return Vendedor{}, err
 			}
@@ -57,8 +69,8 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 			return Vendedor{}, fmt.Errorf("la cédula o el email ya están registrados en un vendedor activo")
 		}
 	} else {
-		_, err := tx.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-			vendedor.UUID, vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, vendedor.CreatedAt, vendedor.UpdatedAt)
+		_, err := tx.Exec("INSERT INTO vendedors (uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, role, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+			vendedor.UUID, vendedor.Nombre, vendedor.Apellido, vendedor.Cedula, vendedor.Email, vendedor.Contrasena, vendedor.MFAEnabled, vendedor.Role, vendedor.CreatedAt, vendedor.UpdatedAt)
 		if err != nil {
 			return Vendedor{}, err
 		}
@@ -81,13 +93,13 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	defer cancel()
 
 	row := d.DB.QueryRowContext(ctx, `
-		SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled
+		SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, role
 		FROM vendedors
 		WHERE email = $1 AND deleted_at IS NULL
 	`, req.Email)
 
 	err := row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,
-		&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled)
+		&vendedor.Cedula, &vendedor.Email, &vendedor.Contrasena, &vendedor.MFAEnabled, &vendedor.Role)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return response, errors.New("vendedor no encontrado o credenciales incorrectas")
@@ -106,6 +118,7 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 			Email:    vendedor.Email,
 			Nombre:   vendedor.Nombre,
 			Cedula:   vendedor.Cedula,
+			Role:     vendedor.Role,
 			RegisteredClaims: jwt.RegisteredClaims{
 				ExpiresAt: jwt.NewNumericDate(expirationTime),
 			},
@@ -226,7 +239,7 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 
 	// Construcción dinámica del query SQL
 	baseQuery := `
-		SELECT uuid, nombre, apellido, cedula, email, mfa_enabled, created_at, updated_at
+		SELECT uuid, nombre, apellido, cedula, email, mfa_enabled, role, created_at, updated_at
 		FROM vendedors
 		WHERE deleted_at IS NULL
 	`
@@ -270,7 +283,7 @@ func (d *Db) ObtenerVendedoresPaginado(page, pageSize int, search, sortBy, sortO
 
 	for rows.Next() {
 		var v Vendedor
-		if err := rows.Scan(&v.UUID, &v.Nombre, &v.Apellido, &v.Cedula, &v.Email, &v.MFAEnabled, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.UUID, &v.Nombre, &v.Apellido, &v.Cedula, &v.Email, &v.MFAEnabled, &v.Role, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			d.Log.Errorf("error al escanear vendedor: %v", err)
 			continue
 		}

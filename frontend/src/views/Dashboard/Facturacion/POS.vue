@@ -60,7 +60,7 @@ const productosEncontrados = ref<backend.Producto[]>([]);
 const metodoPago = ref("efectivo");
 const efectivoRecibido = ref<number | undefined>(undefined);
 const clienteSeleccionado = ref("Cliente General");
-const clienteUUID = ref<string>("SYSTEM-ADMIN");
+const clienteUUID = ref<string>("");
 const debounceTimer = ref<number | undefined>(undefined);
 const isLoading = ref(false);
 const isCreateModalOpen = ref(false);
@@ -76,7 +76,7 @@ watch(busqueda, (nuevoValor) => {
   searchResultItemsRef.value = [];
   clearTimeout(debounceTimer.value);
   const trimmedValue = nuevoValor.trim();
-  if (trimmedValue.length < 2) {
+  if (trimmedValue.length < 1) {
     productosEncontrados.value = [];
     return;
   }
@@ -84,18 +84,13 @@ watch(busqueda, (nuevoValor) => {
   debounceTimer.value = setTimeout(async () => {
     try {
       const response: ObtenerProductosPaginadoResponse =
-        await ObtenerProductosPaginado(1, 10, busqueda.value, "", "asc");
-      if (
-        response.Records.length === 1 &&
-        response.Records[0]!.Codigo.toLowerCase() === trimmedValue.toLowerCase()
-      ) {
-        agregarAlCarrito(response.Records[0]!);
-        productosEncontrados.value = [];
-      } else {
-        productosEncontrados.value = response.Records;
-        if (response.Records.length > 0) {
-          highlightedIndex.value = 0;
-        }
+        await ObtenerProductosPaginado(1, 10, trimmedValue, "", "asc");
+      // Always show the dropdown — never silently auto-add from the watcher.
+      // Auto-add only happens on Enter (manejarBusquedaConEnter), which is the
+      // correct place for barcode-scanner behaviour.
+      productosEncontrados.value = response.Records || [];
+      if (productosEncontrados.value.length > 0) {
+        highlightedIndex.value = 0;
       }
     } catch (error) {
       toast.error("Error de búsqueda", {
@@ -202,6 +197,12 @@ async function finalizarVenta() {
     });
     return;
   }
+  if (!clienteUUID.value) {
+    toast.error("Cliente no seleccionado", {
+      description: "Selecciona un cliente o espera a que cargue el cliente general.",
+    });
+    return;
+  }
   const ventaRequest = new backend.VentaRequest({
     ClienteUUID: clienteUUID.value,
     VendedorUUID: authenticatedUser.value.UUID,
@@ -239,7 +240,7 @@ async function cargarClienteGeneralPorDefecto() {
       clienteUUID.value = clienteGeneral.UUID;
       clienteSeleccionado.value = `${clienteGeneral.Nombre} ${clienteGeneral.Apellido}`;
     } else {
-      clienteUUID.value = "SYSTEM-ADMIN";
+      clienteUUID.value = "";
       clienteSeleccionado.value = "Cliente General";
     }
   } catch (error) {
@@ -304,199 +305,225 @@ function handleLoadCart(cartId: number) {
   <BuscarClienteModal v-model:open="isClienteModalOpen" @cliente-seleccionado="handleClienteSeleccionado" />
   <ReciboVentaModal :factura="facturaParaRecibo" @update:open="facturaParaRecibo = null" />
 
-  <div class="flex flex-col gap-4 h-[calc(100vh-2rem)]">
-    <div class="flex-1 min-h-0">
-      <Card class="h-full flex flex-col py-1 px-2">
-        <CardContent class="p-2 h-full flex flex-col">
-          <Tabs v-model="activeTab" class="h-full flex flex-col">
-            <TabsList class="w-full flex-shrink-0">
-              <TabsTrigger value="venta-actual" class="flex-1">
-                Venta Actual
-              </TabsTrigger>
-              <TabsTrigger value="carritos-guardados" class="flex-1">
-                Carritos en Espera
-                <Badge v-if="savedCarts.length > 0" class="ml-2">{{
-                  savedCarts.length
-                }}</Badge>
-              </TabsTrigger>
-            </TabsList>
+  <div class="flex flex-col h-[calc(100vh-3.5rem)]">
 
-            <TabsContent value="venta-actual" class="flex-1 flex flex-col gap-4 mt-4 overflow-hidden">
-              <div class="flex-shrink-0 flex flex-col gap-4">
-                <div class="flex flex-wrap items-start gap-4">
-                  <div class="flex-1 min-w-[250px] flex gap-2">
-                    <Input id="cliente" :value="clienteSeleccionado" readonly class="h-10" />
-                    <Button @click="isClienteModalOpen = true" variant="outline" size="icon"
-                      class="h-10 w-10 flex-shrink-0">
-                      <UserSearch class="w-5 h-5" />
-                    </Button>
-                  </div>
-                  <div class="flex-1 min-w-[300px] flex items-center gap-2">
-                    <Select v-model="metodoPago">
-                      <SelectTrigger class="h-10">
-                        <SelectValue placeholder="Método de Pago" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="efectivo">Efectivo</SelectItem>
-                        <SelectItem value="transferencia">Transferencia</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input v-if="metodoPago === 'efectivo'" id="efectivo" type="number" v-model="efectivoRecibido"
-                      placeholder="Efectivo Recibido" class="text-right h-10 text-lg font-mono" />
-                  </div>
-                </div>
+    <!-- ── TOP HEADER BAR (tabs + customer + payment) ── -->
+    <div class="shrink-0 flex items-center justify-between gap-4 px-6 py-3 border-b bg-card">
+      <!-- Tab switcher — uses Tabs for styling but content is v-show below -->
+      <Tabs v-model="activeTab">
+        <TabsList>
+          <TabsTrigger value="venta-actual">Venta Actual</TabsTrigger>
+          <TabsTrigger value="carritos-guardados">
+            Carritos en Espera
+            <Badge v-if="savedCarts.length > 0" variant="secondary" class="ml-2">{{ savedCarts.length }}</Badge>
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-                <div class="relative">
-                  <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input ref="searchInputRef" v-model="busqueda" placeholder="Buscar por nombre o código... (F10)"
-                    @keyup.enter="manejarBusquedaConEnter" @keydown.down.prevent="moverSeleccion('abajo')"
-                    @keydown.up.prevent="moverSeleccion('arriba')" class="pl-10 text-lg h-12" />
-                  <div v-if="productosEncontrados.length > 0" ref="searchResultsContainerRef"
-                    class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl max-h-60 overflow-y-auto">
-                    <ul>
-                      <li v-for="(producto, index) in productosEncontrados" :key="producto.UUID"
-                        :ref="el => { if (el) searchResultItemsRef[index] = el as HTMLLIElement }"
-                        class="p-3 hover:bg-muted cursor-pointer flex justify-between items-center" :class="{
-                          'bg-primary text-primary-foreground hover:bg-primary':
-                            index === highlightedIndex,
-                        }" @click="agregarAlCarrito(producto)">
-                        <div>
-                          <p class="font-semibold">{{ producto.Nombre }}</p>
-                          <p class="text-sm" :class="index === highlightedIndex
-                            ? 'text-primary-foreground/80'
-                            : 'text-muted-foreground'
-                            ">
-                            Código: {{ producto.Codigo }} | Stock:
-                            {{ producto.Stock }}
-                          </p>
-                        </div>
-                        <span class="font-mono text-lg">${{ producto.PrecioVenta.toLocaleString() }}</span>
-                      </li>
-                    </ul>
-                  </div>
-                  <div v-else-if="
-                    busqueda.length >= 2 &&
-                    !isLoading &&
-                    productosEncontrados.length === 0
-                  "
-                    class="absolute z-10 w-full mt-2 border rounded-lg bg-card shadow-xl p-4 text-center text-muted-foreground flex flex-col items-center gap-3">
-                    <p>No se encontraron productos para "{{ busqueda }}"</p>
-                    <Button @click="isCreateModalOpen = true" variant="outline">
-                      <PlusCircle class="w-4 h-4 mr-2" />Crear Producto
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="flex-1 overflow-y-auto -mx-4 px-4">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead class="w-[120px]">Código</TableHead>
-                      <TableHead>Producto</TableHead>
-                      <TableHead class="w-[130px] text-center">Cantidad</TableHead>
-                      <TableHead class="w-[170px] text-right">Precio Unit.</TableHead>
-                      <TableHead class="w-[170px] text-right">Subtotal</TableHead>
-                      <TableHead class="w-[80px] text-center">Acción</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <template v-if="activeCart.length > 0">
-                      <TableRow v-for="item in activeCart" :key="item.UUID">
-                        <TableCell class="font-mono">{{
-                          item.Codigo
-                        }}</TableCell>
-                        <TableCell class="font-medium truncate whitespace-nowrap overflow-hidden">
-                          {{ item.Nombre }}
-                        </TableCell>
-                        <TableCell class="text-center">
-                          <Input type="number" class="w-20 text-center mx-auto h-10" :model-value="item.cantidad"
-                            @update:model-value="
-                              cartStore.updateQuantity(
-                                item.UUID,
-                                Number($event)
-                              )
-                              " min="1" :max="item.Stock" />
-                        </TableCell>
-                        <TableCell>
-                          <Input type="number" class="w-full text-right h-10 font-mono" v-model="item.PrecioVenta"
-                            step="0.01" />
-                        </TableCell>
-                        <TableCell class="text-right font-mono">
-                          ${{
-                            (item.PrecioVenta * item.cantidad).toLocaleString()
-                          }}
-                        </TableCell>
-                        <TableCell class="text-center">
-                          <Button size="icon" variant="ghost" @click="cartStore.removeFromCart(item.UUID)">
-                            <Trash2 class="w-5 h-5 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    </template>
-                    <TableRow v-else>
-                      <TableCell colspan="6" class="text-center h-24 text-muted-foreground">
-                        El carrito está vacío
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-              <div class="flex-shrink-0 border-t pt-4 space-y-4">
-                <div class="flex justify-between items-center text-xl">
-                  <span class="text-muted-foreground">Total</span>
-                  <span class="font-bold font-mono text-3xl">${{ activeCartTotal.toLocaleString() }}</span>
-                </div>
-                <div v-if="
-                  metodoPago === 'efectivo' && efectivoRecibido && cambio > 0
-                " class="flex justify-between items-center text-xl">
-                  <span class="text-muted-foreground">Cambio</span>
-                  <span class="font-bold font-mono text-green-400 text-3xl">${{ cambio.toLocaleString() }}</span>
-                </div>
-                <div class="flex gap-2">
-                  <Button @click="cartStore.saveCurrentCart()" variant="secondary" class="flex-1 h-12 text-base">
-                    <Save class="w-5 h-5 mr-2" />Espera (F11)
-                  </Button>
-                  <Button @click="finalizarVenta" class="flex-1 h-12 text-base">
-                    Finalizar (F12)
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
-            <TabsContent value="carritos-guardados" class="flex-1 overflow-y-auto mt-4">
-              <div v-if="savedCarts.length > 0" class="space-y-3">
-                <Card v-for="cart in savedCarts" :key="cart.id">
-                  <CardContent class="p-4 flex justify-between items-center">
-                    <div class="flex-1">
-                      <p class="font-semibold">{{ cart.nombre }}</p>
-                      <p class="text-sm text-muted-foreground">
-                        {{ cart.items.length }} productos por un total de
-                        <span class="font-mono">${{ cart.total.toLocaleString() }}</span>
-                      </p>
-                    </div>
-                    <div class="flex gap-2 items-center">
-                      <Button class="py-1.5 px-3" variant="outline" size="sm" @click="handleLoadCart(cart.id)">
-                        <RotateCcw class="w-4 h-4 mr-2" />Cargar
-                      </Button>
-                      <Button class="py-1.5 px-3" variant="ghost" size="icon"
-                        @click="cartStore.deleteSavedCart(cart.id)">
-                        <Trash2 class="w-4 h-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-              <div v-else class="flex flex-col items-center justify-center h-full text-muted-foreground text-center">
-                <PackageOpen class="w-16 h-16 mb-4" />
-                <h3 class="text-lg font-semibold">No hay carritos en espera</h3>
-                <p class="text-sm">
-                  Puedes guardar una venta en curso usando (F11).
-                </p>
-              </div>
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+      <!-- Customer + Payment controls (only relevant in venta-actual) -->
+      <div v-show="activeTab === 'venta-actual'" class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5">
+          <span class="text-sm text-muted-foreground whitespace-nowrap">Cliente</span>
+          <Input :value="clienteSeleccionado" readonly class="h-8 w-52 text-sm" />
+          <Button @click="isClienteModalOpen = true" variant="ghost" size="icon" class="h-8 w-8" title="Buscar cliente">
+            <UserSearch class="w-4 h-4" />
+          </Button>
+        </div>
+        <div class="w-px h-5 bg-border" />
+        <div class="flex items-center gap-1.5">
+          <Select v-model="metodoPago">
+            <SelectTrigger class="h-8 w-44 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="efectivo">Efectivo</SelectItem>
+              <SelectItem value="transferencia">Transferencia</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            v-if="metodoPago === 'efectivo'"
+            type="number"
+            v-model="efectivoRecibido"
+            placeholder="$ recibido"
+            class="h-8 w-36 text-right text-sm font-mono"
+          />
+        </div>
+      </div>
     </div>
+
+    <!-- ── VENTA ACTUAL (v-show, NOT TabsContent — avoids overflow clipping) ── -->
+    <div v-show="activeTab === 'venta-actual'" class="flex-1 min-h-0 flex flex-col gap-4 px-6 py-4">
+
+      <!-- Search bar — parent is relative, no overflow anywhere above -->
+      <div class="relative shrink-0">
+        <Search class="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
+        <Input
+          ref="searchInputRef"
+          v-model="busqueda"
+          placeholder="Buscar producto por nombre o código... (F10)"
+          @keyup.enter="manejarBusquedaConEnter"
+          @keydown.down.prevent="moverSeleccion('abajo')"
+          @keydown.up.prevent="moverSeleccion('arriba')"
+          class="pl-11 h-12 text-base"
+        />
+
+        <!-- Results dropdown: z-[200] ensures it's above cart table, sticky header, etc. -->
+        <div
+          v-if="productosEncontrados.length > 0"
+          ref="searchResultsContainerRef"
+          class="absolute left-0 right-0 top-[calc(100%+6px)] z-[200] rounded-lg border bg-background shadow-2xl max-h-72 overflow-y-auto"
+        >
+          <div
+            v-for="(producto, index) in productosEncontrados"
+            :key="producto.UUID"
+            :ref="el => { if (el) searchResultItemsRef[index] = el as HTMLLIElement }"
+            class="flex items-center justify-between px-4 py-3 cursor-pointer border-b last:border-0 transition-colors"
+            :class="index === highlightedIndex
+              ? 'bg-primary text-primary-foreground'
+              : 'hover:bg-muted/60'"
+            @click="agregarAlCarrito(producto)"
+          >
+            <div class="min-w-0">
+              <p class="text-sm font-semibold">{{ producto.Nombre }}</p>
+              <p class="text-xs font-mono mt-0.5"
+                :class="index === highlightedIndex ? 'text-primary-foreground/70' : 'text-muted-foreground'">
+                {{ producto.Codigo }} &middot; Stock: {{ producto.Stock }}
+              </p>
+            </div>
+            <span class="ml-4 shrink-0 font-mono font-bold text-sm">
+              ${{ producto.PrecioVenta.toLocaleString() }}
+            </span>
+          </div>
+        </div>
+
+        <!-- No results -->
+        <div
+          v-else-if="busqueda.length >= 1 && !isLoading && productosEncontrados.length === 0"
+          class="absolute left-0 right-0 top-[calc(100%+6px)] z-[200] rounded-lg border bg-background shadow-2xl p-5 flex flex-col items-center gap-3"
+        >
+          <p class="text-sm text-muted-foreground">Sin resultados para "{{ busqueda }}"</p>
+          <Button @click="isCreateModalOpen = true" variant="outline" size="sm">
+            <PlusCircle class="w-4 h-4 mr-2" />Crear Producto
+          </Button>
+        </div>
+      </div>
+
+      <!-- Cart table — inner scroll, sticky header without backdrop-blur (no stacking context) -->
+      <div class="flex-1 min-h-0 rounded-lg border bg-card shadow-sm overflow-hidden">
+        <div class="h-full overflow-y-auto">
+          <Table>
+            <TableHeader class="sticky top-0 bg-card border-b z-10">
+              <TableRow>
+                <TableHead class="h-10 text-xs font-semibold w-28">Código</TableHead>
+                <TableHead class="h-10 text-xs font-semibold">Producto</TableHead>
+                <TableHead class="h-10 text-xs font-semibold w-28 text-center">Cant.</TableHead>
+                <TableHead class="h-10 text-xs font-semibold w-36 text-right">Precio Unit.</TableHead>
+                <TableHead class="h-10 text-xs font-semibold w-36 text-right">Subtotal</TableHead>
+                <TableHead class="h-10 w-12" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <template v-if="activeCart.length > 0">
+                <TableRow v-for="item in activeCart" :key="item.UUID" class="hover:bg-muted/30 transition-colors">
+                  <TableCell class="py-2 font-mono text-xs text-muted-foreground">{{ item.Codigo }}</TableCell>
+                  <TableCell class="py-2 font-medium text-sm">{{ item.Nombre }}</TableCell>
+                  <TableCell class="py-2 text-center">
+                    <Input
+                      type="number"
+                      class="w-20 h-8 text-center mx-auto"
+                      :model-value="item.cantidad"
+                      @update:model-value="cartStore.updateQuantity(item.UUID, Number($event))"
+                      min="1"
+                      :max="item.Stock"
+                    />
+                  </TableCell>
+                  <TableCell class="py-2">
+                    <Input
+                      type="number"
+                      class="w-32 h-8 text-right ml-auto font-mono"
+                      v-model="item.PrecioVenta"
+                      step="0.01"
+                    />
+                  </TableCell>
+                  <TableCell class="py-2 text-right font-mono font-semibold text-sm">
+                    ${{ (item.PrecioVenta * item.cantidad).toLocaleString() }}
+                  </TableCell>
+                  <TableCell class="py-2 text-center">
+                    <Button size="icon" variant="ghost" class="h-8 w-8" @click="cartStore.removeFromCart(item.UUID)">
+                      <Trash2 class="w-4 h-4 text-destructive" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              </template>
+              <TableRow v-else>
+                <TableCell colspan="6" class="h-48 text-center text-muted-foreground text-sm">
+                  El carrito está vacío — busca un producto arriba o presiona F10
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      <!-- Footer: summary + actions -->
+      <div class="shrink-0 rounded-lg border bg-card shadow-sm px-5 py-3 flex items-center gap-6">
+        <div class="flex-1 text-sm text-muted-foreground">
+          {{ activeCart.length }} artículo(s)
+          <span v-if="metodoPago === 'efectivo' && efectivoRecibido && cambio > 0" class="ml-4">
+            &middot; Cambio:
+            <span class="font-mono font-bold text-emerald-600">${{ cambio.toLocaleString() }}</span>
+          </span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-muted-foreground">Total</span>
+          <span class="font-mono font-bold text-2xl">${{ activeCartTotal.toLocaleString() }}</span>
+        </div>
+        <div class="flex gap-2">
+          <Button @click="cartStore.saveCurrentCart()" variant="outline" class="h-10 gap-2">
+            <Save class="w-4 h-4" />En Espera
+            <kbd class="ml-0.5 text-[10px] font-mono bg-muted border rounded px-1 text-muted-foreground">F11</kbd>
+          </Button>
+          <Button @click="finalizarVenta" class="h-10 px-5 gap-2 font-semibold">
+            Finalizar Venta
+            <kbd class="ml-0.5 text-[10px] font-mono rounded px-1 bg-primary/20 border border-primary/30">F12</kbd>
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CARRITOS EN ESPERA ── -->
+    <div v-show="activeTab === 'carritos-guardados'" class="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+      <div v-if="savedCarts.length > 0" class="space-y-2 max-w-2xl">
+        <div
+          v-for="cart in savedCarts"
+          :key="cart.id"
+          class="rounded-lg border bg-card shadow-sm px-4 py-3.5 flex items-center justify-between gap-4 hover:bg-muted/20 transition-colors"
+        >
+          <div class="min-w-0">
+            <p class="font-semibold text-sm">{{ cart.nombre }}</p>
+            <p class="text-xs text-muted-foreground mt-0.5">
+              {{ cart.items.length }} producto(s) &middot;
+              <span class="font-mono font-medium">${{ cart.total.toLocaleString() }}</span>
+            </p>
+          </div>
+          <div class="flex gap-2 shrink-0">
+            <Button variant="outline" size="sm" class="gap-1.5" @click="handleLoadCart(cart.id)">
+              <RotateCcw class="w-3.5 h-3.5" />Cargar
+            </Button>
+            <Button variant="ghost" size="icon" class="h-8 w-8" @click="cartStore.deleteSavedCart(cart.id)">
+              <Trash2 class="w-4 h-4 text-destructive" />
+            </Button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="h-full flex flex-col items-center justify-center text-muted-foreground gap-3">
+        <PackageOpen class="w-12 h-12 opacity-30" />
+        <div class="text-center">
+          <p class="font-medium">No hay carritos en espera</p>
+          <p class="text-sm mt-1 opacity-60">Guarda la venta actual con F11.</p>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>

@@ -60,7 +60,7 @@ func (d *Db) RegistrarProducto(nuevo NuevoProducto) (Producto, error) {
 	}
 
 	// Crear operación inicial
-	if err := d.CrearOperacionStock(tx, nuevo.UUID, "INICIAL", nuevo.Stock, "", nil); err != nil {
+	if err := d.CrearOperacionStock(tx, nuevo.UUID, "INICIAL", nuevo.Stock, nuevo.VendedorUUID, nil); err != nil {
 		return Producto{}, fmt.Errorf("error al crear operación inicial: %w", err)
 	}
 
@@ -325,7 +325,7 @@ func (d *Db) ActualizarStockMasivo(ajustes []AjusteStockRequest) (string, error)
 	for _, pUUID := range productoUUIDs {
 		cantidadCambio := mapaAjustes[pUUID] - stocksReales[pUUID]
 		if cantidadCambio != 0 {
-			if _, err := stmt.ExecContext(d.ctx, uuid.New().String(), pUUID, cantidadCambio, "SYSTEM-ADMIN", time.Now()); err != nil {
+			if _, err := stmt.ExecContext(d.ctx, uuid.New().String(), pUUID, cantidadCambio, nil, time.Now()); err != nil {
 				return "", fmt.Errorf("error al insertar ajuste para producto UUID %s: %w", pUUID, err)
 			}
 		}
