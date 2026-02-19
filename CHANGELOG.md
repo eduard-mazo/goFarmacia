@@ -5,88 +5,118 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased] — 2026-02-18
-
-### Bug Fixes
-
-#### Critical — Stock calculation incorrect after sales
-- **Root cause:** `CrearOperacionStock` was storing `cantidad_cambio` as a **positive** integer for `VENTA` operations. Because `calcularStockRealLocal` derives the current stock via `SUM(cantidad_cambio)`, every sale was *adding* to the stock total instead of subtracting.
-- **Fix (`backend/transaccion_logic.go`):** Reduction operations (`VENTA`, `AJUSTE_NEGATIVO`, `DEVOLUCION_CLIENTE`) now persist `cantidad_cambio` as a **negative** value (`dbCambio = -cambio`), aligning with the historical Supabase export format and making the `SUM` function the single, correct source of truth.
-
-#### Critical — Entity creation failures (Producto, Cliente, Proveedor)
-- **Root cause:** `operacion_stocks.vendedor_uuid` is a PostgreSQL `uuid` column with a FK constraint. The code was passing literal strings `""` and `"SYSTEM-ADMIN"` — both invalid UUIDs — causing `pq: invalid input syntax for type uuid` on every product registration and bulk stock update.
-- **Fix (`backend/transaccion_logic.go`):** `CrearOperacionStock` now converts an empty `vendedorUUID` to `nil` (SQL `NULL`) via a typed `interface{}` variable before executing the insert.
-- **Fix (`backend/producto_logic.go`):** `RegistrarProducto` passes `nuevo.VendedorUUID` (the actual caller UUID) instead of a hardcoded empty string. `ActualizarStockMasivo` passes `nil` instead of `"SYSTEM-ADMIN"`.
-- **Fix (`backend/transaccion_logic.go`):** `RegistrarCompra` passes `nil` for `vendedor_uuid` in the direct stock operation insert, removing the same `"SYSTEM-ADMIN"` placeholder.
-
-#### POS — `clienteUUID` fallback was an invalid UUID
-- The POS store initialized `clienteUUID` to `"SYSTEM-ADMIN"`. If `cargarClienteGeneralPorDefecto` failed to find the default client, this value was sent to `RegistrarVenta`, causing a FK violation on `facturas.cliente_uuid`.
-- **Fix (`frontend/src/views/Dashboard/Facturacion/POS.vue`):** Initial value and all fallbacks changed to `""`. `finalizarVenta` now guards against an empty `clienteUUID` and shows a descriptive toast error instead of crashing.
-
-#### POS — Product search blocked for single-character queries
-- Both the POS product search and the client search modal had a `length < 2` guard, making it impossible to find products or clients whose name or code is a single character (e.g., code `"1"`, name `"1"`).
-- **Fix (`POS.vue`):** Threshold lowered to `length < 1` (fires on any non-empty input). Template `v-else-if` condition updated to match.
-- **Fix (`BuscarClienteModal.vue`):** Guard changed to `!nuevoValor.trim()`.
-
-#### POS — Silent auto-add when product name equals product code
-- The search watcher contained logic that silently added a product to the cart (without showing the dropdown) when exactly one result was returned and `Codigo === typedValue`. If a product's name and code were identical, typing the full name triggered an invisible auto-add with no user feedback.
-- **Fix (`POS.vue`):** Removed all auto-add logic from the watcher. The watcher now only populates `productosEncontrados` and always shows the dropdown. Auto-add on a single unambiguous match is delegated exclusively to `manejarBusquedaConEnter` (Enter key / barcode scanner flow).
-
-#### POS — Search dropdown clipped by Radix `TabsContent` overflow
-- Shadcn-vue's `<TabsContent>` applies `overflow: hidden` internally, clipping the absolutely-positioned search results dropdown so it never appeared below the input.
-- **Fix (`POS.vue`):** Replaced `<TabsContent>` wrappers with plain `v-show` divs that carry no overflow constraints. Dropdown z-index raised to `z-[200]`. Removed `backdrop-blur-sm` from the sticky table header (it was creating an independent stacking context that also clipped the dropdown).
-
----
+## [Unreleased] — 2026-02-19
 
 ### Features
 
-#### Dashboard — Full UI redesign
-- Replaced the generic scaffolding across all dashboard views with a cohesive design system built on **shadcn-vue + TailwindCSS v4**.
-- **Home (`Home.vue`):** New analytics dashboard with KPI cards (ventas del día, stock bajo, top vendedor), revenue chart (`PaymentMethodsChart`), recent sales table, and low-stock alert panel. Powered by new `ObtenerResumenDashboard` backend endpoint (`dashboard_logic.go`).
-- **Sidebar (`AppSidebar.vue`):** Collapsible navigation with icon-only and expanded modes, role-based menu visibility, and active route highlighting.
-- **Layout (`DashboardLayout.vue`):** Sticky top bar with breadcrumbs, user avatar, logout, and responsive sidebar toggle.
-- **Productos, Clientes, Vendedores, Facturas, ControlStock:** All views rebuilt with consistent `DataTable` patterns: server-side pagination, debounced search, sortable columns, inline action menus, and modal-based create/edit/delete flows.
+#### Perfil de usuario — Página dedicada (`/dashboard/perfil`)
+- Nueva vista accesible para todos los usuarios autenticados (sin restricción de rol).
+- **Tarjeta de identidad:** avatar con iniciales, nombre completo, email y badge de rol (Administrador / Cajero).
+- **Información personal:** edición de nombre, apellido, email y cédula con guardado independiente via `ActualizarPerfilVendedor`.
+- **Cambio de contraseña:** campos con toggle de visibilidad (Eye/EyeOff) para contraseña actual, nueva y confirmación.
+- **Sección 2FA:** componente `MFASetup` embebido inline en la página.
+- El ítem "Ajustes de Perfil" del dropdown de `NavUser` ahora navega a esta página en lugar de abrir un dialog inline (menos código duplicado, mejor UX).
 
-#### POS — Complete UI overhaul
-- Full redesign of the Point-of-Sale view for usability and visual consistency:
-  - **Header bar:** Tab switcher (Venta Actual / Carritos en Espera), client selector, and payment method selector all in a single compact row.
-  - **Search:** Large, prominent search input with `z-[200]` dropdown overlay, keyboard navigation (↑/↓/Enter), and auto-scroll to highlighted item. Shows a "Crear Producto" shortcut when no results are found.
-  - **Cart table:** Scrollable inner container with a sticky header (no `backdrop-blur` to avoid stacking context), inline quantity and price editing, and subtotal per line.
-  - **Footer bar:** Live total, cash change display, "En Espera (F11)" and "Finalizar Venta (F12)" action buttons with keyboard shortcut badges.
-  - **Saved carts panel:** Card list for carts on hold with load and delete actions; empty-state illustration.
+#### Gestión de roles desde el panel Vendedores
+- **Backend (`vendedor_logic.go`):** `ActualizarVendedor` ahora incluye `role` en el `UPDATE`. Valida que el valor sea `admin` o `cajero` antes de persistir.
+- **`DataTableVendedorDropDown.vue`:** Dialog de edición incluye un `<Select>` para cambiar el rol (Cajero / Administrador) de cualquier usuario.
+- **`Vendedores.vue`:** Nueva columna **Rol** con badge de color — azul para Administrador, gris para Cajero.
 
-#### Login & Register — Split-panel redesign
-- Both auth views replaced with a full-screen split layout:
-  - **Left panel (40%):** Dark blue-slate gradient, `Building2` brand icon, pharmacy name, and feature list with `CheckCircle2` bullets.
-  - **Right panel (60%):** Clean form with password show/hide toggle (`Eye`/`EyeOff`), MFA step with animated transition and `ShieldCheck` icon, and inline `Alert` for error display.
-  - Register mirrors the same brand panel with a 2-column grid (Nombre/Apellido, Email/Cédula) and `Loader2` spinner on submit.
+### Bug Fixes
 
-#### Database migration tooling (`backend/python/`)
-- **`preprocess.py`:** Transforms Supabase SQL row exports into schema-compatible INSERT statements. Strips columns absent from the local schema (`reset_password_token`, `reset_password_expires`), adds `ON CONFLICT (uuid) DO NOTHING` idempotency guards, and handles quoted identifiers, `null` literals, and escaped single-quote strings.
-- **`final_schema.sql`:** Authoritative single-file schema representing the final state after all 7 migrations. Bypasses the incremental migration chain (which fails on a fresh database because intermediate migrations assume pre-existing integer-PK columns). Also seeds `schema_migrations` so golang-migrate considers all versions applied.
-- **`reset_and_import.sh`:** One-command full restore: drops the public schema, recreates it from `final_schema.sql`, preprocesses all SQL backups, imports in FK-dependency order (vendedors → clientes → productos → facturas → operacion\_stocks → detalle\_facturas), and recalculates product stock from `operacion_stocks` as the source of truth.
-- **`migrate.py`:** Legacy CSV-to-SQL converter for older integer-PK exports (kept for reference).
+#### Migraciones — Idempotencia completa (000003–000007)
+- **Problema:** Los `UPDATE` en migraciones 003 y 004 referenciaban columnas enteras (`factura_id`) eliminadas en migración 006. Al correr sobre un schema UUID-only, fallaban con `column does not exist`, dejando la BD sucia (`version=N, dirty=true`) en cada arranque.
+- **Fix (000003, 000004):** Los `UPDATE` envueltos en bloques `DO $$ BEGIN IF EXISTS(column) THEN ... END IF; END $$` para saltar la sentencia si la columna ya no existe.
+- **Fix (000006):** Todos los 8 `UPDATE` de migración de datos envueltos en guards de existencia de columna; todos los `DROP COLUMN` cambiados a `DROP COLUMN IF EXISTS`; `ADD PRIMARY KEY` y `ADD CONSTRAINT FK` protegidos con `DO $$` con checks de `pg_constraint`.
+- **Fix (000007):** `ADD COLUMN role` cambiado a `ADD COLUMN IF NOT EXISTS role`.
+- **BD corregida directamente:** `schema_migrations` actualizado a `version=7, dirty=false` para reflejar el estado real del schema restaurado.
 
-#### Backend — Dashboard analytics endpoint
-- New `ObtenerResumenDashboard` function in `dashboard_logic.go` returns:
-  - Today's sales count and revenue
-  - Products with low stock (≤ 10 units)
-  - Top seller by revenue this month
-  - Last 7 days of daily revenue for the chart
+#### POS / ERP — Pestañas no visibles para rol `cajero`
+- El contenedor completo de tabs tenía `v-if="modeStore.isAdmin"`, ocultando incluso la pestaña POS para usuarios cajero.
+- **Fix (`AppSidebar.vue`):** `v-if` movido solo al `<TabsTrigger value="erp">`. El contenedor usa `:class` dinámico para grid-cols-1 o grid-cols-2 según el rol. Cajeros ven POS, admins ven POS + ERP.
 
----
+#### Layout — App no ocupaba pantalla completa
+- `html`, `body` y `#app` carecían de `height: 100%`, impidiendo que el `SidebarProvider` de shadcn-vue se expandiera al tamaño completo de la ventana Wails.
+- **Fix (`index.html`):** `class="h-full"` en `<html>` y `<body>`; `style="height:100%;display:flex;flex-direction:column"` en `#app`.
+- **Fix (`style.css`):** Eliminada regla duplicada `body { @apply bg-gray-100 }` que conflictuaba con `@layer base`.
+- **Fix (`DashboardLayout.vue`):** Eliminados exports muertos `iframeHeight` y `description` del template shadcn; añadidos `h-full` y `min-h-0` al `SidebarProvider` y `SidebarInset`.
+
+#### Log — Triple archivo de log en cada arranque
+- `wails dev` arranca el binario Go 3 veces (introspección de bindings, hot-reload probe, ejecución real). `sync.Once` se ejecutaba en cada proceso → 3 archivos de log por sesión.
+- **Fix (`database.go`):** La creación del archivo de log se movió de `GetDbInstance()` (ejecutado en cada proceso via `once.Do`) a `initDB()`, que solo corre durante el arranque real de la aplicación.
+
+#### Migraciones — Auto-recuperación de estado sucio
+- `runMigrations` hacía `log.Fatal` al encontrar `ErrDirtyDatabase`, bloqueando la app permanentemente.
+- **Fix (`database.go`):** Detección de `migrate.ErrDirty` con `errors.As`, llamada a `m.Force(version)` para limpiar el estado, y reintento de `m.Up()` automáticamente.
 
 ### Changed
 
-- **Search minimum threshold:** Both product search (POS) and client search modal now trigger on **1+ character** instead of 2, enabling single-character codes and names.
-- **`vendedor_logic.go`:** Cleaned up unused ORM references; aligned pagination and search with raw SQL patterns used throughout the rest of the backend.
-- **`auth.go`:** Minor session handling cleanup.
-- **`database.go`:** Registered `ObtenerResumenDashboard` as a Wails-bound method.
-- **`tsconfig.app.json` / `vite.config.ts`:** Path alias and build config adjusted for Wails frontend embedding.
+#### BuscarClienteModal (POS) — Comportamiento de carga
+- **Antes:** Lista vacía al abrir; requería escribir para ver cualquier resultado.
+- **Ahora:** Carga los primeros 50 clientes al abrir el modal; la barra actúa como filtro con debounce 300ms. Al borrar el texto, recarga la lista completa. Spinner en la barra de búsqueda (no bloquea la lista). Input con `autofocus`.
 
 ---
 
-### Internal / Tooling
+## [v0.2.0] — 2026-02-18
 
-- **Build tag:** All builds and dev runs require `-tags webkit2_41` on this machine (`webkit2gtk-4.1` installed, `webkit2gtk-4.0` absent).
-- **`golang-migrate` CLI** installed at `~/go/bin/migrate` for manual migration management.
+### Bug Fixes
+
+#### Critical — Cálculo de stock incorrecto tras ventas
+- **Causa:** `CrearOperacionStock` guardaba `cantidad_cambio` como entero **positivo** para operaciones `VENTA`. `calcularStockRealLocal` usa `SUM(cantidad_cambio)` como fuente de verdad, por lo que cada venta sumaba stock en lugar de restar.
+- **Fix (`backend/transaccion_logic.go`):** Las operaciones de reducción (`VENTA`, `AJUSTE_NEGATIVO`, `DEVOLUCION_CLIENTE`) ahora persisten `dbCambio = -cambio`.
+
+#### Critical — Fallo al crear entidades (Producto, Cliente, Proveedor)
+- **Causa:** `operacion_stocks.vendedor_uuid` es columna `uuid` con FK. El código pasaba strings literales `""` y `"SYSTEM-ADMIN"` — UUIDs inválidos — causando `pq: invalid input syntax for type uuid`.
+- **Fix:** `CrearOperacionStock`, `RegistrarProducto`, `ActualizarStockMasivo` y `RegistrarCompra` pasan `nil` (SQL `NULL`) en lugar de strings inválidos.
+
+#### POS — `clienteUUID` inicializado como UUID inválido
+- **Fix (`POS.vue`):** Valor inicial y fallbacks cambiados a `""`. `finalizarVenta` valida y muestra toast descriptivo si no hay cliente asignado.
+
+#### POS — Búsqueda bloqueada para queries de un carácter
+- Umbral `length < 2` impedía encontrar productos con código `"1"` o nombre `"1"`.
+- **Fix:** Umbral cambiado a `length < 1` en POS y a `!nuevoValor.trim()` en BuscarClienteModal.
+
+#### POS — Dropdown de resultados recortado por Radix TabsContent
+- `<TabsContent>` aplica `overflow: hidden` internamente, cortando el dropdown absoluto.
+- **Fix (`POS.vue`):** `<TabsContent>` reemplazados por divs con `v-show`. Z-index del dropdown subido a `z-[200]`. Eliminado `backdrop-blur-sm` del header sticky.
+
+### Features
+
+#### Dashboard — Rediseño completo UI
+- **Home:** KPI cards (ventas del día, stock bajo, top vendedor), gráfico de ingresos 7 días, tabla de ventas recientes, panel de alertas de stock bajo.
+- **Sidebar:** Navegación colapsable con modo icono, visibilidad por rol, resaltado de ruta activa.
+- **Todas las vistas de gestión:** Patrón DataTable consistente — paginación server-side, búsqueda con debounce, columnas ordenables, acciones inline, modales de creación/edición/eliminación.
+
+#### POS — Rediseño completo
+- Header compacto con tabs, selector de cliente y método de pago.
+- Búsqueda con dropdown `z-[200]`, navegación teclado (↑/↓/Enter) y shortcut "Crear Producto".
+- Tabla de carrito con edición inline de cantidad y precio.
+- Footer con total en vivo, cambio de efectivo, atajos F11/F12.
+
+#### Login & Register — Rediseño split-panel
+- Panel izquierdo (40%): gradiente azul oscuro, icono `Building2`, nombre de la farmacia, lista de características.
+- Panel derecho (60%): formulario limpio, toggle de contraseña, paso MFA con transición animada, `Alert` destructivo para errores.
+
+#### Herramientas de migración de BD (`backend/python/`)
+- **`preprocess.py`:** Convierte exportaciones SQL de Supabase a INSERTs compatibles con el schema local.
+- **`final_schema.sql`:** Schema único y autoritativo tras las 7 migraciones. Siembra `schema_migrations` para que golang-migrate reconozca todas las versiones como aplicadas.
+- **`reset_and_import.sh`:** Restauración completa: drop schema → recrear → preprocesar → importar en orden FK → recalcular stock.
+
+#### Backend — Endpoint de analytics del dashboard
+- `ObtenerResumenDashboard`: ventas del día, productos con stock bajo, top vendedor del mes, ingresos últimos 7 días.
+
+### Changed
+- Umbral de búsqueda mínimo reducido de 2 a 1 carácter en POS y BuscarClienteModal.
+- `vendedor_logic.go`: limpieza de referencias ORM obsoletas.
+- `database.go`: registro de `ObtenerResumenDashboard` como método Wails.
+
+---
+
+## [v0.1.0] — 2026-01-01
+
+### Features
+- Backend en Go con raw SQL (PostgreSQL via `lib/pq`).
+- Autenticación JWT + MFA (TOTP) con `golang-migrate` para migraciones.
+- Frontend Vue 3 + TypeScript + shadcn-vue + TailwindCSS v4.
+- Módulos: Ventas POS, Facturación, Inventario, Clientes, Vendedores, Proveedores, Reportes.
+- Empaquetado como app de escritorio con Wails v2.
