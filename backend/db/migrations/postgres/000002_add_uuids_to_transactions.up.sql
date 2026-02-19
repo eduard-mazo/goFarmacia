@@ -4,73 +4,41 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- 2. Migrar la tabla 'facturas'
--- Primero añadimos la columna permitiendo nulos
-ALTER TABLE public.facturas
-ADD COLUMN uuid uuid;
-
--- Rellenamos todas las filas existentes con un UUID nuevo
-UPDATE public.facturas
-SET
-    uuid = uuid_generate_v4 ()
-WHERE
-    uuid IS NULL;
-
--- Ahora que no hay nulos, la hacemos NOT NULL
-ALTER TABLE public.facturas
-ALTER COLUMN uuid
-SET
-    NOT NULL;
-
--- Finalmente, añadimos la constraint UNIQUE
-ALTER TABLE public.facturas ADD CONSTRAINT facturas_uuid_unique UNIQUE (uuid);
+ALTER TABLE public.facturas ADD COLUMN IF NOT EXISTS uuid uuid;
+UPDATE public.facturas SET uuid = uuid_generate_v4() WHERE uuid IS NULL;
+ALTER TABLE public.facturas ALTER COLUMN uuid SET NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'facturas_uuid_unique') THEN
+    ALTER TABLE public.facturas ADD CONSTRAINT facturas_uuid_unique UNIQUE (uuid);
+  END IF;
+END $$;
 
 -- 3. Migrar la tabla 'detalle_facturas'
-ALTER TABLE public.detalle_facturas
-ADD COLUMN uuid uuid;
+ALTER TABLE public.detalle_facturas ADD COLUMN IF NOT EXISTS uuid uuid;
+UPDATE public.detalle_facturas SET uuid = uuid_generate_v4() WHERE uuid IS NULL;
+ALTER TABLE public.detalle_facturas ALTER COLUMN uuid SET NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'detalle_facturas_uuid_unique') THEN
+    ALTER TABLE public.detalle_facturas ADD CONSTRAINT detalle_facturas_uuid_unique UNIQUE (uuid);
+  END IF;
+END $$;
 
-UPDATE public.detalle_facturas
-SET
-    uuid = uuid_generate_v4 ()
-WHERE
-    uuid IS NULL;
+-- 4. Migrar la tabla 'compras'
+ALTER TABLE public.compras ADD COLUMN IF NOT EXISTS uuid uuid;
+UPDATE public.compras SET uuid = uuid_generate_v4() WHERE uuid IS NULL;
+ALTER TABLE public.compras ALTER COLUMN uuid SET NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'compras_uuid_unique') THEN
+    ALTER TABLE public.compras ADD CONSTRAINT compras_uuid_unique UNIQUE (uuid);
+  END IF;
+END $$;
 
-ALTER TABLE public.detalle_facturas
-ALTER COLUMN uuid
-SET
-    NOT NULL;
-
-ALTER TABLE public.detalle_facturas ADD CONSTRAINT detalle_facturas_uuid_unique UNIQUE (uuid);
-
--- 4. Repetir para 'compras' (si también las modificaste)
-ALTER TABLE public.compras
-ADD COLUMN uuid uuid;
-
-UPDATE public.compras
-SET
-    uuid = uuid_generate_v4 ()
-WHERE
-    uuid IS NULL;
-
-ALTER TABLE public.compras
-ALTER COLUMN uuid
-SET
-    NOT NULL;
-
-ALTER TABLE public.compras ADD CONSTRAINT compras_uuid_unique UNIQUE (uuid);
-
--- 5. Repetir para 'detalle_compras' (si también las modificaste)
-ALTER TABLE public.detalle_compras
-ADD COLUMN uuid uuid;
-
-UPDATE public.detalle_compras
-SET
-    uuid = uuid_generate_v4 ()
-WHERE
-    uuid IS NULL;
-
-ALTER TABLE public.detalle_compras
-ALTER COLUMN uuid
-SET
-    NOT NULL;
-
-ALTER TABLE public.detalle_compras ADD CONSTRAINT detalle_compras_uuid_unique UNIQUE (uuid);
+-- 5. Migrar la tabla 'detalle_compras'
+ALTER TABLE public.detalle_compras ADD COLUMN IF NOT EXISTS uuid uuid;
+UPDATE public.detalle_compras SET uuid = uuid_generate_v4() WHERE uuid IS NULL;
+ALTER TABLE public.detalle_compras ALTER COLUMN uuid SET NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'detalle_compras_uuid_unique') THEN
+    ALTER TABLE public.detalle_compras ADD CONSTRAINT detalle_compras_uuid_unique UNIQUE (uuid);
+  END IF;
+END $$;

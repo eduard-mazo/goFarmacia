@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -237,33 +238,20 @@ var (
 
 func GetDbInstance() *Db {
 	once.Do(func() {
+		// Logger mínimo sin archivo — el archivo se crea en initDB()
+		// para evitar log files espurios de las inicializaciones previas de Wails.
 		logger := logrus.New()
-		logDir := "logs"
-		_ = os.MkdirAll(logDir, 0755)
-
-		timestamp := time.Now().Format("2006-01-02_15-04-05")
-		logFile := filepath.Join(logDir, fmt.Sprintf("app_%s.log", timestamp))
-
-		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-		if err != nil {
-			fmt.Printf("No se pudo abrir archivo de log: %v\n", err)
-		}
-
 		logger.SetFormatter(&logrus.TextFormatter{
 			FullTimestamp:   true,
 			ForceColors:     false,
 			TimestampFormat: "2006-01-02 15:04:05.000",
 		})
 		logger.SetLevel(logrus.DebugLevel)
-
-		var writers []io.Writer
-		writers = append(writers, file)
 		if isConsoleAvailable() {
-			writers = append(writers, os.Stdout)
+			logger.SetOutput(os.Stdout)
+		} else {
+			logger.SetOutput(io.Discard)
 		}
-		logger.SetOutput(io.MultiWriter(writers...))
-
-		logger.Info("Logger inicializado correctamente.")
 		dbInstance = &Db{Log: logger}
 	})
 	return dbInstance
@@ -284,6 +272,22 @@ func (d *Db) Startup(ctx context.Context) {
 
 func (d *Db) initDB() {
 	var err error
+
+	// Crear archivo de log ahora — solo se llama durante el startup real,
+	// no en las inicializaciones previas de Wails (que solo llaman GetDbInstance).
+	logDir := "logs"
+	_ = os.MkdirAll(logDir, 0755)
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	logFile := filepath.Join(logDir, fmt.Sprintf("app_%s.log", timestamp))
+	if file, ferr := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); ferr == nil {
+		var writers []io.Writer
+		writers = append(writers, file)
+		if isConsoleAvailable() {
+			writers = append(writers, os.Stdout)
+		}
+		d.Log.SetOutput(io.MultiWriter(writers...))
+	}
+	d.Log.Info("Logger inicializado correctamente.")
 
 	// Cargar variables de entorno
 	err = godotenv.Load()
@@ -367,12 +371,27 @@ func (d *Db) runMigrations(dbType string, dsn string) {
 	defer m.Close()
 
 	err = m.Up()
+
+	// Si la BD quedó en estado "dirty" (migración previa falló a mitad),
+	// forzamos la versión actual y reintentamos para recuperarnos automáticamente.
 	if err != nil && err != migrate.ErrNoChange {
-		d.Log.Errorf("¡¡¡ERROR CRÍTICO al aplicar migración para '%s'!!!: %v", dbType, err)
+		var dirtyErr migrate.ErrDirty
+		if errors.As(err, &dirtyErr) {
+			d.Log.Warnf("[MIGRATIONS] BD sucia en versión %d — forzando versión y reintentando...", dirtyErr.Version)
+			if fErr := m.Force(dirtyErr.Version); fErr != nil {
+				d.Log.Errorf("[MIGRATIONS] No se pudo forzar versión %d: %v", dirtyErr.Version, fErr)
+				return
+			}
+			err = m.Up()
+		}
+	}
+
+	if err != nil && err != migrate.ErrNoChange {
+		d.Log.Errorf("[MIGRATIONS] Error al aplicar migración para '%s': %v", dbType, err)
 	} else if err == migrate.ErrNoChange {
-		d.Log.Infof("Migración para '%s': No hay cambios que aplicar. Esquema actualizado.", dbType)
+		d.Log.Infof("[MIGRATIONS] Esquema '%s' actualizado, sin cambios pendientes.", dbType)
 	} else {
-		d.Log.Infof("Migración para '%s' aplicada exitosamente.", dbType)
+		d.Log.Infof("[MIGRATIONS] Migración '%s' aplicada exitosamente.", dbType)
 	}
 }
 

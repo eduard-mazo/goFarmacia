@@ -36,6 +36,7 @@ import { toast } from "vue-sonner";
 import CrearProductoModal from "@/components/modals/CrearProductoModal.vue";
 import BuscarClienteModal from "@/components/modals/BuscarClienteModal.vue";
 import ReciboVentaModal from "@/components/modals/ReciboVentaModal.vue";
+import FinalizarVentaModal from "@/components/modals/FinalizarVentaModal.vue";
 import {
   ObtenerClientesPaginado,
   ObtenerProductosPaginado,
@@ -65,6 +66,7 @@ const debounceTimer = ref<number | undefined>(undefined);
 const isLoading = ref(false);
 const isCreateModalOpen = ref(false);
 const isClienteModalOpen = ref(false);
+const isFinalizarModalOpen = ref(false);
 const facturaParaRecibo = ref<backend.Factura | null>(new backend.Factura());
 const searchInputRef = ref<{ $el: HTMLInputElement } | null>(null);
 const searchResultsContainerRef = ref<HTMLElement | null>(null);
@@ -175,7 +177,7 @@ watch(metodoPago, (nuevoMetodo) => {
   if (nuevoMetodo !== "efectivo") efectivoRecibido.value = undefined;
 });
 
-async function finalizarVenta() {
+function abrirModalFinalizar() {
   if (activeCart.value.length === 0) {
     toast.error("El carrito está vacío", {
       description: "Agrega productos antes de finalizar la venta.",
@@ -203,27 +205,35 @@ async function finalizarVenta() {
     });
     return;
   }
+  isFinalizarModalOpen.value = true;
+}
+
+async function confirmarVenta(pago: { metodoPago: string; efectivoRecibido?: number }) {
   const ventaRequest = new backend.VentaRequest({
     ClienteUUID: clienteUUID.value,
-    VendedorUUID: authenticatedUser.value.UUID,
-    MetodoPago: metodoPago.value,
+    VendedorUUID: authenticatedUser.value!.UUID,
+    MetodoPago: pago.metodoPago,
     Productos: activeCart.value.map((item) => ({
       ProductoUUID: item.UUID,
       Cantidad: item.cantidad,
       PrecioUnitario: item.PrecioVenta,
     })),
   });
+
   try {
     const facturaCreada = await RegistrarVenta(ventaRequest);
     toast.success("¡Venta registrada con éxito!", {
-      description: `Factura N° ${facturaCreada.NumeroFactura
-        } por un total de $${facturaCreada.Total.toLocaleString()}`,
+      description: `Factura N° ${facturaCreada.NumeroFactura} por un total de $${facturaCreada.Total.toLocaleString()}`,
     });
     facturaParaRecibo.value = facturaCreada;
     cartStore.clearActiveCart();
     efectivoRecibido.value = undefined;
     busqueda.value = "";
+    isFinalizarModalOpen.value = false;
     await cargarClienteGeneralPorDefecto();
+    nextTick(() => {
+      searchInputRef.value?.$el?.focus();
+    });
   } catch (error) {
     toast.error("Error al registrar la venta", {
       description: `Hubo un problema: ${error}`,
@@ -258,7 +268,7 @@ function handleClienteSeleccionado(cliente: backend.Cliente) {
 function handleKeyDown(event: KeyboardEvent) {
   if (event.key === "F12") {
     event.preventDefault();
-    finalizarVenta();
+    abrirModalFinalizar();
   } else if (event.key === "F11") {
     event.preventDefault();
     cartStore.saveCurrentCart();
@@ -304,12 +314,17 @@ function handleLoadCart(cartId: number) {
     @product-created="handleProductCreated" />
   <BuscarClienteModal v-model:open="isClienteModalOpen" @cliente-seleccionado="handleClienteSeleccionado" />
   <ReciboVentaModal :factura="facturaParaRecibo" @update:open="facturaParaRecibo = null" />
+  <FinalizarVentaModal 
+    v-model:open="isFinalizarModalOpen" 
+    :total="activeCartTotal" 
+    :cliente="clienteSeleccionado"
+    @confirm="confirmarVenta"
+  />
 
   <div class="flex flex-col h-[calc(100vh-3.5rem)]">
 
-    <!-- ── TOP HEADER BAR (tabs + customer + payment) ── -->
+    <!-- ── TOP HEADER BAR (tabs + customer) ── -->
     <div class="shrink-0 flex items-center justify-between gap-4 px-6 py-3 border-b bg-card">
-      <!-- Tab switcher — uses Tabs for styling but content is v-show below -->
       <Tabs v-model="activeTab">
         <TabsList>
           <TabsTrigger value="venta-actual">Venta Actual</TabsTrigger>
@@ -320,33 +335,16 @@ function handleLoadCart(cartId: number) {
         </TabsList>
       </Tabs>
 
-      <!-- Customer + Payment controls (only relevant in venta-actual) -->
       <div v-show="activeTab === 'venta-actual'" class="flex items-center gap-3">
-        <div class="flex items-center gap-1.5">
-          <span class="text-sm text-muted-foreground whitespace-nowrap">Cliente</span>
-          <Input :value="clienteSeleccionado" readonly class="h-8 w-52 text-sm" />
-          <Button @click="isClienteModalOpen = true" variant="ghost" size="icon" class="h-8 w-8" title="Buscar cliente">
+        <div class="flex items-center gap-2">
+          <div class="flex flex-col items-end">
+            <span class="text-[10px] uppercase font-bold text-muted-foreground leading-none">Cliente</span>
+            <span class="text-sm font-semibold">{{ clienteSeleccionado }}</span>
+          </div>
+          <Button @click="isClienteModalOpen = true" variant="outline" size="sm" class="h-9 px-3 gap-2">
             <UserSearch class="w-4 h-4" />
+            Cambiar
           </Button>
-        </div>
-        <div class="w-px h-5 bg-border" />
-        <div class="flex items-center gap-1.5">
-          <Select v-model="metodoPago">
-            <SelectTrigger class="h-8 w-44 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="efectivo">Efectivo</SelectItem>
-              <SelectItem value="transferencia">Transferencia</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            v-if="metodoPago === 'efectivo'"
-            type="number"
-            v-model="efectivoRecibido"
-            placeholder="$ recibido"
-            class="h-8 w-36 text-right text-sm font-mono"
-          />
         </div>
       </div>
     </div>
@@ -469,22 +467,18 @@ function handleLoadCart(cartId: number) {
       <div class="shrink-0 rounded-lg border bg-card shadow-sm px-5 py-3 flex items-center gap-6">
         <div class="flex-1 text-sm text-muted-foreground">
           {{ activeCart.length }} artículo(s)
-          <span v-if="metodoPago === 'efectivo' && efectivoRecibido && cambio > 0" class="ml-4">
-            &middot; Cambio:
-            <span class="font-mono font-bold text-emerald-600">${{ cambio.toLocaleString() }}</span>
-          </span>
         </div>
         <div class="flex items-center gap-2">
-          <span class="text-sm text-muted-foreground">Total</span>
-          <span class="font-mono font-bold text-2xl">${{ activeCartTotal.toLocaleString() }}</span>
+          <span class="text-sm text-muted-foreground uppercase tracking-wider font-medium">Total</span>
+          <span class="font-mono font-bold text-3xl text-primary">${{ activeCartTotal.toLocaleString() }}</span>
         </div>
         <div class="flex gap-2">
-          <Button @click="cartStore.saveCurrentCart()" variant="outline" class="h-10 gap-2">
+          <Button @click="cartStore.saveCurrentCart()" variant="outline" class="h-12 px-4 gap-2">
             <Save class="w-4 h-4" />En Espera
             <kbd class="ml-0.5 text-[10px] font-mono bg-muted border rounded px-1 text-muted-foreground">F11</kbd>
           </Button>
-          <Button @click="finalizarVenta" class="h-10 px-5 gap-2 font-semibold">
-            Finalizar Venta
+          <Button @click="abrirModalFinalizar" class="h-12 px-8 gap-2 font-bold text-lg shadow-lg shadow-primary/20">
+            Pagar
             <kbd class="ml-0.5 text-[10px] font-mono rounded px-1 bg-primary/20 border border-primary/30">F12</kbd>
           </Button>
         </div>
