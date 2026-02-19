@@ -13,52 +13,48 @@ import { toast } from "vue-sonner";
 import { ObtenerClientesPaginado } from "@/../wailsjs/go/backend/Db";
 import { backend } from "@/../wailsjs/go/models";
 
-// Props y Emits para la comunicación con el componente padre
-const props = defineProps<{
-  open: boolean;
-}>();
+const props = defineProps<{ open: boolean }>();
 const emit = defineEmits(["update:open", "cliente-seleccionado"]);
 
-// Estado interno del modal
 const busqueda = ref("");
 const clientes = ref<backend.Cliente[]>([]);
 const isLoading = ref(false);
+const hasSearched = ref(false);
 const debounceTimer = ref<number | undefined>(undefined);
 
-// Observador para la búsqueda con debounce
 watch(busqueda, (nuevoValor) => {
   clearTimeout(debounceTimer.value);
   if (!nuevoValor.trim()) {
     clientes.value = [];
+    hasSearched.value = false;
     return;
   }
   isLoading.value = true;
   debounceTimer.value = setTimeout(async () => {
     try {
-      const resultado = await ObtenerClientesPaginado(
-        1,
-        15,
-        nuevoValor,
-        "",
-        "asc"
-      );
+      const resultado = await ObtenerClientesPaginado(1, 20, nuevoValor, "", "asc");
       clientes.value = (resultado.Records as backend.Cliente[]) || [];
+      hasSearched.value = true;
     } catch (error) {
-      console.error("Error al buscar clientes:", error);
-      toast.error("Error de búsqueda", {
-        description: "No se pudieron obtener los clientes.",
-      });
+      toast.error("Error de búsqueda", { description: "No se pudieron obtener los clientes." });
     } finally {
       isLoading.value = false;
     }
-  }, 350);
+  }, 300);
+});
+
+// Reset al cerrar
+watch(() => props.open, (open) => {
+  if (!open) {
+    busqueda.value = "";
+    clientes.value = [];
+    hasSearched.value = false;
+  }
 });
 
 function seleccionarCliente(cliente: backend.Cliente) {
   emit("cliente-seleccionado", cliente);
-  // Limpiamos para la próxima vez que se abra
-  busqueda.value = "";
-  clientes.value = [];
+  emit("update:open", false);
 }
 </script>
 
@@ -82,27 +78,27 @@ function seleccionarCliente(cliente: backend.Cliente) {
         />
       </div>
       <div class="mt-4 h-72 overflow-y-auto border rounded-md">
+        <!-- Results list -->
         <ul v-if="clientes.length > 0">
           <li
             v-for="cliente in clientes"
             :key="cliente.UUID"
-            class="p-3 hover:bg-muted cursor-pointer"
+            class="flex items-center justify-between px-4 py-3 hover:bg-muted cursor-pointer border-b last:border-0"
             @click="seleccionarCliente(cliente)"
           >
-            <p class="font-semibold">
-              {{ cliente.Nombre }} {{ cliente.Apellido }}
-            </p>
-            <p class="text-sm text-muted-foreground">
-              ID: {{ cliente.NumeroID }} | Tel: {{ cliente.Telefono }}
-            </p>
+            <div>
+              <p class="font-semibold text-sm">{{ cliente.Nombre }} {{ cliente.Apellido }}</p>
+              <p class="text-xs text-muted-foreground">{{ cliente.NumeroID }}</p>
+            </div>
+            <p class="text-xs text-muted-foreground">{{ cliente.Telefono }}</p>
           </li>
         </ul>
-        <div
-          v-else
-          class="h-full flex items-center justify-center text-muted-foreground"
-        >
-          <p v-if="isLoading">Buscando...</p>
-          <p v-else>No se encontraron clientes</p>
+        <!-- Empty states -->
+        <div v-else class="h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+          <Search class="h-8 w-8 opacity-30" />
+          <p v-if="isLoading" class="text-sm">Buscando...</p>
+          <p v-else-if="hasSearched" class="text-sm">Sin resultados para "<span class="font-medium">{{ busqueda }}</span>"</p>
+          <p v-else class="text-sm">Escribe para buscar clientes</p>
         </div>
       </div>
     </DialogContent>

@@ -31,7 +31,8 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, ChevronDown, Search } from "lucide-vue-next";
+import { ArrowUpDown, ChevronDown, Search, ShieldCheck, User } from "lucide-vue-next";
+import { Badge } from "@/components/ui/badge";
 import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
@@ -142,6 +143,22 @@ const columns: ColumnDef<backend.Vendedor>[] = [
         { class: "lowercase max-w-[300px] truncate" },
         row.getValue("Email")
       ),
+  },
+  {
+    accessorKey: "Role",
+    header: "Rol",
+    cell: ({ row }) => {
+      const role = row.getValue("Role") as string;
+      return h(
+        Badge,
+        {
+          class: role === "admin"
+            ? "bg-blue-100 text-blue-800 border-blue-200 border text-xs font-medium"
+            : "bg-slate-100 text-slate-700 border-slate-200 border text-xs font-medium",
+        },
+        () => role === "admin" ? "Administrador" : "Cajero"
+      );
+    },
   },
   {
     id: "actions",

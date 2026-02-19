@@ -198,10 +198,15 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 	ctx, cancel := context.WithTimeout(d.ctx, 5*time.Second)
 	defer cancel()
 
+	role := vendedor.Role
+	if role != "admin" && role != "cajero" {
+		role = "cajero"
+	}
+
 	query := `
 		UPDATE vendedors
-		SET nombre = $1, apellido = $2, cedula = $3, email = $4, updated_at = $5
-		WHERE uuid = $6 AND deleted_at IS NULL
+		SET nombre = $1, apellido = $2, cedula = $3, email = $4, role = $5, updated_at = $6
+		WHERE uuid = $7 AND deleted_at IS NULL
 	`
 
 	res, err := d.DB.ExecContext(ctx, query,
@@ -209,6 +214,7 @@ func (d *Db) ActualizarVendedor(vendedor Vendedor) (Vendedor, error) {
 		vendedor.Apellido,
 		vendedor.Cedula,
 		strings.ToLower(vendedor.Email),
+		role,
 		time.Now(),
 		vendedor.UUID,
 	)

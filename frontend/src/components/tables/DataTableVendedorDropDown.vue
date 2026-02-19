@@ -28,6 +28,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { backend } from "@/../wailsjs/go/models";
@@ -114,7 +121,19 @@ function handleDeleteConfirm() {
         </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="email" class="text-right">Email</Label>
-          <Input id="email" type="email" v-model.number="editableVendedor.Email" class="col-span-3" />
+          <Input id="email" type="email" v-model="editableVendedor.Email" class="col-span-3" />
+        </div>
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label class="text-right">Rol</Label>
+          <Select v-model="editableVendedor.Role" class="col-span-3">
+            <SelectTrigger class="col-span-3">
+              <SelectValue placeholder="Selecciona un rol" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="cajero">Cajero</SelectItem>
+              <SelectItem value="admin">Administrador</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <DialogFooter>
