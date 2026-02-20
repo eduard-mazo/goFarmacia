@@ -52,3 +52,6 @@ desktop.ini
 package.json.md5
 
 /logs
+
+session.md
+commands.log
