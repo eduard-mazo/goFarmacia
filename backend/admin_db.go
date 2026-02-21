@@ -283,8 +283,9 @@ func (d *Db) GetEsquemaTabla(tableName string) (TableSchema, error) {
 	return schema, nil
 }
 
-// GetDatosTabla returns paginated read-only row data (all values as strings).
-func (d *Db) GetDatosTabla(tableName string, limit int, offset int) (TablePreview, error) {
+// GetDatosTabla returns paginated row data (all values as strings).
+// sortCol and sortDir ("asc"/"desc") are optional; pass empty strings to use default order.
+func (d *Db) GetDatosTabla(tableName string, limit int, offset int, sortCol string, sortDir string) (TablePreview, error) {
 	if err := validateIdentifier(tableName); err != nil {
 		return TablePreview{}, err
 	}
@@ -301,8 +302,18 @@ func (d *Db) GetDatosTabla(tableName string, limit int, offset int) (TablePrevie
 	var total int64
 	d.DB.QueryRowContext(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM public.%q`, tableName)).Scan(&total)
 
+	// Build ORDER BY clause safely
+	orderBy := "1" // default: first column
+	if sortCol != "" && validIdentifier.MatchString(sortCol) {
+		dir := "ASC"
+		if strings.ToUpper(sortDir) == "DESC" {
+			dir = "DESC"
+		}
+		orderBy = fmt.Sprintf("%q %s", sortCol, dir)
+	}
+
 	rows, err := d.DB.QueryContext(ctx,
-		fmt.Sprintf(`SELECT * FROM public.%q ORDER BY 1 LIMIT $1 OFFSET $2`, tableName),
+		fmt.Sprintf(`SELECT * FROM public.%q ORDER BY %s LIMIT $1 OFFSET $2`, tableName, orderBy),
 		limit, offset)
 	if err != nil {
 		return TablePreview{}, err
@@ -726,6 +737,72 @@ func (d *Db) ImportarSQL() (OperationResult, error) {
 		Success: true,
 		Message: fmt.Sprintf("SQL ejecutado: %d bytes procesados", len(sqlBytes)),
 	}, nil
+}
+
+// ==================== ROW EDIT / DELETE ====================
+
+// ActualizarFilaTabla updates a single cell identified by the primary key.
+// Pass isNull=true to set the field to NULL (newValue is ignored).
+func (d *Db) ActualizarFilaTabla(tableName, pkColumn, pkValue, updateColumn, newValue string, isNull bool) (OperationResult, error) {
+	if err := validateIdentifier(tableName); err != nil {
+		return OperationResult{}, err
+	}
+	if err := validateIdentifier(pkColumn); err != nil {
+		return OperationResult{}, err
+	}
+	if err := validateIdentifier(updateColumn); err != nil {
+		return OperationResult{}, err
+	}
+	if d.DB == nil {
+		return OperationResult{}, fmt.Errorf("no hay conexión a la base de datos")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, 10*time.Second)
+	defer cancel()
+
+	var val interface{}
+	if !isNull {
+		val = newValue
+	}
+
+	// Cast pk to text for comparison — works with uuid, int, bigint, varchar, etc.
+	query := fmt.Sprintf(`UPDATE public.%q SET %q = $1 WHERE %q::text = $2`, tableName, updateColumn, pkColumn)
+	res, err := d.DB.ExecContext(ctx, query, val, pkValue)
+	if err != nil {
+		return OperationResult{}, fmt.Errorf("error al actualizar: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return OperationResult{Success: false, Message: "No se encontró la fila para actualizar"}, nil
+	}
+	return OperationResult{Success: true, Message: fmt.Sprintf("Fila actualizada (%d)", affected)}, nil
+}
+
+// EliminarFilaTabla deletes a single row identified by the primary key.
+func (d *Db) EliminarFilaTabla(tableName, pkColumn, pkValue string) (OperationResult, error) {
+	if err := validateIdentifier(tableName); err != nil {
+		return OperationResult{}, err
+	}
+	if err := validateIdentifier(pkColumn); err != nil {
+		return OperationResult{}, err
+	}
+	if d.DB == nil {
+		return OperationResult{}, fmt.Errorf("no hay conexión a la base de datos")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, 10*time.Second)
+	defer cancel()
+
+	query := fmt.Sprintf(`DELETE FROM public.%q WHERE %q::text = $1`, tableName, pkColumn)
+	res, err := d.DB.ExecContext(ctx, query, pkValue)
+	if err != nil {
+		return OperationResult{}, fmt.Errorf("error al eliminar: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return OperationResult{Success: false, Message: "No se encontró la fila para eliminar"}, nil
+	}
+	return OperationResult{Success: true, Message: "Fila eliminada"}, nil
 }
 
 // ==================== TABLE OPERATIONS ====================
