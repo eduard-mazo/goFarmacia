@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,12 +42,13 @@ type OperacionStock struct {
 }
 
 type Claims struct {
-	UserUUID string `json:"UserUUID"`
-	Email    string `json:"Email"`
-	Nombre   string `json:"Nombre"`
-	Cedula   string `json:"Cedula"`
-	Role     string `json:"Role"`
-	MFAStep  string `json:"MFAStep,omitempty"`
+	UserUUID  string `json:"UserUUID"`
+	Email     string `json:"Email"`
+	Nombre    string `json:"Nombre"`
+	Cedula    string `json:"Cedula"`
+	Role      string `json:"Role"`
+	MFAStep   string `json:"MFAStep,omitempty"`
+	SetupMode bool   `json:"SetupMode,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -226,13 +229,24 @@ type CompraProducto struct {
 	PrecioCompraUnitario float64 `json:"PrecioCompraUnitario"`
 }
 
+// DBStatusResponse is returned by GetDBStatus.
+type DBStatusResponse struct {
+	Connected bool   `json:"Connected"`
+	SetupMode bool   `json:"SetupMode"`
+	Message   string `json:"Message"`
+	DSNHint   string `json:"DSNHint"` // Sanitized DSN (no password)
+}
+
 // ==================== DATABASE ====================
 
 type Db struct {
-	ctx    context.Context
-	DB     *sql.DB // ✅ Una única conexión PostgreSQL
-	Log    *logrus.Logger
-	jwtKey []byte
+	ctx       context.Context
+	DB        *sql.DB
+	Log       *logrus.Logger
+	jwtKey    []byte
+	setupMode bool   // true when DB is not configured/reachable
+	dbError   string // last connection error message
+	mu        sync.RWMutex
 }
 
 var (
@@ -242,8 +256,6 @@ var (
 
 func GetDbInstance() *Db {
 	once.Do(func() {
-		// Logger mínimo sin archivo — el archivo se crea en initDB()
-		// para evitar log files espurios de las inicializaciones previas de Wails.
 		logger := logrus.New()
 		logger.SetFormatter(&logrus.TextFormatter{
 			FullTimestamp:   true,
@@ -269,8 +281,8 @@ func isConsoleAvailable() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
-// baseDir devuelve el directorio del ejecutable en producción,
-// o el CWD en modo desarrollo (wails dev corre desde la raíz del proyecto).
+// baseDir returns the directory of the executable in production,
+// or CWD in dev mode (wails dev runs from the project root).
 func baseDir() string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -279,7 +291,7 @@ func baseDir() string {
 	return filepath.Dir(exe)
 }
 
-// findEnvFile busca .env en: 1) directorio del exe, 2) CWD.
+// findEnvFile searches for .env next to the exe, then in CWD.
 func findEnvFile() string {
 	candidates := []string{
 		filepath.Join(baseDir(), ".env"),
@@ -290,7 +302,7 @@ func findEnvFile() string {
 			return p
 		}
 	}
-	return candidates[0] // retorna el primero para que el error sea descriptivo
+	return candidates[0]
 }
 
 func (d *Db) Startup(ctx context.Context) {
@@ -299,9 +311,7 @@ func (d *Db) Startup(ctx context.Context) {
 }
 
 func (d *Db) initDB() {
-	var err error
-
-	// Crear archivo de log junto al ejecutable (producción) o en CWD (dev)
+	// ── Logger ──────────────────────────────────────────────────────────────
 	logDir := filepath.Join(baseDir(), "logs")
 	_ = os.MkdirAll(logDir, 0755)
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
@@ -316,35 +326,68 @@ func (d *Db) initDB() {
 	}
 	d.Log.Info("Logger inicializado correctamente.")
 
-	// Cargar variables de entorno: busca junto al exe, luego en CWD
+	// ── Load .env (non-fatal) ───────────────────────────────────────────────
 	envFile := findEnvFile()
-	d.Log.Infof("Cargando .env desde: %s", envFile)
-	err = godotenv.Load(envFile)
-	if err != nil {
-		d.Log.Fatalf("Error al cargar archivo .env: %v", err)
+	d.Log.Infof("Buscando .env en: %s", envFile)
+	if err := godotenv.Load(envFile); err != nil {
+		d.Log.Warnf("No se pudo cargar .env: %v — continuando sin él.", err)
 	}
 
-	// Cargar JWT Secret
+	// ── JWT key ─────────────────────────────────────────────────────────────
+	// Priority: 1) JWT_SECRET_KEY env var, 2) db_config.json, 3) auto-generate & save
 	secret := os.Getenv("JWT_SECRET_KEY")
 	if secret == "" {
-		d.Log.Fatalf("La variable de entorno JWT_SECRET_KEY no está configurada.")
+		if cfg, ok := LoadDBConfig(); ok && cfg.JWTSecret != "" {
+			secret = cfg.JWTSecret
+			d.Log.Info("JWT key cargada desde db_config.json")
+		}
+	}
+	if secret == "" {
+		secret = GenerateSecureKey()
+		d.Log.Warn("JWT_SECRET_KEY no configurada — generando clave aleatoria y guardando en db_config.json")
+		cfg, _ := LoadDBConfig()
+		cfg.JWTSecret = secret
+		_ = SaveDBConfig(cfg)
 	}
 	d.jwtKey = []byte(secret)
-	d.Log.Info("Clave secreta JWT cargada exitosamente.")
+	d.Log.Info("Clave JWT cargada exitosamente.")
 
-	// ✅ Conectar a PostgreSQL local
+	// ── DB connection ────────────────────────────────────────────────────────
+	// Priority: 1) DATABASE_URL env, 2) db_config.json DSN
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		d.Log.Fatalf("DATABASE_URL no está configurada en .env")
+		if cfg, ok := LoadDBConfig(); ok {
+			dbURL = cfg.DSN
+			d.Log.Infof("Usando DSN de db_config.json")
+		}
 	}
 
-	d.DB, err = d.NewPostgresDB(dbURL)
+	if dbURL == "" {
+		d.Log.Warn("DATABASE_URL no configurada — activando modo configuración.")
+		d.mu.Lock()
+		d.setupMode = true
+		d.dbError = "Base de datos no configurada. Accede a Configuración para establecer la conexión."
+		d.mu.Unlock()
+		return
+	}
+
+	db, err := d.NewPostgresDB(dbURL)
 	if err != nil {
-		d.Log.Fatalf("Fallo al conectar con PostgreSQL: %v", err)
+		d.Log.Warnf("No se pudo conectar a PostgreSQL: %v — activando modo configuración.", err)
+		d.mu.Lock()
+		d.setupMode = true
+		d.dbError = err.Error()
+		d.mu.Unlock()
+		return
 	}
-	d.Log.Info("Conexión a PostgreSQL local establecida exitosamente.")
 
-	// Ejecutar migraciones
+	d.mu.Lock()
+	d.DB = db
+	d.setupMode = false
+	d.dbError = ""
+	d.mu.Unlock()
+	d.Log.Info("Conexión a PostgreSQL establecida exitosamente.")
+
 	d.runMigrations("postgres", dbURL)
 }
 
@@ -358,17 +401,16 @@ func (d *Db) NewPostgresDB(connString string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Configurar pool de conexiones
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
 	db.SetConnMaxIdleTime(2 * time.Minute)
 
-	// Verificar conexión
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("no se puede hacer ping a PostgreSQL: %w", err)
 	}
 
@@ -376,6 +418,8 @@ func (d *Db) NewPostgresDB(connString string) (*sql.DB, error) {
 }
 
 func (d *Db) Close() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.DB != nil {
 		d.DB.Close()
 		d.Log.Info("Conexión a PostgreSQL cerrada.")
@@ -405,12 +449,10 @@ func (d *Db) runMigrations(dbType string, dsn string) {
 
 	err = m.Up()
 
-	// Si la BD quedó en estado "dirty" (migración previa falló a mitad),
-	// forzamos la versión actual y reintentamos para recuperarnos automáticamente.
 	if err != nil && err != migrate.ErrNoChange {
 		var dirtyErr migrate.ErrDirty
 		if errors.As(err, &dirtyErr) {
-			d.Log.Warnf("[MIGRATIONS] BD sucia en versión %d — forzando versión y reintentando...", dirtyErr.Version)
+			d.Log.Warnf("[MIGRATIONS] BD sucia en versión %d — forzando y reintentando...", dirtyErr.Version)
 			if fErr := m.Force(dirtyErr.Version); fErr != nil {
 				d.Log.Errorf("[MIGRATIONS] No se pudo forzar versión %d: %v", dirtyErr.Version, fErr)
 				return
@@ -426,6 +468,219 @@ func (d *Db) runMigrations(dbType string, dsn string) {
 	} else {
 		d.Log.Infof("[MIGRATIONS] Migración '%s' aplicada exitosamente.", dbType)
 	}
+}
+
+// ==================== DB STATUS & CONFIGURATION ====================
+
+// IsSetupMode returns true when the app started without a valid DB connection.
+func (d *Db) IsSetupMode() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.setupMode
+}
+
+// GetDBStatus returns the current database connection status.
+func (d *Db) GetDBStatus() DBStatusResponse {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	msg := "Conectado y operativo"
+	if d.setupMode {
+		msg = d.dbError
+		if msg == "" {
+			msg = "Base de datos no configurada"
+		}
+	}
+
+	dsnHint := ""
+	if cfg, ok := LoadDBConfig(); ok {
+		dsnHint = sanitizeDSN(cfg.DSN)
+	} else if envDSN := os.Getenv("DATABASE_URL"); envDSN != "" {
+		dsnHint = sanitizeDSN(envDSN)
+	}
+
+	return DBStatusResponse{
+		Connected: !d.setupMode && d.DB != nil,
+		SetupMode: d.setupMode,
+		Message:   msg,
+		DSNHint:   dsnHint,
+	}
+}
+
+// TestDBConnection attempts to ping the given DSN without saving it.
+func (d *Db) TestDBConnection(dsn string) error {
+	if dsn == "" {
+		return fmt.Errorf("el DSN no puede estar vacío")
+	}
+	db, err := d.NewPostgresDB(dsn)
+	if err != nil {
+		// If DB doesn't exist, still consider it a "reachable server"
+		if isDatabaseNotExistsErr(err) {
+			return fmt.Errorf("servidor alcanzable, pero la base de datos no existe (se creará automáticamente al guardar)")
+		}
+		return err
+	}
+	db.Close()
+	return nil
+}
+
+// ConfigurarDB saves the DSN, creates the database if needed, connects, and runs migrations.
+// After this call the app exits setup mode.
+func (d *Db) ConfigurarDB(dsn string) error {
+	if dsn == "" {
+		return fmt.Errorf("el DSN no puede estar vacío")
+	}
+
+	// Try direct connection first
+	db, err := d.NewPostgresDB(dsn)
+	if err != nil {
+		if isDatabaseNotExistsErr(err) {
+			d.Log.Infof("[ConfigurarDB] Base de datos no existe — intentando crearla...")
+			if cErr := d.createDatabaseIfNeeded(dsn); cErr != nil {
+				return fmt.Errorf("no se pudo crear la base de datos: %w", cErr)
+			}
+			db, err = d.NewPostgresDB(dsn)
+			if err != nil {
+				return fmt.Errorf("error al reconectar después de crear la base de datos: %w", err)
+			}
+		} else {
+			return err
+		}
+	}
+
+	// Load current config to preserve JWTSecret
+	cfg, _ := LoadDBConfig()
+	cfg.DSN = dsn
+	if cfg.JWTSecret == "" {
+		// Persist the in-memory JWT key so it survives restart
+		cfg.JWTSecret = string(d.jwtKey)
+	}
+	if err := SaveDBConfig(cfg); err != nil {
+		db.Close()
+		return fmt.Errorf("error al guardar configuración: %w", err)
+	}
+
+	// Swap connection
+	d.mu.Lock()
+	if d.DB != nil {
+		d.DB.Close()
+	}
+	d.DB = db
+	d.setupMode = false
+	d.dbError = ""
+	d.mu.Unlock()
+
+	d.Log.Infof("[ConfigurarDB] Base de datos configurada y conectada exitosamente.")
+	d.runMigrations("postgres", dsn)
+	return nil
+}
+
+// ==================== DSN HELPERS ====================
+
+func isDatabaseNotExistsErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "does not exist") ||
+		(strings.Contains(msg, "database") && strings.Contains(msg, "not exist"))
+}
+
+// switchToSystemDB replaces the dbname in the DSN with "postgres" so we can
+// connect to the server to create the target database.
+// Returns (originalDBName, newDSN, error).
+func switchToSystemDB(dsn string) (string, string, error) {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return "", "", err
+		}
+		dbName := strings.TrimPrefix(u.Path, "/")
+		if dbName == "" {
+			return "", "", fmt.Errorf("no se encontró el nombre de la base de datos en el DSN")
+		}
+		u.Path = "/postgres"
+		return dbName, u.String(), nil
+	}
+	// Key=value format
+	parts := strings.Fields(dsn)
+	var dbName string
+	newParts := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if strings.HasPrefix(p, "dbname=") {
+			dbName = strings.TrimPrefix(p, "dbname=")
+			newParts = append(newParts, "dbname=postgres")
+		} else {
+			newParts = append(newParts, p)
+		}
+	}
+	if dbName == "" {
+		return "", "", fmt.Errorf("no se encontró 'dbname' en el DSN")
+	}
+	return dbName, strings.Join(newParts, " "), nil
+}
+
+func (d *Db) createDatabaseIfNeeded(dsn string) error {
+	dbName, systemDSN, err := switchToSystemDB(dsn)
+	if err != nil {
+		return err
+	}
+
+	sysDB, err := sql.Open("postgres", systemDSN)
+	if err != nil {
+		return err
+	}
+	defer sysDB.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := sysDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("no se puede conectar al servidor PostgreSQL: %w", err)
+	}
+
+	var exists bool
+	err = sysDB.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", dbName).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil // DB already exists
+	}
+
+	// CREATE DATABASE does not support parameters, use Sprintf with quoted identifier
+	_, err = sysDB.ExecContext(ctx, fmt.Sprintf(`CREATE DATABASE "%s"`, dbName))
+	if err != nil {
+		return fmt.Errorf("error al crear la base de datos '%s': %w", dbName, err)
+	}
+	d.Log.Infof("[ConfigurarDB] Base de datos '%s' creada exitosamente.", dbName)
+	return nil
+}
+
+// sanitizeDSN removes the password from a DSN for safe display.
+func sanitizeDSN(dsn string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return dsn
+		}
+		if u.User != nil {
+			u.User = url.User(u.User.Username())
+		}
+		return u.String()
+	}
+	// Key=value format
+	parts := strings.Fields(dsn)
+	newParts := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if strings.HasPrefix(p, "password=") {
+			newParts = append(newParts, "password=***")
+		} else {
+			newParts = append(newParts, p)
+		}
+	}
+	return strings.Join(newParts, " ")
 }
 
 // ==================== HELPER METHODS ====================

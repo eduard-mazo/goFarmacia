@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -86,6 +87,43 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 
 func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	d.Log.Infof("Intento log con %s", req.Email)
+
+	// ── Setup mode: allow in-memory admin login when DB is not configured ──
+	if d.IsSetupMode() {
+		setupPass := os.Getenv("SETUP_ADMIN_PASSWORD")
+		if setupPass == "" {
+			setupPass = "admin"
+		}
+		if req.Contrasena != setupPass {
+			return LoginResponse{}, fmt.Errorf("modo configuración activo — usa la contraseña '%s'", setupPass)
+		}
+		claims := &Claims{
+			UserUUID:  "setup-admin",
+			Email:     req.Email,
+			Nombre:    "Administrador",
+			Role:      "admin",
+			SetupMode: true,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+			},
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenStr, err := token.SignedString(d.jwtKey)
+		if err != nil {
+			return LoginResponse{}, fmt.Errorf("error al generar token de configuración: %w", err)
+		}
+		return LoginResponse{
+			Token: tokenStr,
+			Vendedor: Vendedor{
+				UUID:   "setup-admin",
+				Nombre: "Administrador",
+				Email:  req.Email,
+				Role:   "admin",
+			},
+		}, nil
+	}
+
 	var vendedor Vendedor
 	var response LoginResponse
 

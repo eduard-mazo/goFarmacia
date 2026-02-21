@@ -21,18 +21,21 @@ import NavUser from "@/components/layout/NavUser.vue";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useModeStore } from "@/stores/mode";
 import type { AppMode } from "@/stores/mode";
+import { useDBStore } from "@/stores/dbStore";
 
 const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: "icon",
 });
 
 const modeStore = useModeStore();
+const dbStore = useDBStore();
 
 type NavItem = {
   title: string;
@@ -131,7 +134,14 @@ const erpNav: NavItem[] = [
 const currentNav = computed(() =>
   modeStore.currentMode === "pos" ? posNav : erpNav
 );
+
+const dbStatusLabel = computed(() => {
+  if (dbStore.setupMode) return "Sin configurar";
+  if (dbStore.connected) return "Base de datos OK";
+  return "Sin conexión";
+});
 </script>
+
 <template>
   <Sidebar v-bind="props">
     <SidebarHeader>
@@ -142,7 +152,10 @@ const currentNav = computed(() =>
           @update:model-value="(v) => modeStore.setMode(v as AppMode)"
           class="w-full"
         >
-          <TabsList class="w-full" :class="modeStore.isAdmin ? 'grid grid-cols-2' : 'grid grid-cols-1'">
+          <TabsList
+            class="w-full"
+            :class="modeStore.isAdmin ? 'grid grid-cols-2' : 'grid grid-cols-1'"
+          >
             <TabsTrigger value="pos">POS</TabsTrigger>
             <TabsTrigger v-if="modeStore.isAdmin" value="erp">ERP</TabsTrigger>
           </TabsList>
@@ -152,6 +165,20 @@ const currentNav = computed(() =>
     <SidebarContent>
       <NavMain :items="currentNav" />
     </SidebarContent>
+    <SidebarFooter>
+      <div class="px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground border-t">
+        <!-- Status dot -->
+        <span
+          class="h-2 w-2 rounded-full shrink-0 transition-colors duration-500"
+          :class="{
+            'bg-green-500': dbStore.connected,
+            'bg-amber-400 animate-pulse': dbStore.setupMode,
+            'bg-red-500': !dbStore.connected && !dbStore.setupMode,
+          }"
+        />
+        <span class="truncate">{{ dbStatusLabel }}</span>
+      </div>
+    </SidebarFooter>
     <SidebarRail />
   </Sidebar>
 </template>

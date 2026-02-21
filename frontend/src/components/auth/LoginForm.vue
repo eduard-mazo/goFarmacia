@@ -14,11 +14,14 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
+  Settings,
 } from "lucide-vue-next";
 import loginIllustration from "@/assets/images/Login_luna.png";
+import { IsSetupMode } from "@/../wailsjs/go/backend/Db";
 
 const authStore = useAuthStore();
 const route = useRoute();
+const isSetupMode = ref(false);
 
 const credentials = ref<backend.LoginRequest>(new backend.LoginRequest());
 const mfaCode = ref<string>("");
@@ -28,9 +31,14 @@ const error = ref<string>("");
 const loginStep = ref<number>(1);
 const showPassword = ref<boolean>(false);
 
-onMounted(() => {
+onMounted(async () => {
   if (route.query.registered === "true") {
     toast.success("¡Cuenta creada con éxito! Ahora puedes iniciar sesión.");
+  }
+  try {
+    isSetupMode.value = await IsSetupMode();
+  } catch {
+    isSetupMode.value = false;
   }
 });
 
@@ -124,6 +132,19 @@ async function handleVerifyMFA() {
             <h1 class="text-xl font-bold text-foreground">Droguería Luna</h1>
             <p class="text-muted-foreground text-sm">Sistema de gestión farmacéutica</p>
           </div>
+
+          <!-- Setup mode notice -->
+          <Alert
+            v-if="isSetupMode"
+            class="mb-6 border-amber-300 bg-amber-50 text-amber-800"
+          >
+            <Settings class="h-4 w-4 text-amber-600" />
+            <AlertTitle class="text-amber-800">Modo configuración activo</AlertTitle>
+            <AlertDescription class="text-amber-700 text-xs">
+              No hay base de datos configurada. Usa cualquier email con contraseña
+              <strong>admin</strong> para acceder a la configuración.
+            </AlertDescription>
+          </Alert>
 
           <div class="mb-8">
             <h2 class="text-2xl font-bold text-foreground mb-1">Bienvenido de nuevo</h2>
