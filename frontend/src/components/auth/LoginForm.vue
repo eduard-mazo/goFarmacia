@@ -15,8 +15,9 @@ import {
   Eye,
   EyeOff,
   Settings,
+  Building2,
+  CheckCircle2,
 } from "lucide-vue-next";
-import loginIllustration from "@/assets/images/Login_luna.png";
 import { IsSetupMode } from "@/../wailsjs/go/backend/Db";
 
 const authStore = useAuthStore();
@@ -80,29 +81,30 @@ async function handleVerifyMFA() {
     <!-- Left brand panel -->
     <div
       class="hidden lg:flex lg:w-2/5 bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-900
-             flex-col justify-between px-10 py-10 select-none overflow-hidden"
+             flex-col justify-center px-12 py-12 select-none overflow-hidden gap-12"
     >
-      <!-- Brand header -->
-      <div>
-        <h1 class="text-2xl font-bold text-white tracking-tight">Droguería Luna</h1>
-        <p class="text-blue-300 text-sm mt-1">Sistema integral de gestión farmacéutica</p>
-      </div>
-
-      <!-- Illustration -->
-      <div class="flex-1 flex items-center justify-center py-6">
-        <div class="relative w-full max-w-sm">
-          <!-- Glow halo behind image -->
-          <div class="absolute inset-0 rounded-3xl bg-blue-500/20 blur-2xl scale-95"></div>
-          <img
-            :src="loginIllustration"
-            alt="Droguería Luna — inicio de sesión"
-            class="relative w-full rounded-2xl shadow-2xl shadow-black/50 ring-1 ring-white/10"
-          />
+      <!-- Icon + brand -->
+      <div class="flex flex-col gap-5">
+        <div class="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center">
+          <Building2 class="w-8 h-8 text-white" />
+        </div>
+        <div>
+          <h1 class="text-2xl font-bold text-white tracking-tight">Droguería Luna</h1>
+          <p class="text-blue-300 text-sm mt-1">Sistema integral de gestión farmacéutica</p>
         </div>
       </div>
 
+      <!-- Feature list -->
+      <ul class="flex flex-col gap-4">
+        <li v-for="f in ['Control de inventario', 'Punto de venta integrado', 'Reportes en tiempo real']"
+          :key="f" class="flex items-center gap-3 text-white/80 text-sm">
+          <CheckCircle2 class="w-4 h-4 text-blue-300 shrink-0" />
+          {{ f }}
+        </li>
+      </ul>
+
       <!-- Bottom tagline -->
-      <p class="text-blue-400 text-xs text-center">
+      <p class="text-blue-400/60 text-xs">
         © {{ new Date().getFullYear() }} Droguería Luna · Todos los derechos reservados
       </p>
     </div>
