@@ -127,10 +127,23 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
+  }
+  /* Scope focus ring to interactive elements only — avoids painting outline on all DOM nodes */
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    @apply outline-2 outline-ring/60 outline-offset-2;
   }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+
+  /* Promote the main scroll container to its own GPU compositing layer.
+     This decouples scroll from the fixed sidebar's stacking context in WebKit,
+     eliminating the layout-recalculation jank on every scroll frame. */
+  [data-slot="sidebar-inset"] {
+    will-change: transform;
+    transform: translateZ(0);
+  }
+
 }

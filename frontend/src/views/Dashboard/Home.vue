@@ -158,7 +158,7 @@ watch(date, (newDate) => {
       <!-- Stat cards -->
       <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <!-- Total Ventas -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -176,7 +176,7 @@ watch(date, (newDate) => {
         </Card>
 
         <!-- Nº Ventas -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -194,7 +194,7 @@ watch(date, (newDate) => {
         </Card>
 
         <!-- Ticket Promedio -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -212,7 +212,7 @@ watch(date, (newDate) => {
         </Card>
 
         <!-- Vendedor del día (highlighted) -->
-        <Card class="shadow-sm bg-primary text-primary-foreground">
+        <Card class="bg-primary text-primary-foreground">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -234,7 +234,7 @@ watch(date, (newDate) => {
 
       <!-- Charts row -->
       <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold">Flujo de Ventas por Hora</CardTitle>
           </CardHeader>
@@ -243,7 +243,7 @@ watch(date, (newDate) => {
           </CardContent>
         </Card>
 
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold flex items-center gap-2">
               <Wallet class="h-4 w-4 text-muted-foreground" />
@@ -263,7 +263,7 @@ watch(date, (newDate) => {
       <!-- Bottom row -->
       <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
         <!-- Top Productos -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-3">
             <CardTitle class="text-base font-semibold flex items-center gap-2">
               <TrendingUp class="h-4 w-4 text-emerald-600" />
@@ -293,7 +293,7 @@ watch(date, (newDate) => {
         </Card>
 
         <!-- Productos Sin Stock -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-3">
             <CardTitle class="text-base font-semibold flex items-center gap-2 text-destructive">
               <PackageX class="h-4 w-4" />

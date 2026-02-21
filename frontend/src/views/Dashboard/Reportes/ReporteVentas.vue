@@ -111,7 +111,7 @@ onMounted(cargarReporte);
     <template v-if="!isLoading && reporte">
       <!-- Stat cards -->
       <div class="grid gap-4 grid-cols-1 sm:grid-cols-3">
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -126,7 +126,7 @@ onMounted(cargarReporte);
             </div>
           </CardContent>
         </Card>
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -139,7 +139,7 @@ onMounted(cargarReporte);
             </div>
           </CardContent>
         </Card>
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -158,7 +158,7 @@ onMounted(cargarReporte);
 
       <!-- Charts -->
       <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold">Tendencia de Ventas</CardTitle>
           </CardHeader>
@@ -166,7 +166,7 @@ onMounted(cargarReporte);
             <SalesTrendChart :chart-data="reporte.ventasIndividuales" />
           </CardContent>
         </Card>
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold">Métodos de Pago</CardTitle>
           </CardHeader>
@@ -179,7 +179,7 @@ onMounted(cargarReporte);
 
       <!-- Lists -->
       <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-3">
             <CardTitle class="text-base font-semibold">Top Productos Vendidos</CardTitle>
           </CardHeader>
@@ -199,7 +199,7 @@ onMounted(cargarReporte);
             <p v-else class="text-sm text-muted-foreground py-4 text-center">Sin productos en este período.</p>
           </CardContent>
         </Card>
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-3">
             <CardTitle class="text-base font-semibold">Top Vendedores</CardTitle>
           </CardHeader>

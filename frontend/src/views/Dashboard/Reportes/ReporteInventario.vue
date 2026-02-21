@@ -87,7 +87,7 @@ onMounted(loadData);
     <template v-if="!isLoading && resumen">
       <!-- Stat cards -->
       <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -102,7 +102,7 @@ onMounted(loadData);
           </CardContent>
         </Card>
 
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -119,7 +119,7 @@ onMounted(loadData);
           </CardContent>
         </Card>
 
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -136,7 +136,7 @@ onMounted(loadData);
           </CardContent>
         </Card>
 
-        <Card class="shadow-sm bg-primary text-primary-foreground">
+        <Card class="bg-primary text-primary-foreground">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -155,7 +155,7 @@ onMounted(loadData);
       </div>
 
       <!-- Alert products -->
-      <Card class="shadow-sm">
+      <Card class="">
         <CardHeader class="pb-3">
           <CardTitle class="text-base font-semibold flex items-center gap-2">
             <AlertTriangle class="h-4 w-4 text-yellow-500" />

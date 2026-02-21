@@ -126,7 +126,7 @@ async function savePassword() {
     </div>
 
     <!-- Profile identity card -->
-    <Card class="shadow-sm">
+    <Card class="">
       <CardContent class="pt-6">
         <div class="flex items-center gap-5">
           <Avatar class="h-16 w-16 rounded-xl text-xl">
@@ -154,7 +154,7 @@ async function savePassword() {
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Personal info -->
-      <Card class="shadow-sm">
+      <Card class="">
         <CardHeader class="pb-3">
           <CardTitle class="text-base font-semibold flex items-center gap-2">
             <User class="h-4 w-4 text-muted-foreground" />
@@ -196,7 +196,7 @@ async function savePassword() {
       </Card>
 
       <!-- Password change -->
-      <Card class="shadow-sm">
+      <Card class="">
         <CardHeader class="pb-3">
           <CardTitle class="text-base font-semibold flex items-center gap-2">
             <Lock class="h-4 w-4 text-muted-foreground" />
@@ -272,7 +272,7 @@ async function savePassword() {
     </div>
 
     <!-- 2FA section -->
-    <Card class="shadow-sm">
+    <Card class="">
       <CardHeader class="pb-3">
         <CardTitle class="text-base font-semibold flex items-center gap-2">
           <Shield class="h-4 w-4 text-muted-foreground" />

@@ -93,7 +93,7 @@ onMounted(loadData);
       <!-- Top stat cards -->
       <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <!-- Total Productos -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -109,7 +109,7 @@ onMounted(loadData);
         </Card>
 
         <!-- Stock Bajo -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -127,7 +127,7 @@ onMounted(loadData);
         </Card>
 
         <!-- Sin Stock -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -145,7 +145,7 @@ onMounted(loadData);
         </Card>
 
         <!-- Valor Inventario (highlighted) -->
-        <Card class="shadow-sm bg-primary text-primary-foreground">
+        <Card class="bg-primary text-primary-foreground">
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -166,7 +166,7 @@ onMounted(loadData);
       <!-- Bottom cards -->
       <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
         <!-- Ventas del Día -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold flex items-center gap-2">
               <TrendingUp class="h-4 w-4 text-emerald-600" />
@@ -182,7 +182,7 @@ onMounted(loadData);
         </Card>
 
         <!-- Resumen Rápido -->
-        <Card class="shadow-sm">
+        <Card class="">
           <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold flex items-center gap-2">
               <Users class="h-4 w-4 text-muted-foreground" />

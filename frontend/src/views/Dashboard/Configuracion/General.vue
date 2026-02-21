@@ -139,7 +139,7 @@ onMounted(() => {
     </div>
 
     <!-- ═══ Database connection card ═══════════════════════════════════════ -->
-    <Card class="shadow-sm" :class="{ 'border-amber-300': dbStore.setupMode }">
+    <Card class="" :class="{ 'border-amber-300': dbStore.setupMode }">
       <CardHeader class="pb-4">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
@@ -251,7 +251,7 @@ onMounted(() => {
     <!-- ═══ General settings (disabled in setup mode) ══════════════════════ -->
     <template v-if="!dbStore.setupMode">
       <!-- Datos de la tienda -->
-      <Card class="shadow-sm">
+      <Card class="">
         <CardHeader class="pb-4">
           <CardTitle class="text-base font-semibold">Datos de la Tienda</CardTitle>
         </CardHeader>
@@ -287,7 +287,7 @@ onMounted(() => {
       </Card>
 
       <!-- Parámetros del sistema -->
-      <Card class="shadow-sm">
+      <Card class="">
         <CardHeader class="pb-4">
           <CardTitle class="text-base font-semibold">Parámetros del Sistema</CardTitle>
         </CardHeader>
