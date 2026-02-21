@@ -91,7 +91,7 @@ onMounted(cargarReporte);
 
     <!-- Loading skeletons -->
     <div v-if="isLoading" class="grid gap-4 grid-cols-1 sm:grid-cols-3">
-      <Card v-for="i in 3" :key="i" class="animate-pulse shadow-sm">
+      <Card v-for="i in 3" :key="i" class="animate-pulse">
         <CardContent class="p-6">
           <div class="space-y-2">
             <div class="h-3.5 bg-muted rounded w-3/5"></div>

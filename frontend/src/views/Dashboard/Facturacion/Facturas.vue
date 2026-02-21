@@ -247,7 +247,7 @@ watch(busqueda, () => {
     </div>
 
     <!-- Table -->
-    <div class="rounded-lg border bg-card shadow-sm overflow-hidden">
+    <div class="rounded-lg border bg-card overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">

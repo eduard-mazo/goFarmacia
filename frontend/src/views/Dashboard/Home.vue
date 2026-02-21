@@ -38,7 +38,7 @@ type DashboardData = backend.DashboardData;
 const dashboardData = ref<DashboardData | null>(null);
 const isLoading = ref(true);
 const error = ref<string | null>(null);
-const fechasConVentas = ref<string[]>([]);
+const fechasConVentas = ref<Set<string>>(new Set());
 
 const date = shallowRef<CalendarDate>(today(getLocalTimeZone()));
 
@@ -78,7 +78,8 @@ async function loadDashboardData(fecha: CalendarDate) {
 
 async function loadFechasConVentas() {
   try {
-    fechasConVentas.value = await ObtenerFechasConVentas();
+    const dates = await ObtenerFechasConVentas();
+    fechasConVentas.value = new Set(dates);
   } catch {}
 }
 
@@ -119,7 +120,7 @@ watch(date, (newDate) => {
               <div class="relative">
                 {{ day.day }}
                 <span
-                  v-if="fechasConVentas.includes(day.toString())"
+                  v-if="fechasConVentas.has(day.toString())"
                   class="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-emerald-500"
                 ></span>
               </div>
@@ -131,7 +132,7 @@ watch(date, (newDate) => {
 
     <!-- Loading skeletons -->
     <div v-if="isLoading" class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-      <Card v-for="i in 4" :key="i" class="animate-pulse shadow-sm">
+      <Card v-for="i in 4" :key="i" class="animate-pulse">
         <CardContent class="p-6">
           <div class="flex justify-between items-start">
             <div class="space-y-2 flex-1">

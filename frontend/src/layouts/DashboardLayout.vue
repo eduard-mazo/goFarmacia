@@ -15,8 +15,6 @@ const route = useRoute();
 onMounted(async () => {
   await dbStore.fetchStatus();
   dbStore.startPolling(15000);
-
-  // Redirect to DB settings if in setup mode and not already there
   if (dbStore.setupMode && route.name !== "Configuracion") {
     router.replace("/dashboard/configuracion");
   }
@@ -26,7 +24,6 @@ onUnmounted(() => {
   dbStore.stopPolling();
 });
 
-// React when setup mode changes (e.g. after ConfigurarDB)
 watch(
   () => dbStore.setupMode,
   (isSetup) => {
@@ -46,11 +43,11 @@ watch(
       <!-- Setup mode banner -->
       <div
         v-if="dbStore.setupMode"
-        class="flex items-center gap-3 bg-amber-50 border-b border-amber-200 px-4 py-2.5 text-sm shrink-0"
+        class="shrink-0 flex items-center gap-3 bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm"
       >
-        <AlertTriangle class="h-4 w-4 shrink-0 text-amber-500" />
-        <span class="flex-1 font-medium text-amber-800">
-          Sistema en modo configuración — base de datos no conectada.
+        <AlertTriangle class="h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <span class="flex-1 text-amber-800 font-medium">
+          Modo configuración — base de datos no conectada.
         </span>
         <Button
           variant="outline"
@@ -58,19 +55,18 @@ watch(
           class="h-7 border-amber-300 text-amber-700 hover:bg-amber-100 shrink-0"
           @click="router.push('/dashboard/configuracion')"
         >
-          <Database class="h-3.5 w-3.5 mr-1" />
-          Configurar BD
+          <Database class="h-3.5 w-3.5 mr-1" />Configurar
         </Button>
       </div>
 
-      <!-- Reconnect warning (connected to server but something changed) -->
+      <!-- Connection error banner -->
       <div
         v-else-if="!dbStore.connected && dbStore.message"
-        class="flex items-center gap-3 bg-red-50 border-b border-red-200 px-4 py-2.5 text-sm shrink-0"
+        class="shrink-0 flex items-center gap-3 bg-red-50 border-b border-red-200 px-4 py-2 text-sm"
       >
-        <AlertTriangle class="h-4 w-4 shrink-0 text-red-500" />
-        <span class="flex-1 font-medium text-red-800">
-          Sin conexión a la base de datos — {{ dbStore.message }}
+        <AlertTriangle class="h-3.5 w-3.5 shrink-0 text-red-500" />
+        <span class="flex-1 text-red-800 font-medium">
+          Sin conexión — {{ dbStore.message }}
         </span>
         <Button
           variant="outline"
@@ -82,7 +78,7 @@ watch(
         </Button>
       </div>
 
-      <main class="flex flex-1 flex-col overflow-auto bg-muted/20">
+      <main class="flex flex-1 flex-col overflow-auto">
         <router-view />
       </main>
     </SidebarInset>

@@ -369,7 +369,7 @@ function handleLoadCart(cartId: number) {
         <div
           v-if="productosEncontrados.length > 0"
           ref="searchResultsContainerRef"
-          class="absolute left-0 right-0 top-[calc(100%+6px)] z-[200] rounded-lg border bg-background shadow-2xl max-h-72 overflow-y-auto"
+          class="absolute left-0 right-0 top-[calc(100%+6px)] z-[200] rounded-lg border bg-background shadow-md max-h-72 overflow-y-auto"
         >
           <div
             v-for="(producto, index) in productosEncontrados"
@@ -397,7 +397,7 @@ function handleLoadCart(cartId: number) {
         <!-- No results -->
         <div
           v-else-if="busqueda.length >= 1 && !isLoading && productosEncontrados.length === 0"
-          class="absolute left-0 right-0 top-[calc(100%+6px)] z-[200] rounded-lg border bg-background shadow-2xl p-5 flex flex-col items-center gap-3"
+          class="absolute left-0 right-0 top-[calc(100%+6px)] z-[200] rounded-lg border bg-background shadow-md p-5 flex flex-col items-center gap-3"
         >
           <p class="text-sm text-muted-foreground">Sin resultados para "{{ busqueda }}"</p>
           <Button @click="isCreateModalOpen = true" variant="outline" size="sm">
@@ -407,7 +407,7 @@ function handleLoadCart(cartId: number) {
       </div>
 
       <!-- Cart table — inner scroll, sticky header without backdrop-blur (no stacking context) -->
-      <div class="flex-1 min-h-0 rounded-lg border bg-card shadow-sm overflow-hidden">
+      <div class="flex-1 min-h-0 rounded-lg border bg-card overflow-hidden">
         <div class="h-full overflow-y-auto">
           <Table>
             <TableHeader class="sticky top-0 bg-card border-b z-10">
@@ -464,7 +464,7 @@ function handleLoadCart(cartId: number) {
       </div>
 
       <!-- Footer: summary + actions -->
-      <div class="shrink-0 rounded-lg border bg-card shadow-sm px-5 py-3 flex items-center gap-6">
+      <div class="shrink-0 rounded-lg border bg-card px-5 py-3 flex items-center gap-6">
         <div class="flex-1 text-sm text-muted-foreground">
           {{ activeCart.length }} artículo(s)
         </div>
@@ -477,7 +477,7 @@ function handleLoadCart(cartId: number) {
             <Save class="w-4 h-4" />En Espera
             <kbd class="ml-0.5 text-[10px] font-mono bg-muted border rounded px-1 text-muted-foreground">F11</kbd>
           </Button>
-          <Button @click="abrirModalFinalizar" class="h-12 px-8 gap-2 font-bold text-lg shadow-lg shadow-primary/20">
+          <Button @click="abrirModalFinalizar" class="h-12 px-8 gap-2 font-bold text-lg">
             Pagar
             <kbd class="ml-0.5 text-[10px] font-mono rounded px-1 bg-primary/20 border border-primary/30">F12</kbd>
           </Button>
@@ -491,7 +491,7 @@ function handleLoadCart(cartId: number) {
         <div
           v-for="cart in savedCarts"
           :key="cart.id"
-          class="rounded-lg border bg-card shadow-sm px-4 py-3.5 flex items-center justify-between gap-4 hover:bg-muted/20 transition-colors"
+          class="rounded-lg border bg-card px-4 py-3.5 flex items-center justify-between gap-4 hover:bg-muted/20 transition-colors"
         >
           <div class="min-w-0">
             <p class="font-semibold text-sm">{{ cart.nombre }}</p>

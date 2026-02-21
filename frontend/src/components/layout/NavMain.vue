@@ -42,15 +42,15 @@ const isParentActive = (item: { items?: { url: string }[] }): boolean => {
 };
 
 function handleMenuClick() {
-  if (state.value === "collapsed") {
-    setOpen(true);
-  }
+  if (state.value === "collapsed") setOpen(true);
 }
 </script>
 
 <template>
   <SidebarGroup>
-    <SidebarGroupLabel>Menú Principal</SidebarGroupLabel>
+    <SidebarGroupLabel class="text-[10px] uppercase tracking-widest font-semibold text-muted-foreground/60 px-3 mb-1">
+      Navegación
+    </SidebarGroupLabel>
     <SidebarMenu>
       <template v-for="item in items" :key="item.title">
         <Collapsible
@@ -63,31 +63,32 @@ function handleMenuClick() {
             <CollapsibleTrigger as-child @click="handleMenuClick">
               <SidebarMenuButton
                 :tooltip="item.title"
-                :class="{ 'bg-muted text-primary': isParentActive(item) }"
+                class="rounded-md"
+                :class="isParentActive(item) ? 'text-primary font-medium' : 'text-muted-foreground hover:text-foreground'"
               >
-                <component :is="item.icon" v-if="item.icon" />
+                <component :is="item.icon" v-if="item.icon" class="h-4 w-4 shrink-0" />
                 <span>{{ item.title }}</span>
                 <ChevronRight
-                  class="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
+                  class="ml-auto h-3.5 w-3.5 transition-transform duration-150 group-data-[state=open]/collapsible:rotate-90 text-muted-foreground/60"
                 />
               </SidebarMenuButton>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <SidebarMenuSub>
+              <SidebarMenuSub class="ml-6 border-l border-border pl-3 space-y-0.5">
                 <SidebarMenuSubItem
                   v-for="subItem in item.items"
                   :key="subItem.title"
                 >
-                  <SidebarMenuSubButton as-child>
+                  <SidebarMenuSubButton as-child class="rounded">
                     <RouterLink
                       :to="subItem.url"
-                      class="flex items-center gap-2"
-                      active-class="bg-muted text-primary"
+                      class="flex items-center gap-2 text-sm text-muted-foreground transition-colors"
+                      active-class="!text-primary font-medium"
                     >
                       <component
                         :is="subItem.icon"
                         v-if="subItem.icon"
-                        class="h-4 w-4"
+                        class="h-3.5 w-3.5"
                       />
                       <span>{{ subItem.title }}</span>
                     </RouterLink>
@@ -99,14 +100,15 @@ function handleMenuClick() {
         </Collapsible>
 
         <SidebarMenuItem v-else>
-          <SidebarMenuButton as-child :tooltip="item.title">
+          <SidebarMenuButton as-child :tooltip="item.title" class="rounded-md">
             <RouterLink
               :to="item.url!"
-              active-class="bg-muted text-primary"
-              exact-active-class="bg-muted text-primary"
+              class="flex items-center gap-2 text-muted-foreground transition-colors"
+              active-class="!text-primary !font-medium bg-primary/8"
+              exact-active-class="!text-primary !font-medium bg-primary/8"
               exact
             >
-              <component :is="item.icon" v-if="item.icon" />
+              <component :is="item.icon" v-if="item.icon" class="h-4 w-4 shrink-0" />
               <span>{{ item.title }}</span>
             </RouterLink>
           </SidebarMenuButton>

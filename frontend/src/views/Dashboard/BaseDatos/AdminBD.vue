@@ -753,7 +753,7 @@ function cellBg(rowIdx: number, col: string, value: string): string {
       <template v-else>
 
         <!-- Table header bar -->
-        <div class="border-b px-4 py-2.5 flex items-center gap-3 shrink-0 bg-background/95 backdrop-blur-sm">
+        <div class="border-b px-4 py-2.5 flex items-center gap-3 shrink-0 bg-background">
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-1 text-sm font-mono leading-none">
               <span class="text-muted-foreground/50 text-xs">public</span>
@@ -967,9 +967,9 @@ function cellBg(rowIdx: number, col: string, value: string): string {
                 <table class="text-[11px] border-collapse w-max min-w-full">
                   <!-- Sticky header -->
                   <thead class="sticky top-0 z-20">
-                    <tr class="bg-muted/90 backdrop-blur-sm">
+                    <tr class="bg-muted">
                       <!-- Row number column -->
-                      <th class="px-2 py-2 border-b border-r text-muted-foreground/50 font-normal text-[10px] w-8 select-none sticky left-0 bg-muted/90">
+                      <th class="px-2 py-2 border-b border-r text-muted-foreground/50 font-normal text-[10px] w-8 select-none sticky left-0 bg-muted">
                         #
                       </th>
                       <th

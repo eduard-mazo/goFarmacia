@@ -63,7 +63,7 @@ onMounted(loadData);
 
     <!-- Loading skeletons -->
     <div v-if="isLoading" class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-      <Card v-for="i in 4" :key="i" class="animate-pulse shadow-sm">
+      <Card v-for="i in 4" :key="i" class="animate-pulse">
         <CardContent class="p-6">
           <div class="flex justify-between items-start">
             <div class="space-y-2 flex-1">
