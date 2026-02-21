@@ -138,6 +138,30 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
+  /* Supabase-style data tables — reset Button components used as column headers
+     so they render as flat, full-width clickable spans without shadcn Button chrome. */
+  [data-supabase-table] thead th button {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+    cursor: pointer;
+    width: 100%;
+    height: auto;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  [data-supabase-table] thead th button:hover,
+  [data-supabase-table] thead th button:focus-visible {
+    background: transparent;
+    outline: none;
+  }
+
   /* Promote the main scroll container to its own GPU compositing layer.
      This decouples scroll from the fixed sidebar's stacking context in WebKit,
      eliminating the layout-recalculation jank on every scroll frame. */

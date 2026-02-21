@@ -67,27 +67,29 @@ onMounted(cargarReporte);
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
-    <!-- Page header + filter bar -->
-    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+  <div class="flex flex-col h-full">
+    <!-- Header bar with inline date filter -->
+    <div class="shrink-0 border-b px-4 py-3 flex items-center justify-between gap-4 bg-background">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">Reporte de Ventas</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">{{ rangoLabel }}</p>
+        <p class="text-sm font-semibold">Reporte de Ventas</p>
+        <p class="text-xs text-muted-foreground mt-0.5">{{ rangoLabel }}</p>
       </div>
-      <div class="flex items-end gap-3 flex-wrap">
-        <div class="grid gap-1">
-          <Label class="text-xs text-muted-foreground">Desde</Label>
-          <Input type="date" v-model="fechaInicio" class="h-9 w-[150px]" />
+      <div class="flex items-center gap-2">
+        <div class="flex items-center gap-1.5">
+          <Label class="text-xs text-muted-foreground whitespace-nowrap">Desde</Label>
+          <Input type="date" v-model="fechaInicio" class="h-7 text-xs w-[140px]" />
         </div>
-        <div class="grid gap-1">
-          <Label class="text-xs text-muted-foreground">Hasta</Label>
-          <Input type="date" v-model="fechaFin" class="h-9 w-[150px]" />
+        <div class="flex items-center gap-1.5">
+          <Label class="text-xs text-muted-foreground whitespace-nowrap">Hasta</Label>
+          <Input type="date" v-model="fechaFin" class="h-7 text-xs w-[140px]" />
         </div>
-        <Button @click="cargarReporte" :disabled="isLoading" class="h-9 gap-2">
-          <Search class="w-4 h-4" />Consultar
+        <Button @click="cargarReporte" :disabled="isLoading" size="sm" class="h-7 gap-1.5 text-xs">
+          <Search class="w-3.5 h-3.5" />Consultar
         </Button>
       </div>
     </div>
+    <!-- Scrollable content -->
+    <div class="flex-1 overflow-auto p-6 space-y-6">
 
     <!-- Loading skeletons -->
     <div v-if="isLoading" class="grid gap-4 grid-cols-1 sm:grid-cols-3">
@@ -221,5 +223,6 @@ onMounted(cargarReporte);
         </Card>
       </div>
     </template>
+    </div><!-- end scrollable content -->
   </div>
 </template>

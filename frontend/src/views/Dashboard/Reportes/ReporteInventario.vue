@@ -7,7 +7,10 @@ import {
   PackageX,
   DollarSign,
   AlertCircle,
+  RefreshCcw,
+  Loader2,
 } from "lucide-vue-next";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -54,12 +57,21 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
-    <!-- Page header -->
-    <div>
-      <h1 class="text-2xl font-semibold tracking-tight">Reporte de Inventario</h1>
-      <p class="text-sm text-muted-foreground mt-0.5">Estado actual del inventario y productos en alerta</p>
+  <div class="flex flex-col h-full">
+    <!-- Header bar -->
+    <div class="shrink-0 border-b px-4 py-3 flex items-center justify-between bg-background">
+      <div>
+        <p class="text-sm font-semibold">Reporte de Inventario</p>
+        <p class="text-xs text-muted-foreground mt-0.5">Estado actual del inventario y productos en alerta</p>
+      </div>
+      <Button variant="outline" size="sm" class="h-7 gap-1.5 text-xs" @click="loadData" :disabled="isLoading">
+        <Loader2 v-if="isLoading" class="h-3.5 w-3.5 animate-spin" />
+        <RefreshCcw v-else class="h-3.5 w-3.5" />
+        Actualizar
+      </Button>
     </div>
+    <!-- Scrollable content -->
+    <div class="flex-1 overflow-auto p-6 space-y-6">
 
     <!-- Loading skeletons -->
     <div v-if="isLoading" class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
@@ -186,5 +198,6 @@ onMounted(loadData);
         </CardContent>
       </Card>
     </template>
+    </div><!-- end scrollable content -->
   </div>
 </template>
