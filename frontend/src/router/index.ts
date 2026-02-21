@@ -99,6 +99,13 @@ const routes = [
         meta: { role: "admin" },
       },
       {
+        path: "basedatos",
+        name: "AdminBD",
+        component: () =>
+          import("@/views/Dashboard/BaseDatos/AdminBD.vue"),
+        meta: { role: "admin" },
+      },
+      {
         path: "perfil",
         name: "MiPerfil",
         component: () =>

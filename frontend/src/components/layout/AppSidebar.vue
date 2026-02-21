@@ -15,6 +15,7 @@ import {
   BarChart3,
   PackageSearch,
   Settings,
+  DatabaseZap,
 } from "lucide-vue-next";
 import NavMain from "@/components/layout/NavMain.vue";
 import NavUser from "@/components/layout/NavUser.vue";
@@ -123,6 +124,11 @@ const erpNav: NavItem[] = [
         icon: PackageSearch,
       },
     ],
+  },
+  {
+    title: "Base de Datos",
+    url: "/dashboard/basedatos",
+    icon: DatabaseZap,
   },
   {
     title: "Configuración",
