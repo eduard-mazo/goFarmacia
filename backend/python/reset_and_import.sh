@@ -47,9 +47,9 @@ MODE=""        # "file" | "live"
 BACKUP_FILE=""
 
 if [ -z "$SOURCE_ARG" ]; then
-  # Sin argumento → archivo por defecto
+  # Sin argumento → archivo por defecto en backend/db/
   MODE="file"
-  BACKUP_FILE="$SCRIPT_DIR/backup_supabase.sql"
+  BACKUP_FILE="$PROJECT_ROOT/backend/db/backup_supabase.sql"
 elif [[ "$SOURCE_ARG" == postgres://* || "$SOURCE_ARG" == postgresql://* ]]; then
   # Es un DSN → pg_dump en vivo
   MODE="live"

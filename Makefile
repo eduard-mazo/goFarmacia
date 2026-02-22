@@ -98,11 +98,12 @@ help:
 	@echo "  $(GREEN)db-create-admin$(RESET)        Crear primer administrador (primer uso)"
 	@echo "  $(GREEN)db-make-admin$(RESET)           Promover a admin: EMAIL=x@y.com"
 	@echo "  $(GREEN)db-reset$(RESET)               Restaurar BD (DESTINO=DATABASE_URL en .env)"
-	@echo "                   SOURCE no indicado       → usa backup_supabase.sql"
-	@echo "                   SOURCE=archivo.sql       → desde archivo SQL"
+	@echo "                   SOURCE no indicado       → usa backend/db/backup_supabase.sql"
+	@echo "                   SOURCE=archivo.sql       → desde archivo SQL (relativo a proyecto)"
 	@echo "                   SOURCE=postgresql://...  → pg_dump en vivo + restore"
 	@echo ""
 	@echo "$(BOLD)  Utilidades$(RESET)"
+	@echo "  $(GREEN)shortcut$(RESET)               Crea acceso directo en escritorio (build previo)"
 	@echo "  $(GREEN)install-deps$(RESET)           Instala mingw-w64 + zip (Linux/apt)"
 	@echo "  $(GREEN)install-deps-mac$(RESET)       Instala herramientas vía Homebrew"
 	@echo "  $(GREEN)tidy$(RESET)                   go mod tidy + pnpm install"
@@ -389,11 +390,11 @@ db-reset:
 ifdef SOURCE
 	@echo "  Origen  : $(SOURCE)"
 else
-	@echo "  Origen  : backend/python/backup_supabase.sql  (por defecto)"
+	@echo "  Origen  : backend/db/backup_supabase.sql  (por defecto)"
 endif
 	@echo "  $(YELLOW)ADVERTENCIA: borrará todos los datos actuales del destino.$(RESET)"
 	@read -p "  ¿Continuar? [s/N] " confirm && [ "$$confirm" = "s" ] || exit 0
-	cd backend/python && bash reset_and_import.sh "$(SOURCE)"
+	@bash backend/python/reset_and_import.sh "$(SOURCE)"
 
 .PHONY: db-status
 db-status:
@@ -428,6 +429,46 @@ db-make-admin:
 # =============================================================================
 #  UTILIDADES
 # =============================================================================
+
+# ── Acceso directo de escritorio ──────────────────────────────────────────────
+# Linux : instala ícono + archivo .desktop en XDG estándar
+# macOS : crea alias .app en ~/Desktop
+# ─────────────────────────────────────────────────────────────────────────────
+ICON_SRC  := $(CURDIR)/icono_luna.png
+ICON_NAME := $(APP_NAME)
+
+.PHONY: shortcut
+shortcut: build
+ifeq ($(UNAME), Darwin)
+	@echo "$(BOLD)$(CYAN)→ Creando acceso directo macOS...$(RESET)"
+	@rm -f ~/Desktop/$(APP_NAME).app
+	@ln -s "$(abspath $(BUILD_DIR)/$(APP_NAME).app)" ~/Desktop/$(APP_NAME).app
+	@echo "$(GREEN)✓ Alias creado:$(RESET) ~/Desktop/$(APP_NAME).app"
+else
+	@echo "$(BOLD)$(CYAN)→ Creando acceso directo en escritorio (Linux)...$(RESET)"
+	@mkdir -p ~/.local/share/icons/hicolor/256x256/apps
+	@cp "$(ICON_SRC)" ~/.local/share/icons/hicolor/256x256/apps/$(ICON_NAME).png
+	@gtk-update-icon-cache ~/.local/share/icons/hicolor 2>/dev/null || true
+	@mkdir -p ~/.local/share/applications
+	@printf '[Desktop Entry]\n\
+Version=1.0\n\
+Name=$(APP_NAME)\n\
+Comment=Sistema de gestión farmacéutica\n\
+Exec=sh -c '"'"'$(abspath $(BUILD_DIR)/$(APP_NAME)) >> /tmp/gofarmacia.log 2>&1'"'"'\n\
+Path=$(abspath $(BUILD_DIR))\n\
+Icon=$(ICON_NAME)\n\
+Terminal=false\n\
+Type=Application\n\
+Categories=Office;MedicalSoftware;\n' \
+	  > ~/.local/share/applications/$(APP_NAME).desktop
+	@chmod +x ~/.local/share/applications/$(APP_NAME).desktop
+	@update-desktop-database ~/.local/share/applications 2>/dev/null || true
+	@echo "$(GREEN)✓ Acceso directo creado$(RESET)"
+	@echo "  Ícono  : ~/.local/share/icons/hicolor/256x256/apps/$(ICON_NAME).png"
+	@echo "  Entry  : ~/.local/share/applications/$(APP_NAME).desktop"
+	@echo "  $(YELLOW)Si la app no inicia, revisar: cat /tmp/gofarmacia.log$(RESET)"
+endif
+
 .PHONY: version
 version:
 	@echo "$(APP_NAME) $(VERSION)  ($(HOST_OS)/$(ARCH) · $(BUILD_DATE))"
