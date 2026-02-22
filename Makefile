@@ -97,7 +97,10 @@ help:
 	@echo "  $(GREEN)db-users$(RESET)               Lista usuarios y roles"
 	@echo "  $(GREEN)db-create-admin$(RESET)        Crear primer administrador (primer uso)"
 	@echo "  $(GREEN)db-make-admin$(RESET)           Promover a admin: EMAIL=x@y.com"
-	@echo "  $(GREEN)db-reset$(RESET)               Restaurar BD desde backup"
+	@echo "  $(GREEN)db-reset$(RESET)               Restaurar BD (DESTINO=DATABASE_URL en .env)"
+	@echo "                   SOURCE no indicado       → usa backup_supabase.sql"
+	@echo "                   SOURCE=archivo.sql       → desde archivo SQL"
+	@echo "                   SOURCE=postgresql://...  → pg_dump en vivo + restore"
 	@echo ""
 	@echo "$(BOLD)  Utilidades$(RESET)"
 	@echo "  $(GREEN)install-deps$(RESET)           Instala mingw-w64 + zip (Linux/apt)"
@@ -381,10 +384,16 @@ db-create-admin:
 
 .PHONY: db-reset
 db-reset:
-	@echo "$(BOLD)$(YELLOW)→ Restaurando base de datos desde backup...$(RESET)"
-	@echo "  $(YELLOW)ADVERTENCIA: borrará todos los datos actuales.$(RESET)"
+	@echo "$(BOLD)$(YELLOW)→ Restaurando base de datos...$(RESET)"
+	@echo "  Destino : DATABASE_URL del .env"
+ifdef SOURCE
+	@echo "  Origen  : $(SOURCE)"
+else
+	@echo "  Origen  : backend/python/backup_supabase.sql  (por defecto)"
+endif
+	@echo "  $(YELLOW)ADVERTENCIA: borrará todos los datos actuales del destino.$(RESET)"
 	@read -p "  ¿Continuar? [s/N] " confirm && [ "$$confirm" = "s" ] || exit 0
-	cd backend/python && bash reset_and_import.sh
+	cd backend/python && bash reset_and_import.sh "$(SOURCE)"
 
 .PHONY: db-status
 db-status:

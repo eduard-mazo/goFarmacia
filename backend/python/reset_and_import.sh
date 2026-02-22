@@ -1,62 +1,110 @@
 #!/usr/bin/env bash
-# reset_and_import.sh
-# Restaura la BD local desde un backup de Supabase generado con pg_dump.
+# reset_and_import.sh — Restaura DATABASE_URL desde otra BD o desde un archivo.
 #
-# Generar el backup desde Supabase:
-#   pg_dump "postgresql://postgres.<ref>:<pass>@aws-1-us-east-1.pooler.supabase.com:5432/postgres" \
-#     --schema=public \
-#     --clean \
-#     --if-exists \
-#     --file=backup_supabase.sql
-#
-# Uso:
-#   bash reset_and_import.sh [ruta/al/backup.sql]
-#   make db-reset                  (usa backup_supabase.sql por defecto)
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  FLUJO                                                       ║
+# ║                                                              ║
+# ║  DESTINO: siempre DATABASE_URL del .env                      ║
+# ║                                                              ║
+# ║  ORIGEN (argumento $1 / variable SOURCE):                    ║
+# ║    • vacío / sin arg  → backend/python/backup_supabase.sql   ║
+# ║    • ruta a archivo   → usa ese .sql directamente            ║
+# ║    • DSN postgres://… → pg_dump en vivo, luego restaura      ║
+# ║                                                              ║
+# ╠══════════════════════════════════════════════════════════════╣
+# ║  Uso desde Makefile (recomendado):                           ║
+# ║    make db-reset                                             ║
+# ║    make db-reset SOURCE=backup_supabase.sql                  ║
+# ║    make db-reset SOURCE="postgresql://user:pass@host/db"     ║
+# ║                                                              ║
+# ║  Uso directo:                                                ║
+# ║    bash reset_and_import.sh                                  ║
+# ║    bash reset_and_import.sh /ruta/al/backup.sql              ║
+# ║    bash reset_and_import.sh "postgresql://user:pass@host/db" ║
+# ╚══════════════════════════════════════════════════════════════╝
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CLEANED_SQL="$SCRIPT_DIR/.backup_clean.sql"
+TMP_DUMP="$SCRIPT_DIR/.backup_live_dump.sql"
 
-# ── Limpiar archivo temporal al salir (éxito o error) ─────────────────────────
-trap 'rm -f "$CLEANED_SQL"' EXIT
+# ── Limpiar archivos temporales al salir (éxito o error) ──────────────────────
+trap 'rm -f "$CLEANED_SQL" "$TMP_DUMP"' EXIT
 
-# ── DATABASE_URL desde .env ───────────────────────────────────────────────────
+# ── DATABASE_URL desde .env (strip \r para archivos con line-endings Windows) ─
 if [ -f "$PROJECT_ROOT/.env" ]; then
-  set -a; source "$PROJECT_ROOT/.env"; set +a
+  set -a
+  source <(tr -d '\r' < "$PROJECT_ROOT/.env")
+  set +a
 fi
-DB_URL="${DATABASE_URL:-postgresql://luna:tu_password_seguro@localhost:5432/farmacia_db?sslmode=disable}"
+DEST_DSN="${DATABASE_URL:-postgresql://luna:tu_password_seguro@localhost:5432/farmacia_db?sslmode=disable}"
 
-# ── Archivo de backup (primer argumento o valor por defecto) ──────────────────
-BACKUP_FILE="${1:-$SCRIPT_DIR/backup_supabase.sql}"
+# ── Determinar origen ─────────────────────────────────────────────────────────
+SOURCE_ARG="${1:-}"
+MODE=""        # "file" | "live"
+BACKUP_FILE=""
 
-echo ""
-echo "═══════════════════════════════════════════════════════"
-echo " reset_and_import.sh — Restauración desde Supabase"
-echo "═══════════════════════════════════════════════════════"
-echo "  Backup : $BACKUP_FILE"
-echo "  BD     : $DB_URL"
-echo ""
-
-# ── Validar que el archivo existe ────────────────────────────────────────────
-if [ ! -f "$BACKUP_FILE" ]; then
-  echo "❌  Archivo no encontrado: $BACKUP_FILE"
-  echo ""
-  echo "    Generarlo con:"
-  echo "    pg_dump \"postgresql://<user>:<pass>@<host>:5432/postgres\" \\"
-  echo "      --schema=public \\"
-  echo "      --clean \\"
-  echo "      --if-exists \\"
-  echo "      --file=$(basename "$BACKUP_FILE")"
-  exit 1
+if [ -z "$SOURCE_ARG" ]; then
+  # Sin argumento → archivo por defecto
+  MODE="file"
+  BACKUP_FILE="$SCRIPT_DIR/backup_supabase.sql"
+elif [[ "$SOURCE_ARG" == postgres://* || "$SOURCE_ARG" == postgresql://* ]]; then
+  # Es un DSN → pg_dump en vivo
+  MODE="live"
+  BACKUP_FILE="$TMP_DUMP"
+else
+  # Es una ruta a archivo
+  MODE="file"
+  BACKUP_FILE="$SOURCE_ARG"
 fi
 
-# ── Paso 1: preprocesar — eliminar incompatibilidades de Supabase ─────────────
-echo "▶ [1/4] Preprocesando backup..."
+# ── Header ────────────────────────────────────────────────────────────────────
+echo ""
+echo "═══════════════════════════════════════════════════════"
+echo " reset_and_import.sh"
+echo "═══════════════════════════════════════════════════════"
+if [ "$MODE" = "live" ]; then
+  # Ocultar contraseña en el log
+  DISPLAY_SRC=$(echo "$SOURCE_ARG" | sed 's|://[^:]*:[^@]*@|://***:***@|')
+  echo "  Origen  : $DISPLAY_SRC  (pg_dump en vivo)"
+else
+  echo "  Origen  : $BACKUP_FILE"
+fi
+DISPLAY_DEST=$(echo "$DEST_DSN" | sed 's|://[^:]*:[^@]*@|://***:***@|')
+echo "  Destino : $DISPLAY_DEST  (DATABASE_URL)"
+echo ""
 
-# Roles de Supabase que no existen en PostgreSQL local estándar.
-# Las líneas que los mencionan en GRANT/REVOKE se eliminan.
+# ── Paso 1 (modo live): pg_dump desde el origen ───────────────────────────────
+if [ "$MODE" = "live" ]; then
+  echo "▶ [1/5] pg_dump desde origen..."
+  command -v pg_dump >/dev/null 2>&1 \
+    || { echo "❌  pg_dump no encontrado. Instalar: sudo apt-get install postgresql-client"; exit 1; }
+  pg_dump "$SOURCE_ARG" \
+    --schema=public \
+    --clean \
+    --if-exists \
+    --file="$TMP_DUMP"
+  echo "  ✓ Dump generado ($(wc -l < "$TMP_DUMP") líneas)"
+else
+  echo "▶ [1/5] Verificando archivo..."
+  [ -f "$BACKUP_FILE" ] || {
+    echo "❌  Archivo no encontrado: $BACKUP_FILE"
+    echo ""
+    echo "    Opciones:"
+    echo "      make db-reset SOURCE=\"postgresql://user:pass@host/db\"   # dump en vivo"
+    echo "      make db-reset SOURCE=/ruta/al/backup.sql                 # desde archivo"
+    exit 1
+  }
+  echo "  ✓ $(wc -l < "$BACKUP_FILE") líneas en $(basename "$BACKUP_FILE")"
+fi
+
+# ── Paso 2: preprocesar — eliminar incompatibilidades de Supabase ─────────────
+echo ""
+echo "▶ [2/5] Preprocesando SQL..."
+
+# Roles propios de Supabase que no existen en un PostgreSQL estándar.
 SUPA_ROLES="anon|authenticated|service_role|supabase_admin|supabase_auth_admin|supabase_read_only_user|dashboard_user"
 
 grep -vE \
@@ -66,37 +114,35 @@ grep -vE \
 ^ALTER DEFAULT PRIVILEGES" \
   "$BACKUP_FILE" > "$CLEANED_SQL"
 
-ORIG_LINES=$(wc -l < "$BACKUP_FILE")
-CLEAN_LINES=$(wc -l < "$CLEANED_SQL")
-echo "  ✓ $((ORIG_LINES - CLEAN_LINES)) líneas eliminadas  →  $CLEAN_LINES líneas limpias"
+ORIG=$(wc -l < "$BACKUP_FILE")
+CLEAN=$(wc -l < "$CLEANED_SQL")
+echo "  ✓ $((ORIG - CLEAN)) líneas eliminadas  →  $CLEAN líneas limpias"
 
-# ── Paso 2: aplicar backup completo (DROP → CREATE → COPY) ───────────────────
+# ── Paso 3: aplicar backup (DROP → CREATE → COPY) ────────────────────────────
 echo ""
-echo "▶ [2/4] Aplicando backup en BD local..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$CLEANED_SQL"
+echo "▶ [3/5] Aplicando en destino..."
+psql "$DEST_DSN" -v ON_ERROR_STOP=1 -f "$CLEANED_SQL"
 echo "  ✓ Backup aplicado"
 
-# ── Paso 3: asegurar tabla de migraciones (golang-migrate) ───────────────────
-# La tabla schema_migrations es propia de la app y puede no estar en el dump
-# de Supabase si las migraciones se gestionaron localmente. Se crea / rellena.
+# ── Paso 4: asegurar tabla de migraciones (golang-migrate) ───────────────────
 echo ""
-echo "▶ [3/4] Actualizando tabla de migraciones..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+echo "▶ [4/5] Actualizando schema_migrations..."
+psql "$DEST_DSN" -v ON_ERROR_STOP=1 <<'SQL'
 CREATE TABLE IF NOT EXISTS public.schema_migrations (
     version bigint  NOT NULL,
     dirty   boolean NOT NULL,
     CONSTRAINT schema_migrations_pkey PRIMARY KEY (version)
 );
 INSERT INTO public.schema_migrations (version, dirty) VALUES
-    (1, false),(2, false),(3, false),(4, false),(5, false),(6, false),(7, false)
+    (1,false),(2,false),(3,false),(4,false),(5,false),(6,false),(7,false)
 ON CONFLICT (version) DO UPDATE SET dirty = false;
 SQL
 echo "  ✓ Migraciones marcadas hasta versión 7"
 
-# ── Paso 4: verificación ──────────────────────────────────────────────────────
+# ── Paso 5: verificación ──────────────────────────────────────────────────────
 echo ""
-echo "▶ [4/4] Verificando datos importados..."
-psql "$DB_URL" -c "
+echo "▶ [5/5] Verificando registros en destino..."
+psql "$DEST_DSN" -c "
 SELECT tabla, registros FROM (
   SELECT 'vendedors'         AS tabla, COUNT(*) AS registros FROM vendedors
   UNION ALL SELECT 'clientes',         COUNT(*) FROM clientes
