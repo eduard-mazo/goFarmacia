@@ -105,7 +105,7 @@ echo ""
 echo "▶ [2/5] Preprocesando SQL..."
 
 # Roles propios de Supabase que no existen en un PostgreSQL estándar.
-SUPA_ROLES="anon|authenticated|service_role|supabase_admin|supabase_auth_admin|supabase_read_only_user|dashboard_user"
+SUPA_ROLES="anon|authenticated|service_role|supabase_admin|supabase_auth_admin|supabase_read_only_user|dashboard_user|postgres"
 
 grep -vE \
   "OWNER TO |\
