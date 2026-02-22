@@ -95,6 +95,7 @@ help:
 	@echo "$(BOLD)  Base de datos$(RESET)"
 	@echo "  $(GREEN)db-status$(RESET)              Estado de migraciones"
 	@echo "  $(GREEN)db-users$(RESET)               Lista usuarios y roles"
+	@echo "  $(GREEN)db-create-admin$(RESET)        Crear primer administrador (primer uso)"
 	@echo "  $(GREEN)db-make-admin$(RESET)           Promover a admin: EMAIL=x@y.com"
 	@echo "  $(GREEN)db-reset$(RESET)               Restaurar BD desde backup"
 	@echo ""
@@ -125,6 +126,10 @@ check-deps:
 	@command -v psql  >/dev/null 2>&1 \
 	  && echo "  $(GREEN)✓$(RESET) psql       $$(psql --version | head -1)" \
 	  || echo "  $(YELLOW)!$(RESET) psql       — no encontrado (necesario para utilidades de BD)"
+	@pkg-config --exists libusb-1.0 2>/dev/null \
+	  && echo "  $(GREEN)✓$(RESET) libusb-1.0 $$(pkg-config --modversion libusb-1.0)" \
+	  || (echo "  $(RED)✗$(RESET) libusb-1.0 — requerido para impresora USB (POSPrinter)" && \
+	      echo "             Linux: make install-deps  |  macOS: make install-deps-mac" && exit 1)
 ifeq ($(UNAME), Darwin)
 	@command -v create-dmg >/dev/null 2>&1 \
 	  && echo "  $(GREEN)✓$(RESET) create-dmg (paquete DMG)" \
@@ -147,7 +152,7 @@ endif
 install-deps:
 	@echo "$(BOLD)Instalando dependencias del sistema (Linux/apt)...$(RESET)"
 	sudo apt-get update -qq
-	sudo apt-get install -y gcc-mingw-w64-x86-64 zip
+	sudo apt-get install -y gcc-mingw-w64-x86-64 zip libusb-1.0-0-dev pkg-config
 	@echo "$(GREEN)✓ Listo.$(RESET)"
 	@echo "  Instalar Wails: go install github.com/wailsapp/wails/v2/cmd/wails@latest"
 
@@ -156,7 +161,7 @@ install-deps-mac:
 	@echo "$(BOLD)Instalando dependencias del sistema (macOS/Homebrew)...$(RESET)"
 	@command -v brew >/dev/null 2>&1 || \
 	  (echo "$(RED)Homebrew no encontrado.$(RESET) Instalar desde https://brew.sh" && exit 1)
-	brew install create-dmg
+	brew install create-dmg libusb
 	@echo "$(GREEN)✓ Listo.$(RESET)"
 	@echo "  Instalar Xcode CLI si falta: xcode-select --install"
 	@echo "  Instalar Wails: go install github.com/wailsapp/wails/v2/cmd/wails@latest"
@@ -361,6 +366,19 @@ endif
 # =============================================================================
 #  BASE DE DATOS
 # =============================================================================
+.PHONY: db-create-admin
+db-create-admin:
+	@([ -n "$(NOMBRE)" ] && [ -n "$(APELLIDO)" ] && [ -n "$(EMAIL)" ] && [ -n "$(CEDULA)" ] && [ -n "$(PASSWORD)" ]) || \
+	  (echo "$(RED)Uso: make db-create-admin NOMBRE=Juan APELLIDO=Pérez EMAIL=admin@ejemplo.com CEDULA=12345678 PASSWORD=miClave123$(RESET)" && exit 1)
+	@[ -f .env ] || (echo "$(RED)Error: .env no encontrado. Copia .env.example a .env y configura DATABASE_URL.$(RESET)" && exit 1)
+	@echo "$(BOLD)$(CYAN)→ Creando administrador inicial...$(RESET)"
+	@cd cmd/initadmin && go run . \
+		-nombre   "$(NOMBRE)" \
+		-apellido "$(APELLIDO)" \
+		-email    "$(EMAIL)" \
+		-cedula   "$(CEDULA)" \
+		-password "$(PASSWORD)"
+
 .PHONY: db-reset
 db-reset:
 	@echo "$(BOLD)$(YELLOW)→ Restaurando base de datos desde backup...$(RESET)"
