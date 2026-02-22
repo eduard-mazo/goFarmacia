@@ -1,94 +1,116 @@
 #!/usr/bin/env bash
 # reset_and_import.sh
-# Borra y repuebla la BD local desde los backups de Supabase.
+# Restaura la BD local desde un backup de Supabase generado con pg_dump.
 #
-# Requisitos:
-#   - psql, migrate (golang-migrate) instalados en el PATH
-#   - python3 disponible
-#   - Ejecutar desde el directorio backend/python/
+# Generar el backup desde Supabase:
+#   pg_dump "postgresql://postgres.<ref>:<pass>@aws-1-us-east-1.pooler.supabase.com:5432/postgres" \
+#     --schema=public \
+#     --clean \
+#     --if-exists \
+#     --file=backup_supabase.sql
 #
 # Uso:
-#   cd backend/python
-#   bash reset_and_import.sh
+#   bash reset_and_import.sh [ruta/al/backup.sql]
+#   make db-reset                  (usa backup_supabase.sql por defecto)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DB_URL="postgresql://luna:tu_password_seguro@localhost:5432/farmacia_db?sslmode=disable"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CLEANED_SQL="$SCRIPT_DIR/.backup_clean.sql"
+
+# ── Limpiar archivo temporal al salir (éxito o error) ─────────────────────────
+trap 'rm -f "$CLEANED_SQL"' EXIT
+
+# ── DATABASE_URL desde .env ───────────────────────────────────────────────────
+if [ -f "$PROJECT_ROOT/.env" ]; then
+  set -a; source "$PROJECT_ROOT/.env"; set +a
+fi
+DB_URL="${DATABASE_URL:-postgresql://luna:tu_password_seguro@localhost:5432/farmacia_db?sslmode=disable}"
+
+# ── Archivo de backup (primer argumento o valor por defecto) ──────────────────
+BACKUP_FILE="${1:-$SCRIPT_DIR/backup_supabase.sql}"
 
 echo ""
 echo "═══════════════════════════════════════════════════════"
-echo " reset_and_import.sh — Restauración desde backup"
+echo " reset_and_import.sh — Restauración desde Supabase"
 echo "═══════════════════════════════════════════════════════"
+echo "  Backup : $BACKUP_FILE"
+echo "  BD     : $DB_URL"
 echo ""
 
-# ── Paso 1: vaciar schema ──────────────────────────────────
-echo "▶ [1/5] Borrando schema público..."
-psql "$DB_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO PUBLIC;"
-echo "  ✓ Schema vaciado"
+# ── Validar que el archivo existe ────────────────────────────────────────────
+if [ ! -f "$BACKUP_FILE" ]; then
+  echo "❌  Archivo no encontrado: $BACKUP_FILE"
+  echo ""
+  echo "    Generarlo con:"
+  echo "    pg_dump \"postgresql://<user>:<pass>@<host>:5432/postgres\" \\"
+  echo "      --schema=public \\"
+  echo "      --clean \\"
+  echo "      --if-exists \\"
+  echo "      --file=$(basename "$BACKUP_FILE")"
+  exit 1
+fi
 
-# ── Paso 2: re-crear tablas con schema final ──────────────
+# ── Paso 1: preprocesar — eliminar incompatibilidades de Supabase ─────────────
+echo "▶ [1/4] Preprocesando backup..."
+
+# Roles de Supabase que no existen en PostgreSQL local estándar.
+# Las líneas que los mencionan en GRANT/REVOKE se eliminan.
+SUPA_ROLES="anon|authenticated|service_role|supabase_admin|supabase_auth_admin|supabase_read_only_user|dashboard_user"
+
+grep -vE \
+  "OWNER TO |\
+^GRANT .* TO (${SUPA_ROLES})|\
+^REVOKE .* FROM (${SUPA_ROLES})|\
+^ALTER DEFAULT PRIVILEGES" \
+  "$BACKUP_FILE" > "$CLEANED_SQL"
+
+ORIG_LINES=$(wc -l < "$BACKUP_FILE")
+CLEAN_LINES=$(wc -l < "$CLEANED_SQL")
+echo "  ✓ $((ORIG_LINES - CLEAN_LINES)) líneas eliminadas  →  $CLEAN_LINES líneas limpias"
+
+# ── Paso 2: aplicar backup completo (DROP → CREATE → COPY) ───────────────────
 echo ""
-echo "▶ [2/5] Creando schema final..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SCRIPT_DIR/final_schema.sql"
-echo "  ✓ Schema creado (migraciones marcadas como aplicadas)"
+echo "▶ [2/4] Aplicando backup en BD local..."
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$CLEANED_SQL"
+echo "  ✓ Backup aplicado"
 
-# ── Paso 3: preprocesar SQL (quitar columnas extras) ──────
+# ── Paso 3: asegurar tabla de migraciones (golang-migrate) ───────────────────
+# La tabla schema_migrations es propia de la app y puede no estar en el dump
+# de Supabase si las migraciones se gestionaron localmente. Se crea / rellena.
 echo ""
-echo "▶ [3/5] Preprocesando archivos SQL..."
-python3 "$SCRIPT_DIR/preprocess.py"
-
-# ── Paso 4: importar en orden de FK ──────────────────────
-echo ""
-echo "▶ [4/5] Importando datos..."
-
-echo "  → vendedors..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SCRIPT_DIR/vendedors_rows_clean.sql"
-
-echo "  → clientes..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SCRIPT_DIR/clientes_rows_clean.sql"
-
-echo "  → productos..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SCRIPT_DIR/productos_rows_clean.sql"
-
-echo "  → facturas..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SCRIPT_DIR/facturas_rows_clean.sql"
-
-echo "  → operacion_stocks..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SCRIPT_DIR/operacion_stocks_rows_clean.sql"
-
-echo "  → detalle_facturas..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SCRIPT_DIR/detalle_facturas_rows_clean.sql"
-
-echo "  ✓ Datos importados"
-
-# ── Paso 5: recalcular stock ──────────────────────────────
-echo ""
-echo "▶ [5/5] Recalculando stock desde operacion_stocks..."
+echo "▶ [3/4] Actualizando tabla de migraciones..."
 psql "$DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
-BEGIN;
-UPDATE productos p
-SET stock = COALESCE(
-    (SELECT SUM(os.cantidad_cambio)
-     FROM operacion_stocks os
-     WHERE os.producto_uuid = p.uuid),
-    0
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    version bigint  NOT NULL,
+    dirty   boolean NOT NULL,
+    CONSTRAINT schema_migrations_pkey PRIMARY KEY (version)
 );
-COMMIT;
+INSERT INTO public.schema_migrations (version, dirty) VALUES
+    (1, false),(2, false),(3, false),(4, false),(5, false),(6, false),(7, false)
+ON CONFLICT (version) DO UPDATE SET dirty = false;
 SQL
-echo "  ✓ Stock recalculado"
+echo "  ✓ Migraciones marcadas hasta versión 7"
 
-# ── Verificación final ────────────────────────────────────
+# ── Paso 4: verificación ──────────────────────────────────────────────────────
+echo ""
+echo "▶ [4/4] Verificando datos importados..."
+psql "$DB_URL" -c "
+SELECT tabla, registros FROM (
+  SELECT 'vendedors'         AS tabla, COUNT(*) AS registros FROM vendedors
+  UNION ALL SELECT 'clientes',         COUNT(*) FROM clientes
+  UNION ALL SELECT 'productos',        COUNT(*) FROM productos
+  UNION ALL SELECT 'proveedors',       COUNT(*) FROM proveedors
+  UNION ALL SELECT 'facturas',         COUNT(*) FROM facturas
+  UNION ALL SELECT 'operacion_stocks', COUNT(*) FROM operacion_stocks
+  UNION ALL SELECT 'detalle_facturas', COUNT(*) FROM detalle_facturas
+  UNION ALL SELECT 'compras',          COUNT(*) FROM compras
+) t ORDER BY tabla;
+"
+
 echo ""
 echo "═══════════════════════════════════════════════════════"
 echo " ✅ IMPORTACIÓN COMPLETA"
 echo "═══════════════════════════════════════════════════════"
-psql "$DB_URL" -c "
-SELECT 'vendedors'       AS tabla, COUNT(*) AS registros FROM vendedors
-UNION ALL SELECT 'clientes',       COUNT(*) FROM clientes
-UNION ALL SELECT 'productos',      COUNT(*) FROM productos
-UNION ALL SELECT 'facturas',       COUNT(*) FROM facturas
-UNION ALL SELECT 'operacion_stocks', COUNT(*) FROM operacion_stocks
-UNION ALL SELECT 'detalle_facturas', COUNT(*) FROM detalle_facturas
-ORDER BY tabla;
-"
+echo ""
