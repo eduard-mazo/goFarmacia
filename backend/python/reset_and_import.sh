@@ -110,6 +110,8 @@ SUPA_ROLES="anon|authenticated|service_role|supabase_admin|supabase_auth_admin|s
 grep -vE \
   "OWNER TO |\
 ^SET transaction_timeout|\
+^DROP SCHEMA |\
+^CREATE SCHEMA |\
 ^GRANT .* TO (${SUPA_ROLES})|\
 ^REVOKE .* FROM (${SUPA_ROLES})|\
 ^ALTER DEFAULT PRIVILEGES" \
