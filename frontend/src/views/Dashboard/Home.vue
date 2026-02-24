@@ -20,6 +20,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import SalesTrendChart from "@/components/dashboard/SalesTrendChart.vue";
 import PaymentMethodsChart from "@/components/dashboard/PaymentMethodsChart.vue";
+import TopProductosChart from "@/components/dashboard/TopProductosChart.vue";
+import TopVendedoresChart from "@/components/dashboard/TopVendedoresChart.vue";
 import {
   DollarSign,
   ShoppingBag,
@@ -29,6 +31,7 @@ import {
   TrendingUp,
   AlertCircle,
   Wallet,
+  Users,
   Calendar as CalendarIcon,
 } from "lucide-vue-next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -232,96 +235,94 @@ watch(date, (newDate) => {
         </Card>
       </div>
 
-      <!-- Charts row -->
-      <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
-        <Card class="">
+      <!-- Row 2: Flujo de ventas (60%) + Top Productos (40%) -->
+      <div class="grid gap-4 grid-cols-1 lg:grid-cols-5">
+        <Card class="lg:col-span-3">
           <CardHeader class="pb-2">
-            <CardTitle class="text-base font-semibold">Flujo de Ventas por Hora</CardTitle>
+            <CardTitle class="text-base font-semibold flex items-center gap-2">
+              <TrendingUp class="h-4 w-4 text-primary" />
+              Flujo de Ventas por Hora
+            </CardTitle>
+            <p class="text-xs text-muted-foreground">Ingresos (área) · Transacciones (línea punteada)</p>
           </CardHeader>
-          <CardContent class="h-[280px]">
+          <CardContent class="h-[260px]">
             <SalesTrendChart :chart-data="dashboardData.ventasIndividuales" />
           </CardContent>
         </Card>
 
-        <Card class="">
+        <Card class="lg:col-span-2">
+          <CardHeader class="pb-2">
+            <CardTitle class="text-base font-semibold flex items-center gap-2">
+              <BarChart2 class="h-4 w-4 text-emerald-600" />
+              Top Productos Vendidos
+            </CardTitle>
+            <p class="text-xs text-muted-foreground">Unidades despachadas en el día</p>
+          </CardHeader>
+          <CardContent class="h-[260px]">
+            <TopProductosChart :chart-data="dashboardData.topProductos" />
+          </CardContent>
+        </Card>
+      </div>
+
+      <!-- Row 3: Métodos de Pago + Rendimiento Vendedores -->
+      <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
+        <Card>
           <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold flex items-center gap-2">
               <Wallet class="h-4 w-4 text-muted-foreground" />
               Métodos de Pago
             </CardTitle>
+            <p class="text-xs text-muted-foreground">Monto total por forma de pago</p>
           </CardHeader>
-          <CardContent class="h-[280px] flex items-center justify-center">
-            <PaymentMethodsChart
-              v-if="dashboardData.metodosPago?.length"
-              :chart-data="dashboardData.metodosPago"
-            />
-            <p v-else class="text-sm text-muted-foreground">Sin datos de pago para este día.</p>
+          <CardContent class="h-[220px]">
+            <PaymentMethodsChart :chart-data="dashboardData.metodosPago" />
           </CardContent>
         </Card>
-      </div>
 
-      <!-- Bottom row -->
-      <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
-        <!-- Top Productos -->
-        <Card class="">
-          <CardHeader class="pb-3">
+        <Card>
+          <CardHeader class="pb-2">
             <CardTitle class="text-base font-semibold flex items-center gap-2">
-              <TrendingUp class="h-4 w-4 text-emerald-600" />
-              Top Productos Vendidos
+              <Users class="h-4 w-4 text-primary" />
+              Rendimiento de Vendedores
             </CardTitle>
+            <p class="text-xs text-muted-foreground">Top 5 por monto vendido — hover para ver transacciones</p>
           </CardHeader>
-          <CardContent>
-            <ul v-if="dashboardData.topProductos?.length" class="space-y-2">
-              <li
-                v-for="(p, i) in dashboardData.topProductos"
-                :key="p.nombre"
-                class="flex justify-between items-center py-2 border-b last:border-0"
-              >
-                <div class="flex items-center gap-3 min-w-0">
-                  <span class="text-xs font-bold text-muted-foreground w-5 shrink-0">#{{ i + 1 }}</span>
-                  <span class="text-sm font-medium truncate">{{ p.nombre }}</span>
-                </div>
-                <span class="shrink-0 text-xs font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full ml-2">
-                  {{ p.cantidad }} uds
-                </span>
-              </li>
-            </ul>
-            <p v-else class="text-sm text-muted-foreground py-4 text-center">
-              No se vendieron productos este día.
-            </p>
-          </CardContent>
-        </Card>
-
-        <!-- Productos Sin Stock -->
-        <Card class="">
-          <CardHeader class="pb-3">
-            <CardTitle class="text-base font-semibold flex items-center gap-2 text-destructive">
-              <PackageX class="h-4 w-4" />
-              Productos Sin Stock
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul v-if="dashboardData.productosSinStock?.length" class="space-y-2">
-              <li
-                v-for="p in dashboardData.productosSinStock"
-                :key="p.UUID"
-                class="flex items-center justify-between py-2 border-b last:border-0"
-              >
-                <div class="min-w-0">
-                  <p class="text-sm font-medium truncate">{{ p.Nombre }}</p>
-                  <p class="font-mono text-xs text-muted-foreground">{{ p.Codigo }}</p>
-                </div>
-                <span class="shrink-0 text-xs font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full ml-2">
-                  Agotado
-                </span>
-              </li>
-            </ul>
-            <p v-else class="text-sm text-muted-foreground py-4 text-center">
-              ¡Todo en orden! Sin faltantes.
-            </p>
+          <CardContent class="h-[220px]">
+            <TopVendedoresChart :chart-data="dashboardData.topVendedoresDia" />
           </CardContent>
         </Card>
       </div>
+
+      <!-- Row 4: Productos Sin Stock -->
+      <Card>
+        <CardHeader class="pb-3">
+          <CardTitle class="text-base font-semibold flex items-center gap-2 text-destructive">
+            <PackageX class="h-4 w-4" />
+            Productos Sin Stock
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div v-if="dashboardData.productosSinStock?.length"
+            class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div
+              v-for="p in dashboardData.productosSinStock"
+              :key="p.UUID"
+              class="flex items-center justify-between px-3 py-2 rounded-md border bg-red-50/50"
+            >
+              <div class="min-w-0">
+                <p class="text-sm font-medium truncate">{{ p.Nombre }}</p>
+                <p class="font-mono text-xs text-muted-foreground">{{ p.Codigo }}</p>
+              </div>
+              <span class="shrink-0 text-xs font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full ml-3">
+                Agotado
+              </span>
+            </div>
+          </div>
+          <p v-else class="text-sm text-muted-foreground py-4 text-center">
+            ¡Todo en orden! Sin faltantes.
+          </p>
+        </CardContent>
+      </Card>
     </template>
   </div>
 </template>

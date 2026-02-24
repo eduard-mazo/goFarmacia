@@ -1,24 +1,23 @@
 <script setup lang="ts">
-import { Bar } from "vue-chartjs";
+import { Line } from "vue-chartjs";
 import {
   Chart as ChartJS,
   Title,
   Tooltip,
   Legend,
-  BarElement,
+  LineElement,
+  PointElement,
   CategoryScale,
   LinearScale,
+  Filler,
 } from "chart.js";
 import type { PropType } from "vue";
 import { computed } from "vue";
 
 ChartJS.register(
-  Title,
-  Tooltip,
-  Legend,
-  BarElement,
-  CategoryScale,
-  LinearScale
+  Title, Tooltip, Legend,
+  LineElement, PointElement,
+  CategoryScale, LinearScale, Filler
 );
 
 interface VentaIndividual {
@@ -33,85 +32,104 @@ const props = defineProps({
   },
 });
 
+const fmt = (v: number) =>
+  new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    minimumFractionDigits: 0,
+  }).format(v);
+
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
+  interaction: { mode: "index" as const, intersect: false },
   plugins: {
-    legend: {
-      display: false,
-    },
+    legend: { display: false },
     tooltip: {
       callbacks: {
-        title: function (context: any) {
-          const hour = context[0].label;
-          return `Ventas entre ${hour} y las ${String(
-            parseInt(hour.split(":")[0]) + 1
-          ).padStart(2, "0")}:00`;
+        title: (ctx: any) => {
+          const h = parseInt(ctx[0].label);
+          return `${String(h).padStart(2, "0")}:00 – ${String(h + 1).padStart(2, "0")}:00`;
         },
-        label: function (context: any) {
-          let label = "Total: ";
-          if (context.parsed.y !== null) {
-            label += new Intl.NumberFormat("es-CO", {
-              style: "currency",
-              currency: "COP",
-              minimumFractionDigits: 0,
-            }).format(context.parsed.y);
-          }
-          return label;
+        label: (ctx: any) => {
+          if (ctx.datasetIndex === 0) return ` Ventas: ${fmt(ctx.parsed.y)}`;
+          return ` Transacciones: ${ctx.parsed.y}`;
         },
       },
     },
   },
   scales: {
+    x: {
+      grid: { display: false },
+      ticks: { font: { size: 10 } },
+    },
     y: {
       beginAtZero: true,
+      grid: { color: "rgba(0,0,0,0.05)" },
       ticks: {
-        callback: function (value: any) {
-          return new Intl.NumberFormat("es-CO", {
-            style: "currency",
+        font: { size: 10 },
+        callback: (v: any) =>
+          new Intl.NumberFormat("es-CO", {
+            notation: "compact",
             currency: "COP",
+            style: "currency",
             maximumFractionDigits: 0,
-          }).format(value);
-        },
+          }).format(v),
       },
     },
-    x: {
-      grid: {
-        display: false, // Oculta la rejilla vertical para un look más limpio
-      },
+    y2: {
+      display: false,
+      beginAtZero: true,
+      position: "right" as const,
     },
   },
 };
 
 const formattedChartData = computed(() => {
-  if (!props.chartData || props.chartData.length === 0) {
-    return { labels: [], datasets: [] };
-  }
+  const hourlyRevenue = Array(24).fill(0);
+  const hourlyCount = Array(24).fill(0);
 
-  const hourlySales = Array(24).fill(0);
-
-  // Agrupa las ventas por hora
   props.chartData.forEach((sale) => {
-    const hour = new Date(sale.timestamp).getHours();
-    hourlySales[hour] += sale.total;
+    // timestamp from Go is local time (after timezone fix), parse safely
+    const h = new Date(sale.timestamp.replace(" ", "T")).getHours();
+    hourlyRevenue[h] += sale.total;
+    hourlyCount[h]++;
   });
 
-  // Crea las etiquetas para el eje X (e.g., "00:00", "01:00", ...)
-  const labels = Array.from(
-    { length: 24 },
-    (_, i) => `${String(i).padStart(2, "0")}:00`
+  const labels = Array.from({ length: 24 }, (_, i) =>
+    String(i).padStart(2, "0")
   );
 
+  // Build gradient lazily using a canvas reference
+  const gradient = {
+    backgroundColor: "rgba(37,99,235,0.15)",
+    borderColor: "rgba(37,99,235,0.9)",
+  };
+
   return {
-    labels: labels,
+    labels,
     datasets: [
       {
-        label: "Ventas por Hora",
-        backgroundColor: "#10b981",
-        borderColor: "#059669",
-        borderRadius: 4,
-        borderWidth: 1,
-        data: hourlySales,
+        label: "Ingresos",
+        data: hourlyRevenue,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        borderWidth: 2,
+        ...gradient,
+        yAxisID: "y",
+      },
+      {
+        label: "Transacciones",
+        data: hourlyCount,
+        fill: false,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 1.5,
+        borderColor: "rgba(16,185,129,0.7)",
+        borderDash: [4, 3],
+        yAxisID: "y2",
       },
     ],
   };
@@ -120,15 +138,13 @@ const formattedChartData = computed(() => {
 
 <template>
   <div class="h-full w-full">
-    <Bar
+    <Line
       v-if="chartData.length > 0"
       :data="formattedChartData"
       :options="chartOptions"
     />
-    <div v-else class="flex items-center justify-center h-full">
-      <p class="text-sm text-muted-foreground">
-        No hay ventas registradas para mostrar.
-      </p>
+    <div v-else class="flex items-center justify-center h-full text-sm text-muted-foreground">
+      No hay ventas registradas para mostrar.
     </div>
   </div>
 </template>

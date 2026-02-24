@@ -391,12 +391,46 @@ func (d *Db) initDB() {
 	d.runMigrations("postgres", dbURL)
 }
 
+// localTimeZoneName returns the IANA timezone name of the machine (e.g. "America/Bogota").
+func localTimeZoneName() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+	if data, err := os.ReadFile("/etc/timezone"); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+	if link, err := os.Readlink("/etc/localtime"); err == nil {
+		if idx := strings.Index(link, "zoneinfo/"); idx >= 0 {
+			return link[idx+9:]
+		}
+	}
+	return ""
+}
+
+// injectTimezone appends the machine timezone to a PostgreSQL DSN so that
+// TO_CHAR and date comparisons use local time rather than UTC.
+func injectTimezone(connString string) string {
+	tz := localTimeZoneName()
+	if tz == "" {
+		return connString
+	}
+	if strings.HasPrefix(connString, "postgres://") || strings.HasPrefix(connString, "postgresql://") {
+		sep := "?"
+		if strings.Contains(connString, "?") {
+			sep = "&"
+		}
+		return connString + sep + "TimeZone=" + url.QueryEscape(tz)
+	}
+	// key=value format
+	return connString + " timezone=" + tz
+}
+
 func (d *Db) NewPostgresDB(connString string) (*sql.DB, error) {
 	if connString == "" {
 		return nil, fmt.Errorf("string de conexión no proporcionado")
 	}
 
-	db, err := sql.Open("postgres", connString)
+	db, err := sql.Open("postgres", injectTimezone(connString))
 	if err != nil {
 		return nil, err
 	}

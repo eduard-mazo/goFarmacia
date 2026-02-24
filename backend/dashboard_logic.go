@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"database/sql"
 	"fmt"
 	"time"
 )
@@ -19,17 +18,25 @@ type ProductoVendido struct {
 type VendedorRendimiento struct {
 	NombreCompleto string  `json:"nombreCompleto"`
 	TotalVendido   float64 `json:"totalVendido"`
+	NumVentas      int     `json:"numVentas"`
+}
+
+type MetodoPagoDia struct {
+	MetodoPago string  `json:"metodo_pago"`
+	Count      int     `json:"count"`
+	Monto      float64 `json:"monto"`
 }
 
 type DashboardData struct {
-	TotalVentasDia     float64                  `json:"totalVentasDia"`
-	NumeroVentasDia    int64                    `json:"numeroVentasDia"`
-	TicketPromedioDia  float64                  `json:"ticketPromedioDia"`
-	VentasIndividuales []VentaIndividual        `json:"ventasIndividuales"`
-	TopProductos       []ProductoVendido        `json:"topProductos"`
-	ProductosSinStock  []Producto               `json:"productosSinStock"`
-	TopVendedor        VendedorRendimiento      `json:"topVendedor"`
-	MetodosPago        []map[string]interface{} `json:"metodosPago"`
+	TotalVentasDia     float64             `json:"totalVentasDia"`
+	NumeroVentasDia    int64               `json:"numeroVentasDia"`
+	TicketPromedioDia  float64             `json:"ticketPromedioDia"`
+	VentasIndividuales []VentaIndividual   `json:"ventasIndividuales"`
+	TopProductos       []ProductoVendido   `json:"topProductos"`
+	ProductosSinStock  []Producto          `json:"productosSinStock"`
+	TopVendedor        VendedorRendimiento `json:"topVendedor"`
+	TopVendedoresDia   []VendedorRendimiento `json:"topVendedoresDia"`
+	MetodosPago        []MetodoPagoDia     `json:"metodosPago"`
 }
 
 func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
@@ -40,13 +47,13 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	if fechaStr == "" {
 		fechaSeleccionada = time.Now()
 	} else {
-		fechaSeleccionada, err = time.Parse("2006-01-02", fechaStr)
+		fechaSeleccionada, err = time.ParseInLocation("2006-01-02", fechaStr, time.Local)
 		if err != nil {
 			return data, fmt.Errorf("formato de fecha inválido: %w", err)
 		}
 	}
 
-	location := fechaSeleccionada.Location()
+	location := time.Local
 	inicioDelDia := time.Date(fechaSeleccionada.Year(), fechaSeleccionada.Month(), fechaSeleccionada.Day(), 0, 0, 0, 0, location)
 	finDelDia := inicioDelDia.Add(24*time.Hour - 1*time.Nanosecond)
 
@@ -54,7 +61,8 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	data.VentasIndividuales = make([]VentaIndividual, 0)
 	data.TopProductos = make([]ProductoVendido, 0)
 	data.ProductosSinStock = make([]Producto, 0)
-	data.MetodosPago = make([]map[string]interface{}, 0)
+	data.MetodosPago = make([]MetodoPagoDia, 0)
+	data.TopVendedoresDia = make([]VendedorRendimiento, 0)
 
 	queryTotalVentas := "SELECT COALESCE(SUM(total), 0), COUNT(uuid) FROM facturas WHERE fecha_emision BETWEEN $1 AND $2"
 	err = d.DB.QueryRow(queryTotalVentas, inicioDelDia, finDelDia).Scan(&data.TotalVentasDia, &data.NumeroVentasDia)
@@ -101,20 +109,20 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 		data.TopProductos = append(data.TopProductos, p)
 	}
 
-	// 5. Obtener distribución de Métodos de Pago.
-	queryMetodos := "SELECT metodo_pago, COUNT(*) as count FROM facturas WHERE fecha_emision BETWEEN $1 AND $2 GROUP BY metodo_pago"
+	// 5. Obtener distribución de Métodos de Pago (con monto total).
+	queryMetodos := `SELECT metodo_pago, COUNT(*) as count, COALESCE(SUM(total), 0) as monto
+		FROM facturas WHERE fecha_emision BETWEEN $1 AND $2 GROUP BY metodo_pago ORDER BY monto DESC`
 	rows, err = d.DB.Query(queryMetodos, inicioDelDia, finDelDia)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener métodos de pago: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var metodo string
-		var count int
-		if err := rows.Scan(&metodo, &count); err != nil {
+		var m MetodoPagoDia
+		if err := rows.Scan(&m.MetodoPago, &m.Count, &m.Monto); err != nil {
 			return data, err
 		}
-		data.MetodosPago = append(data.MetodosPago, map[string]interface{}{"metodo_pago": metodo, "count": count})
+		data.MetodosPago = append(data.MetodosPago, m)
 	}
 
 	// 6. Obtener Top 5 Productos sin stock.
@@ -132,22 +140,31 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 		data.ProductosSinStock = append(data.ProductosSinStock, p)
 	}
 
-	// 7. Obtener el Top Vendedor del día.
-	queryTopVendedor := `
-		SELECT v.nombre, SUM(f.total) as total_vendido
+	// 7. Obtener top vendedores del día (incluye al top vendedor).
+	queryTopVendedores := `
+		SELECT CONCAT(v.nombre, ' ', v.apellido), SUM(f.total) as total_vendido, COUNT(f.uuid) as num_ventas
 		FROM facturas f
 		JOIN vendedors v ON v.uuid = f.vendedor_uuid
 		WHERE f.fecha_emision BETWEEN $1 AND $2
-		GROUP BY v.nombre
+		GROUP BY v.nombre, v.apellido
 		ORDER BY total_vendido DESC
-		LIMIT 1`
-	err = d.DB.QueryRow(queryTopVendedor, inicioDelDia, finDelDia).Scan(&data.TopVendedor.NombreCompleto, &data.TopVendedor.TotalVendido)
+		LIMIT 5`
+	rows, err = d.DB.Query(queryTopVendedores, inicioDelDia, finDelDia)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			data.TopVendedor = VendedorRendimiento{NombreCompleto: "N/A", TotalVendido: 0}
-		} else {
-			return data, fmt.Errorf("error al obtener top vendedor: %w", err)
+		return data, fmt.Errorf("error al obtener top vendedores: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var vr VendedorRendimiento
+		if err := rows.Scan(&vr.NombreCompleto, &vr.TotalVendido, &vr.NumVentas); err != nil {
+			return data, err
 		}
+		data.TopVendedoresDia = append(data.TopVendedoresDia, vr)
+	}
+	if len(data.TopVendedoresDia) > 0 {
+		data.TopVendedor = data.TopVendedoresDia[0]
+	} else {
+		data.TopVendedor = VendedorRendimiento{NombreCompleto: "N/A"}
 	}
 
 	return data, nil
@@ -233,16 +250,16 @@ func (d *Db) ObtenerReporteVentasRango(fechaInicio, fechaFin string) (ReporteVen
 	rep.TopVendedores = make([]VendedorRendimiento, 0)
 	rep.MetodosPago = make([]map[string]interface{}, 0)
 
-	inicio, err := time.Parse("2006-01-02", fechaInicio)
+	inicio, err := time.ParseInLocation("2006-01-02", fechaInicio, time.Local)
 	if err != nil {
 		return rep, fmt.Errorf("formato de fecha inicio inválido: %w", err)
 	}
-	fin, err := time.Parse("2006-01-02", fechaFin)
+	fin, err := time.ParseInLocation("2006-01-02", fechaFin, time.Local)
 	if err != nil {
 		return rep, fmt.Errorf("formato de fecha fin inválido: %w", err)
 	}
 
-	location := inicio.Location()
+	location := time.Local
 	desde := time.Date(inicio.Year(), inicio.Month(), inicio.Day(), 0, 0, 0, 0, location)
 	hasta := time.Date(fin.Year(), fin.Month(), fin.Day(), 23, 59, 59, 999999999, location)
 
