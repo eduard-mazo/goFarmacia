@@ -6,6 +6,7 @@ import {
   EventsOn,
   WindowFullscreen,
   WindowUnfullscreen,
+  WindowMaximise,
 } from "@/../wailsjs/runtime";
 
 EventsOn("sync:start", (mensaje: string) => {
@@ -30,6 +31,7 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault();
     if (isFullscreen.value) {
       WindowUnfullscreen();
+      WindowMaximise();
     } else {
       WindowFullscreen();
     }

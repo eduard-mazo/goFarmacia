@@ -37,7 +37,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, Edit, Search } from "lucide-vue-next";
+import { ArrowUpDown, SlidersHorizontal, Search } from "lucide-vue-next";
 import { backend } from "@/../wailsjs/go/models";
 import { ObtenerProductosPaginado } from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
@@ -127,15 +127,15 @@ const columns: ColumnDef<backend.Producto>[] = [
   },
   {
     id: "actions",
-    header: "Acciones",
     cell: ({ row }) => h(
       Button,
       {
-        variant: "outline",
-        size: "sm",
+        variant: "ghost",
+        class: "h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity",
+        title: "Ajustar stock",
         onClick: () => handleOpenAdjustModal(row.original),
       },
-      () => [h(Edit, { class: "w-4 h-4 mr-2" }), "Ajustar"]
+      () => h(SlidersHorizontal, { class: "w-3.5 h-3.5" })
     )
   },
 ];
