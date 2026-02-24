@@ -26,7 +26,7 @@ EventsOn("sync:finish", (mensaje: string) => {
 const isFullscreen = ref(false);
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === "F11") {
+  if (e.key === "F9") {
     e.preventDefault();
     if (isFullscreen.value) {
       WindowUnfullscreen();
