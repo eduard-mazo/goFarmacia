@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"goFarmacia/backend"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -23,6 +24,7 @@ func NewApp(db *backend.Db) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.db.Startup(ctx)
+	wailsruntime.WindowMaximise(ctx)
 }
 
 // shutdown is called when the app terminates.

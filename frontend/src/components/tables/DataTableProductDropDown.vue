@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { MoreHorizontal } from "lucide-vue-next";
+import { Pencil, History, Trash2 } from "lucide-vue-next";
 import { ref } from "vue";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -23,7 +21,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -70,98 +67,78 @@ function openHistoryDialog() {
 
 function handleSaveChanges() {
   emit("edit", editableProduct.value);
-  isEditDialogOpen.value = false; // Close dialog after saving
+  isEditDialogOpen.value = false;
 }
 
 function handleDeleteConfirm() {
   emit("delete", props.producto);
-  isDeleteDialogOpen.value = false; // Ensure dialog closes
+  isDeleteDialogOpen.value = false;
 }
 </script>
 
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="ghost" class="w-8 h-8 p-0">
+      <Button variant="ghost" class="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Pencil class="w-3.5 h-3.5" />
         <span class="sr-only">Abrir menú</span>
-        <MoreHorizontal class="w-4 h-4" />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent align="end">
-      <DropdownMenuLabel>Acciones</DropdownMenuLabel>
-      <DropdownMenuSeparator />
+    <DropdownMenuContent align="end" class="w-40">
       <DropdownMenuItem @click="openEditDialog">
-        <span>Editar producto</span>
+        <Pencil class="w-3.5 h-3.5 mr-2" />
+        <span>Editar</span>
       </DropdownMenuItem>
       <DropdownMenuItem @click="openHistoryDialog">
+        <History class="w-3.5 h-3.5 mr-2" />
         <span>Historial</span>
       </DropdownMenuItem>
-      <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
-        <span>Eliminar producto</span>
+      <DropdownMenuItem @click="openDeleteDialog" class="text-destructive focus:text-destructive">
+        <Trash2 class="w-3.5 h-3.5 mr-2" />
+        <span>Eliminar</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
+
   <Dialog v-model:open="isEditDialogOpen">
-    <DialogContent class="w-11/12 md:max-w-[700px]">
+    <DialogContent class="sm:max-w-[440px]">
       <DialogHeader>
         <DialogTitle>Editar Producto</DialogTitle>
-        <DialogDescription>
-          Realiza cambios en el producto aquí. Haz clic en guardar cuando hayas
-          terminado.
-        </DialogDescription>
       </DialogHeader>
-      <div class="grid gap-4 py-4">
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="name" class="text-right">Nombre</Label>
-          <Input
-            id="name"
-            v-model="editableProduct.Nombre"
-            class="col-span-3"
-          />
+      <div class="space-y-3 py-2">
+        <div class="space-y-1.5">
+          <Label for="prod-name">Nombre</Label>
+          <Input id="prod-name" v-model="editableProduct.Nombre" />
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="code" class="text-right">Código</Label>
-          <Input
-            id="code"
-            v-model="editableProduct.Codigo"
-            class="col-span-3"
-          />
+        <div class="space-y-1.5">
+          <Label for="prod-code">Código</Label>
+          <Input id="prod-code" v-model="editableProduct.Codigo" />
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="price" class="text-right">Precio Venta</Label>
-          <Input
-            id="price"
-            type="number"
-            v-model.number="editableProduct.PrecioVenta"
-            class="col-span-3"
-          />
-        </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="stock" class="text-right">Stock</Label>
-          <Input
-            id="stock"
-            type="number"
-            v-model.number="editableProduct.Stock"
-            class="col-span-3"
-          />
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <Label for="prod-price">Precio Venta</Label>
+            <Input id="prod-price" type="number" v-model.number="editableProduct.PrecioVenta" />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="prod-stock">Stock</Label>
+            <Input id="prod-stock" type="number" v-model.number="editableProduct.Stock" />
+          </div>
         </div>
       </div>
       <DialogFooter>
-        <Button type="submit" @click="handleSaveChanges"
-          >Guardar cambios</Button
-        >
+        <Button variant="ghost" @click="isEditDialogOpen = false">Cancelar</Button>
+        <Button @click="handleSaveChanges">Guardar cambios</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
+        <AlertDialogTitle>¿Eliminar producto?</AlertDialogTitle>
         <AlertDialogDescription>
-          Esta acción no se puede deshacer. Esto eliminará permanentemente el
-          producto
-          <span class="font-semibold">{{ props.producto.Nombre }}</span> de la
-          base de datos.
+          Esta acción no se puede deshacer. Se eliminará permanentemente
+          <span class="font-semibold">{{ props.producto.Nombre }}</span>.
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
@@ -175,6 +152,7 @@ function handleDeleteConfirm() {
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>
+
   <HistorialStockModal
     v-model:open="isHistoryDialogOpen"
     :producto="editableProduct"

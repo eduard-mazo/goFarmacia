@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { MoreHorizontal } from "lucide-vue-next";
+import { Pencil, Trash2 } from "lucide-vue-next";
 import { ref } from "vue";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -23,7 +21,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -72,63 +69,47 @@ function handleDeleteConfirm() {
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="ghost" class="w-8 h-8 p-0">
+      <Button variant="ghost" class="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Pencil class="w-3.5 h-3.5" />
         <span class="sr-only">Abrir menú</span>
-        <MoreHorizontal class="w-4 h-4" />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent align="end">
-      <DropdownMenuLabel>Acciones</DropdownMenuLabel>
-      <DropdownMenuSeparator />
+    <DropdownMenuContent align="end" class="w-36">
       <DropdownMenuItem @click="openEditDialog">
-        <span>Editar proveedor</span>
+        <Pencil class="w-3.5 h-3.5 mr-2" />
+        <span>Editar</span>
       </DropdownMenuItem>
-      <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
-        <span>Eliminar proveedor</span>
+      <DropdownMenuItem @click="openDeleteDialog" class="text-destructive focus:text-destructive">
+        <Trash2 class="w-3.5 h-3.5 mr-2" />
+        <span>Eliminar</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
 
   <Dialog v-model:open="isEditDialogOpen">
-    <DialogContent class="w-11/12 md:max-w-[700px]">
+    <DialogContent class="sm:max-w-[440px]">
       <DialogHeader>
         <DialogTitle>Editar Proveedor</DialogTitle>
-        <DialogDescription>
-          Realiza cambios en el proveedor aquí. Haz clic en guardar cuando hayas
-          terminado.
-        </DialogDescription>
       </DialogHeader>
-      <div class="grid gap-4 py-4">
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="nombre" class="text-right">Nombre</Label>
-          <Input
-            id="nombre"
-            v-model="editableProveedor.Nombre"
-            class="col-span-3"
-          />
+      <div class="space-y-3 py-2">
+        <div class="space-y-1.5">
+          <Label for="prov-nombre">Nombre</Label>
+          <Input id="prov-nombre" v-model="editableProveedor.Nombre" />
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="telefono" class="text-right">Teléfono</Label>
-          <Input
-            id="telefono"
-            v-model="editableProveedor.Telefono"
-            class="col-span-3"
-          />
-        </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="email" class="text-right">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            v-model="editableProveedor.Email"
-            class="col-span-3"
-          />
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <Label for="prov-tel">Teléfono</Label>
+            <Input id="prov-tel" v-model="editableProveedor.Telefono" />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="prov-email">Email</Label>
+            <Input id="prov-email" type="email" v-model="editableProveedor.Email" />
+          </div>
         </div>
       </div>
       <DialogFooter>
-        <Button type="submit" @click="handleSaveChanges"
-          >Guardar cambios</Button
-        >
+        <Button variant="ghost" @click="isEditDialogOpen = false">Cancelar</Button>
+        <Button @click="handleSaveChanges">Guardar cambios</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
@@ -136,12 +117,10 @@ function handleDeleteConfirm() {
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
+        <AlertDialogTitle>¿Eliminar proveedor?</AlertDialogTitle>
         <AlertDialogDescription>
-          Esta acción no se puede deshacer. Esto eliminará permanentemente el
-          proveedor
-          <span class="font-semibold">{{ props.proveedor.Nombre }}</span> de la
-          base de datos.
+          Esta acción no se puede deshacer. Se eliminará permanentemente
+          <span class="font-semibold">{{ props.proveedor.Nombre }}</span>.
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>

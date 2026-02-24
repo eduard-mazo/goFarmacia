@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { MoreHorizontal } from "lucide-vue-next";
+import { Pencil, Trash2 } from "lucide-vue-next";
 import { ref } from "vue";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -23,7 +21,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -32,7 +29,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { backend } from "@/../wailsjs/go/models";
 
-// Define props to accept a Cliente object
 const props = defineProps<{
   cliente: backend.Cliente;
 }>();
@@ -42,7 +38,6 @@ const emit = defineEmits<{
   (e: "delete", value: backend.Cliente): void;
 }>();
 
-// --- State for Dialogs ---
 const editableClient = ref<backend.Cliente>(
   backend.Cliente.createFrom(props.cliente)
 );
@@ -50,7 +45,6 @@ const editableClient = ref<backend.Cliente>(
 const isEditDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
 
-// --- Handlers ---
 function openEditDialog() {
   editableClient.value = backend.Cliente.createFrom(props.cliente);
   isEditDialogOpen.value = true;
@@ -63,81 +57,74 @@ function openDeleteDialog() {
 
 function handleSaveChanges() {
   emit("edit", editableClient.value);
-  isEditDialogOpen.value = false; // Close dialog after saving
+  isEditDialogOpen.value = false;
 }
 
 function handleDeleteConfirm() {
   emit("delete", props.cliente);
-  isDeleteDialogOpen.value = false; // Ensure dialog closes
+  isDeleteDialogOpen.value = false;
 }
 </script>
 
 <template>
-  <!-- The DropdownMenu now only controls showing the menu items -->
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="ghost" class="w-8 h-8 p-0">
+      <Button variant="ghost" class="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Pencil class="w-3.5 h-3.5" />
         <span class="sr-only">Abrir menú</span>
-        <MoreHorizontal class="w-4 h-4" />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent align="end">
-      <DropdownMenuLabel>Acciones</DropdownMenuLabel>
-      <DropdownMenuSeparator />
-
-      <!-- FIX: Use @click to programmatically open the correct dialog -->
+    <DropdownMenuContent align="end" class="w-36">
       <DropdownMenuItem @click="openEditDialog">
-        <span>Editar cliente</span>
+        <Pencil class="w-3.5 h-3.5 mr-2" />
+        <span>Editar</span>
       </DropdownMenuItem>
-
-      <DropdownMenuItem @click="openDeleteDialog" class="text-red-600">
-        <span>Eliminar cliente</span>
+      <DropdownMenuItem @click="openDeleteDialog" class="text-destructive focus:text-destructive">
+        <Trash2 class="w-3.5 h-3.5 mr-2" />
+        <span>Eliminar</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
+
   <Dialog v-model:open="isEditDialogOpen">
-    <DialogContent class="w-11/12 md:max-w-[700px]">
+    <DialogContent class="sm:max-w-[440px]">
       <DialogHeader>
         <DialogTitle>Editar Cliente</DialogTitle>
-        <DialogDescription>
-          Realiza cambios en el cliente aquí. Haz clic en guardar cuando hayas
-          terminado.
-        </DialogDescription>
       </DialogHeader>
-      <div class="grid gap-4 py-4">
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="name" class="text-right">Nombre</Label>
-          <Input id="name" v-model="editableClient.Nombre" class="col-span-3" />
+      <div class="space-y-3 py-2">
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <Label for="cli-nombre">Nombre</Label>
+            <Input id="cli-nombre" v-model="editableClient.Nombre" />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="cli-apellido">Apellido</Label>
+            <Input id="cli-apellido" v-model="editableClient.Apellido" />
+          </div>
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="apellido" class="text-right">Apellido</Label>
-          <Input id="apellido" v-model="editableClient.Apellido" class="col-span-3" />
+        <div class="space-y-1.5">
+          <Label for="cli-doc">Cédula</Label>
+          <Input id="cli-doc" v-model="editableClient.NumeroID" readonly disabled />
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="documento" class="text-right">Cédula</Label>
-          <Input id="documento" v-model="editableClient.NumeroID" class="col-span-3" readonly disabled />
-        </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="email" class="text-right">Email</Label>
-          <Input id="email" type="email" v-model.number="editableClient.Email" class="col-span-3" />
+        <div class="space-y-1.5">
+          <Label for="cli-email">Email</Label>
+          <Input id="cli-email" type="email" v-model="editableClient.Email" />
         </div>
       </div>
       <DialogFooter>
-        <Button type="submit" @click="handleSaveChanges">Guardar cambios</Button>
+        <Button variant="ghost" @click="isEditDialogOpen = false">Cancelar</Button>
+        <Button @click="handleSaveChanges">Guardar cambios</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
 
-  <!-- Delete Confirmation Dialog -->
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
+        <AlertDialogTitle>¿Eliminar cliente?</AlertDialogTitle>
         <AlertDialogDescription>
-          Esta acción no se puede deshacer. Esto eliminará permanentemente el
-          cliente
-          <span class="font-semibold">{{ props.cliente.Nombre }}</span> de la
-          base de datos.
+          Esta acción no se puede deshacer. Se eliminará permanentemente
+          <span class="font-semibold">{{ props.cliente.Nombre }}</span>.
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>

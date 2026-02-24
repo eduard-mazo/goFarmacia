@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import "vue-sonner/style.css";
 import { toast } from "vue-sonner";
 import {
   EventsOn,
   WindowFullscreen,
   WindowUnfullscreen,
-  WindowIsFullscreen,
 } from "@/../wailsjs/runtime";
 
 EventsOn("sync:start", (mensaje: string) => {
@@ -24,15 +23,17 @@ EventsOn("sync:finish", (mensaje: string) => {
   });
 });
 
-async function onKeydown(e: KeyboardEvent) {
+const isFullscreen = ref(false);
+
+function onKeydown(e: KeyboardEvent) {
   if (e.key === "F11") {
     e.preventDefault();
-    const isFs = await WindowIsFullscreen();
-    if (isFs) {
+    if (isFullscreen.value) {
       WindowUnfullscreen();
     } else {
       WindowFullscreen();
     }
+    isFullscreen.value = !isFullscreen.value;
   }
 }
 

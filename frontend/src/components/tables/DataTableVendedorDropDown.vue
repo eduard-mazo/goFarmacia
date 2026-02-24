@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { MoreHorizontal } from "lucide-vue-next";
+import { Pencil, Trash2 } from "lucide-vue-next";
 import { ref } from "vue";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -23,7 +21,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -39,7 +36,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { backend } from "@/../wailsjs/go/models";
 
-// Define props to accept a Vendedor object
 const props = defineProps<{
   vendedor: backend.Vendedor;
   disabled?: boolean;
@@ -50,7 +46,6 @@ const emit = defineEmits<{
   (e: "delete", value: backend.Vendedor): void;
 }>();
 
-// --- State for Dialogs ---
 const editableVendedor = ref<backend.Vendedor>(
   backend.Vendedor.createFrom(props.vendedor)
 );
@@ -58,7 +53,6 @@ const editableVendedor = ref<backend.Vendedor>(
 const isEditDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
 
-// --- Handlers ---
 function openEditDialog() {
   if (props.disabled) return;
   editableVendedor.value = backend.Vendedor.createFrom(props.vendedor);
@@ -73,60 +67,57 @@ function openDeleteDialog() {
 
 function handleSaveChanges() {
   emit("edit", editableVendedor.value);
-  isEditDialogOpen.value = false; // Close dialog after saving
+  isEditDialogOpen.value = false;
 }
 
 function handleDeleteConfirm() {
   emit("delete", props.vendedor);
-  isDeleteDialogOpen.value = false; // Ensure dialog closes
+  isDeleteDialogOpen.value = false;
 }
 </script>
 
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="ghost" class="w-8 h-8 p-0" :disabled="props.disabled">
+      <Button variant="ghost" class="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity" :disabled="props.disabled">
+        <Pencil class="w-3.5 h-3.5" />
         <span class="sr-only">Abrir menú</span>
-        <MoreHorizontal class="w-4 h-4" />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent align="end">
-      <DropdownMenuLabel>Acciones</DropdownMenuLabel>
-      <DropdownMenuSeparator />
+    <DropdownMenuContent align="end" class="w-36">
       <DropdownMenuItem @click="openEditDialog" :disabled="props.disabled">
-        <span>Editar vendedor</span>
+        <Pencil class="w-3.5 h-3.5 mr-2" />
+        <span>Editar</span>
       </DropdownMenuItem>
-      <DropdownMenuItem @click="openDeleteDialog" class="text-red-600" :disabled="props.disabled">
-        <span>Eliminar vendedor</span>
+      <DropdownMenuItem @click="openDeleteDialog" class="text-destructive focus:text-destructive" :disabled="props.disabled">
+        <Trash2 class="w-3.5 h-3.5 mr-2" />
+        <span>Eliminar</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
+
   <Dialog v-model:open="isEditDialogOpen">
-    <DialogContent class="w-11/12 md:max-w-[700px]">
+    <DialogContent class="sm:max-w-[440px]">
       <DialogHeader>
         <DialogTitle>Editar Vendedor</DialogTitle>
-        <DialogDescription>
-          Realiza cambios en el vendedor aquí. Haz clic en guardar cuando hayas
-          terminado.
-        </DialogDescription>
       </DialogHeader>
-      <div class="grid gap-4 py-4">
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="name" class="text-right">Nombre</Label>
-          <Input id="name" v-model="editableVendedor.Nombre" class="col-span-3" />
+      <div class="space-y-3 py-2">
+        <div class="space-y-1.5">
+          <Label for="vend-nombre">Nombre</Label>
+          <Input id="vend-nombre" v-model="editableVendedor.Nombre" />
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="cedula" class="text-right">Cédula</Label>
-          <Input id="cedula" v-model="editableVendedor.Cedula" class="col-span-3" readonly disabled />
+        <div class="space-y-1.5">
+          <Label for="vend-cedula">Cédula</Label>
+          <Input id="vend-cedula" v-model="editableVendedor.Cedula" readonly disabled />
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="email" class="text-right">Email</Label>
-          <Input id="email" type="email" v-model="editableVendedor.Email" class="col-span-3" />
+        <div class="space-y-1.5">
+          <Label for="vend-email">Email</Label>
+          <Input id="vend-email" type="email" v-model="editableVendedor.Email" />
         </div>
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label class="text-right">Rol</Label>
-          <Select v-model="editableVendedor.Role" class="col-span-3">
-            <SelectTrigger class="col-span-3">
+        <div class="space-y-1.5">
+          <Label>Rol</Label>
+          <Select v-model="editableVendedor.Role">
+            <SelectTrigger>
               <SelectValue placeholder="Selecciona un rol" />
             </SelectTrigger>
             <SelectContent>
@@ -137,19 +128,19 @@ function handleDeleteConfirm() {
         </div>
       </div>
       <DialogFooter>
-        <Button type="submit" @click="handleSaveChanges">Guardar cambios</Button>
+        <Button variant="ghost" @click="isEditDialogOpen = false">Cancelar</Button>
+        <Button @click="handleSaveChanges">Guardar cambios</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
   <AlertDialog v-model:open="isDeleteDialogOpen">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>¿Estás absolutamente seguro?</AlertDialogTitle>
+        <AlertDialogTitle>¿Eliminar vendedor?</AlertDialogTitle>
         <AlertDialogDescription>
-          Esta acción no se puede deshacer. Esto eliminará permanentemente el
-          vendedor
-          <span class="font-semibold">{{ props.vendedor.Nombre }}</span> de la
-          base de datos.
+          Esta acción no se puede deshacer. Se eliminará permanentemente
+          <span class="font-semibold">{{ props.vendedor.Nombre }}</span>.
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>

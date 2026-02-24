@@ -148,18 +148,16 @@ const columns: ColumnDef<backend.Factura>[] = [
       return h(
         Button,
         {
-          variant: "outline",
-          size: "sm",
+          variant: "ghost",
+          class: "h-7 w-7 p-0",
           disabled: isLoading,
+          title: "Ver factura",
           onClick: () => verDetalleFactura(row.original),
         },
         () =>
           isLoading
-            ? [
-              h(Loader2, { class: "w-4 h-4 mr-2 animate-spin" }),
-              "Cargando...",
-            ]
-            : [h(Eye, { class: "w-4 h-4 mr-2" }), "Ver Factura"]
+            ? h(Loader2, { class: "w-3.5 h-3.5 animate-spin" })
+            : h(Eye, { class: "w-3.5 h-3.5" })
       );
     },
   },
