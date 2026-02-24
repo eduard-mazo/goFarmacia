@@ -431,42 +431,50 @@ db-make-admin:
 # =============================================================================
 
 # ── Acceso directo de escritorio ──────────────────────────────────────────────
-# Linux : instala ícono + archivo .desktop en XDG estándar
+# Linux : instala ícono + .desktop en XDG + copia a ~/Desktop (trusted)
 # macOS : crea alias .app en ~/Desktop
+# Nota  : ejecutar DESPUÉS de 'make build' (no dispara rebuild automático)
 # ─────────────────────────────────────────────────────────────────────────────
 ICON_SRC  := $(CURDIR)/icono_luna.png
 ICON_NAME := $(APP_NAME)
+ICON_DEST := $(HOME)/.local/share/icons/hicolor/256x256/apps/$(ICON_NAME).png
 
 .PHONY: shortcut
-shortcut: build
+shortcut:
 ifeq ($(UNAME), Darwin)
 	@echo "$(BOLD)$(CYAN)→ Creando acceso directo macOS...$(RESET)"
+	@test -d "$(BUILD_DIR)/$(APP_NAME).app" || \
+	  (echo "$(RED)Error: .app no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
 	@rm -f ~/Desktop/$(APP_NAME).app
 	@ln -s "$(abspath $(BUILD_DIR)/$(APP_NAME).app)" ~/Desktop/$(APP_NAME).app
 	@echo "$(GREEN)✓ Alias creado:$(RESET) ~/Desktop/$(APP_NAME).app"
 else
 	@echo "$(BOLD)$(CYAN)→ Creando acceso directo en escritorio (Linux)...$(RESET)"
+	@test -f "$(BUILD_DIR)/$(APP_NAME)" || \
+	  (echo "$(RED)Error: Binario no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
+	@# Instalar ícono en la caché XDG
 	@mkdir -p ~/.local/share/icons/hicolor/256x256/apps
-	@cp "$(ICON_SRC)" ~/.local/share/icons/hicolor/256x256/apps/$(ICON_NAME).png
-	@gtk-update-icon-cache ~/.local/share/icons/hicolor 2>/dev/null || true
+	@cp "$(ICON_SRC)" "$(ICON_DEST)"
+	@gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor 2>/dev/null || true
+	@# Generar el archivo .desktop
 	@mkdir -p ~/.local/share/applications
-	@printf '[Desktop Entry]\n\
-Version=1.0\n\
-Name=$(APP_NAME)\n\
-Comment=Sistema de gestión farmacéutica\n\
-Exec=sh -c '"'"'$(abspath $(BUILD_DIR)/$(APP_NAME)) >> /tmp/gofarmacia.log 2>&1'"'"'\n\
-Path=$(abspath $(BUILD_DIR))\n\
-Icon=$(ICON_NAME)\n\
-Terminal=false\n\
-Type=Application\n\
-Categories=Office;MedicalSoftware;\n' \
+	@printf '[Desktop Entry]\nVersion=1.0\nName=Droguería Luna\nGenericName=Gestión Farmacéutica\nComment=Sistema de gestión farmacéutica\nExec=%s\nPath=%s\nIcon=%s\nTerminal=false\nType=Application\nCategories=Office;MedicalSoftware;\nStartupWMClass=$(APP_NAME)\n' \
+	  "$(abspath $(BUILD_DIR)/$(APP_NAME))" \
+	  "$(abspath $(BUILD_DIR))" \
+	  "$(ICON_DEST)" \
 	  > ~/.local/share/applications/$(APP_NAME).desktop
 	@chmod +x ~/.local/share/applications/$(APP_NAME).desktop
 	@update-desktop-database ~/.local/share/applications 2>/dev/null || true
+	@# Copiar al escritorio y marcar como confiable (GNOME 3.28+)
+	@mkdir -p ~/Desktop
+	@cp ~/.local/share/applications/$(APP_NAME).desktop ~/Desktop/$(APP_NAME).desktop
+	@chmod +x ~/Desktop/$(APP_NAME).desktop
+	@gio set ~/Desktop/$(APP_NAME).desktop metadata::trusted true 2>/dev/null || true
 	@echo "$(GREEN)✓ Acceso directo creado$(RESET)"
-	@echo "  Ícono  : ~/.local/share/icons/hicolor/256x256/apps/$(ICON_NAME).png"
-	@echo "  Entry  : ~/.local/share/applications/$(APP_NAME).desktop"
-	@echo "  $(YELLOW)Si la app no inicia, revisar: cat /tmp/gofarmacia.log$(RESET)"
+	@echo "  Ícono  : $(ICON_DEST)"
+	@echo "  Menú   : ~/.local/share/applications/$(APP_NAME).desktop"
+	@echo "  Desktop: ~/Desktop/$(APP_NAME).desktop"
+	@echo "  $(YELLOW)Si no inicia desde el escritorio, cierra sesión y vuelve a entrar.$(RESET)"
 endif
 
 .PHONY: version
