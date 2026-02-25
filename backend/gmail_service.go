@@ -41,12 +41,28 @@ type GmailAuthStatus struct {
 	ConfigDir     string `json:"configDir"`
 }
 
+// SyncOptions controls the scope of a Gmail synchronization run.
+type SyncOptions struct {
+	// Modo: "hoy" | "semana" | "mes" | "rango" | "completo"
+	Modo  string `json:"modo"`
+	Desde string `json:"desde"` // YYYY-MM-DD (only used when Modo == "rango")
+	Hasta string `json:"hasta"` // YYYY-MM-DD (only used when Modo == "rango")
+}
+
+// SyncLogEntry is one line in the real-time sync log sent to the frontend.
+type SyncLogEntry struct {
+	Nivel   string `json:"nivel"`   // "info" | "ok" | "warn" | "error"
+	Mensaje string `json:"mensaje"`
+	Ts      string `json:"ts"`
+}
+
 // SyncResult summarizes one synchronization run.
 type SyncResult struct {
-	Total      int      `json:"total"`
-	Nuevas     int      `json:"nuevas"`
-	Duplicadas int      `json:"duplicadas"`
-	Errores    []string `json:"errores"`
+	Total      int            `json:"total"`
+	Nuevas     int            `json:"nuevas"`
+	Duplicadas int            `json:"duplicadas"`
+	Errores    []string       `json:"errores"`
+	Log        []SyncLogEntry `json:"log"`
 }
 
 // NewGmailService creates the service. Credentials and token are stored in
@@ -175,18 +191,47 @@ func (g *GmailService) newGmailSvc() (*gmail.Service, error) {
 	return gmail.NewService(context.Background(), option.WithHTTPClient(client))
 }
 
-// SincronizarFacturas downloads emails with ZIP attachments from Gmail,
-// extracts DIAN XML invoices, parses them, and saves new ones to the database.
+// SincronizarFacturas runs a full historical sync (no date filter). Kept for backward compat.
 func (g *GmailService) SincronizarFacturas() (SyncResult, error) {
+	return g.SincronizarConOpciones(SyncOptions{Modo: "completo"})
+}
+
+// SincronizarConOpciones runs Gmail sync with scope control and real-time log events.
+// Events emitted:
+//
+//	"gmail:sync:log"      → SyncLogEntry  (one per notable action)
+//	"gmail:sync:progreso" → map{total, procesados, nuevas, duplicadas}
+func (g *GmailService) SincronizarConOpciones(opts SyncOptions) (SyncResult, error) {
 	svc, err := g.newGmailSvc()
 	if err != nil {
 		return SyncResult{}, err
 	}
 
-	result := SyncResult{Errores: []string{}}
-	query := "has:attachment filename:zip"
-	var pageToken string
+	result := SyncResult{Errores: []string{}, Log: []SyncLogEntry{}}
 
+	emit := func(nivel, msg string) {
+		entry := SyncLogEntry{
+			Nivel:   nivel,
+			Mensaje: msg,
+			Ts:      time.Now().Format("15:04:05"),
+		}
+		result.Log = append(result.Log, entry)
+		wailsruntime.EventsEmit(g.ctx, "gmail:sync:log", entry)
+	}
+
+	emitProgreso := func() {
+		wailsruntime.EventsEmit(g.ctx, "gmail:sync:progreso", map[string]int{
+			"total":      result.Total,
+			"nuevas":     result.Nuevas,
+			"duplicadas": result.Duplicadas,
+			"errores":    len(result.Errores),
+		})
+	}
+
+	query := g.buildGmailQuery(opts)
+	emit("info", fmt.Sprintf("Modo: %s — consulta: %s", opts.Modo, query))
+
+	var pageToken string
 	for {
 		call := svc.Users.Messages.List("me").Q(query).MaxResults(100)
 		if pageToken != "" {
@@ -194,13 +239,23 @@ func (g *GmailService) SincronizarFacturas() (SyncResult, error) {
 		}
 		resp, err := call.Do()
 		if err != nil {
+			emit("error", "Error listando mensajes: "+err.Error())
 			return result, fmt.Errorf("error listando mensajes Gmail: %w", err)
+		}
+
+		if len(resp.Messages) == 0 && result.Total == 0 {
+			emit("warn", "Sin mensajes con adjuntos ZIP en el rango seleccionado")
 		}
 
 		for _, m := range resp.Messages {
 			result.Total++
-			if err := g.procesarMensaje(svc, m.Id, &result); err != nil {
+			prevNuevas := result.Nuevas
+			if err := g.procesarMensajeConLog(svc, m.Id, &result, emit); err != nil {
 				result.Errores = append(result.Errores, fmt.Sprintf("msg %s: %v", m.Id, err))
+				emit("error", fmt.Sprintf("✗ Error en mensaje %s: %v", m.Id, err))
+			}
+			if result.Nuevas > prevNuevas {
+				emitProgreso()
 			}
 		}
 
@@ -208,43 +263,99 @@ func (g *GmailService) SincronizarFacturas() (SyncResult, error) {
 			break
 		}
 		pageToken = resp.NextPageToken
+		emit("info", fmt.Sprintf("Siguiente página... (%d procesados hasta ahora)", result.Total))
 	}
 
+	emit("ok", fmt.Sprintf(
+		"Finalizado — %d mensajes revisados, %d nuevas, %d duplicadas, %d errores",
+		result.Total, result.Nuevas, result.Duplicadas, len(result.Errores),
+	))
+	emitProgreso()
 	return result, nil
 }
 
-func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string, result *SyncResult) error {
+// buildGmailQuery converts SyncOptions into a Gmail search query string.
+func (g *GmailService) buildGmailQuery(opts SyncOptions) string {
+	base := "has:attachment filename:zip"
+	now := time.Now().In(time.Local)
+
+	switch opts.Modo {
+	case "hoy":
+		d := now.Format("2006/01/02")
+		return fmt.Sprintf("%s after:%s", base, d)
+	case "semana":
+		d := now.AddDate(0, 0, -7).Format("2006/01/02")
+		return fmt.Sprintf("%s after:%s", base, d)
+	case "mes":
+		d := now.AddDate(0, -1, 0).Format("2006/01/02")
+		return fmt.Sprintf("%s after:%s", base, d)
+	case "rango":
+		q := base
+		if opts.Desde != "" {
+			q += " after:" + strings.ReplaceAll(opts.Desde, "-", "/")
+		}
+		if opts.Hasta != "" {
+			// Gmail "before:" is exclusive, add one day
+			if t, err := time.ParseInLocation("2006-01-02", opts.Hasta, time.Local); err == nil {
+				q += " before:" + t.AddDate(0, 0, 1).Format("2006/01/02")
+			}
+		}
+		return q
+	default: // "completo"
+		return base
+	}
+}
+
+func (g *GmailService) procesarMensajeConLog(
+	svc *gmail.Service, messageID string,
+	result *SyncResult, emit func(nivel, msg string),
+) error {
 	msg, err := svc.Users.Messages.Get("me", messageID).Format("full").Do()
 	if err != nil {
 		return fmt.Errorf("get message: %w", err)
 	}
 
+	// Extract email subject for readable log lines
+	subject := ""
+	for _, h := range msg.Payload.Headers {
+		if h.Name == "Subject" {
+			subject = h.Value
+			break
+		}
+	}
+
 	zipData, err := g.extractZipAttachment(svc, msg)
 	if err != nil {
-		return nil // Not a DIAN invoice email — skip silently
+		// Not a DIAN invoice email — silently skip
+		return nil
 	}
+
+	emit("info", fmt.Sprintf("→ ZIP encontrado: %s", subject))
 
 	xmlFiles, err := processor.UnzipInMemory(zipData)
 	if err != nil || len(xmlFiles) == 0 {
+		emit("warn", fmt.Sprintf("  ZIP sin XML válido: %s", subject))
 		return nil
 	}
 
 	for _, xmlData := range xmlFiles {
 		products, err := processor.ParseInvoiceXMLBytes(xmlData)
 		if err != nil || len(products) == 0 {
+			emit("warn", fmt.Sprintf("  XML no parseable: %v", err))
 			continue
 		}
 
 		cufe := extractCUFE(xmlData)
+		sample := products[0]
+
 		exists, _ := g.db.ExisteFacturaCompra(messageID, cufe)
 		if exists {
 			result.Duplicadas++
+			emit("info", fmt.Sprintf("  Duplicada: %s (%s)", sample.InvoiceID, sample.SupplierName))
 			return nil
 		}
 
-		sample := products[0]
 		fechaEmision, _ := time.ParseInLocation("2006-01-02", sample.IssueDate, time.Local)
-
 		factura := FacturaCompra{
 			UUID:            uuid.NewString(),
 			ProveedorNIT:    sample.SupplierNIT,
@@ -282,6 +393,10 @@ func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string, res
 			return fmt.Errorf("guardar factura %s: %w", sample.InvoiceID, err)
 		}
 		result.Nuevas++
+		emit("ok", fmt.Sprintf(
+			"  ✓ %s — %s — %d líneas",
+			sample.InvoiceID, sample.SupplierName, len(products),
+		))
 	}
 	return nil
 }

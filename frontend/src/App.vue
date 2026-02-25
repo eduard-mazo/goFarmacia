@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted } from "vue";
 import "vue-sonner/style.css";
 import { toast } from "vue-sonner";
 import {
@@ -7,13 +7,12 @@ import {
   WindowFullscreen,
   WindowUnfullscreen,
   WindowMaximise,
+  WindowIsFullscreen,
 } from "@/../wailsjs/runtime";
 
 EventsOn("sync:start", (mensaje: string) => {
   console.log(`Sincronizando Factura: ${mensaje}`);
-  toast.loading(`Sincronizando Factura: ${mensaje}`, {
-    id: "sync-toast",
-  });
+  toast.loading(`Sincronizando Factura: ${mensaje}`, { id: "sync-toast" });
 });
 
 EventsOn("sync:finish", (mensaje: string) => {
@@ -24,18 +23,25 @@ EventsOn("sync:finish", (mensaje: string) => {
   });
 });
 
-const isFullscreen = ref(false);
+// Fullscreen toggle — always query actual window state to avoid ref desync.
+// A 200ms gap between unfullscreen and re-maximize lets GTK process the transition.
+let fsLocked = false;
 
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === "F9") {
-    e.preventDefault();
-    if (isFullscreen.value) {
+async function onKeydown(e: KeyboardEvent) {
+  if (e.key !== "F9" || fsLocked) return;
+  e.preventDefault();
+  fsLocked = true;
+  try {
+    const isFs = await WindowIsFullscreen();
+    if (isFs) {
       WindowUnfullscreen();
+      await new Promise<void>((r) => setTimeout(r, 200));
       WindowMaximise();
     } else {
       WindowFullscreen();
     }
-    isFullscreen.value = !isFullscreen.value;
+  } finally {
+    setTimeout(() => { fsLocked = false; }, 600);
   }
 }
 
