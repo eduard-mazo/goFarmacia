@@ -1,6 +1,6 @@
 # =============================================================================
 #  goFarmacia — Makefile
-#  Wails v2 · Go · Vue 3 · PostgreSQL
+#  Wails v2 · Go · Vue 3 · PostgreSQL · Gmail API (DIAN)
 #
 #  Uso rápido:
 #    make              → muestra ayuda
@@ -17,9 +17,8 @@ UNAME := $(shell uname -s)
 ARCH  := $(shell uname -m)
 
 ifeq ($(UNAME), Darwin)
-  # ── macOS ──
   HOST_OS       := mac
-  GO_BUILD_TAGS :=                         # WebKit incluido en macOS, sin tags extra
+  GO_BUILD_TAGS :=
   DEV_FLAGS     :=
   ifeq ($(ARCH), arm64)
     HOST_PLATFORM := darwin/arm64
@@ -27,7 +26,6 @@ ifeq ($(UNAME), Darwin)
     HOST_PLATFORM := darwin/amd64
   endif
 else
-  # ── Linux (default) ──
   HOST_OS       := linux
   GO_BUILD_TAGS := webkit2_41              # Requiere webkit2gtk-4.1
   DEV_FLAGS     := -tags $(GO_BUILD_TAGS)
@@ -44,8 +42,17 @@ LDFLAGS    := -X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)
 BUILD_DIR  := build/bin
 DIST_DIR   := dist
 
-# Cross-compiler Windows (desde Linux/Mac con mingw-w64)
-WIN_CC     := x86_64-w64-mingw32-gcc
+# Config de usuario en tiempo de ejecución (credenciales Gmail, token)
+CONFIG_DIR := $(HOME)/.config/goFarmacia
+
+# Archivos de configuración con fallback
+ENV_FILE              := .env
+ENV_EXAMPLE           := .env.example
+CREDS_EXAMPLE         := credentials.example.json
+CREDS_DEST            := $(CONFIG_DIR)/credentials.json
+
+# Cross-compiler Windows
+WIN_CC := x86_64-w64-mingw32-gcc
 
 # ── Colores ───────────────────────────────────────────────────────────────────
 BOLD   := \033[1m
@@ -69,10 +76,12 @@ help:
 	@echo ""
 	@echo "$(BOLD)  Desarrollo$(RESET)"
 	@echo "  $(GREEN)dev$(RESET)                   Hot-reload nativo ($(HOST_OS))"
-	@echo "  $(GREEN)check-deps$(RESET)             Verifica herramientas instaladas"
+	@echo "  $(GREEN)generate$(RESET)              Regenera bindings Wails (wails generate module)"
+	@echo "  $(GREEN)check-deps$(RESET)            Verifica herramientas instaladas"
+	@echo "  $(GREEN)check-env$(RESET)             Verifica que .env y credenciales existen"
 	@echo ""
 	@echo "$(BOLD)  Build — Nativo$(RESET)"
-	@echo "  $(GREEN)build$(RESET)                  Compila para $(HOST_OS) ($(HOST_PLATFORM))"
+	@echo "  $(GREEN)build$(RESET)                  Compila para $(HOST_OS) y copia configs"
 	@echo "  $(GREEN)build-debug$(RESET)            Compila con devtools habilitados"
 	@echo ""
 	@echo "$(BOLD)  Build — macOS$(RESET)  $(YELLOW)[ejecutar en Mac]$(RESET)"
@@ -101,6 +110,10 @@ help:
 	@echo "                   SOURCE no indicado       → usa backend/db/backup_supabase.sql"
 	@echo "                   SOURCE=archivo.sql       → desde archivo SQL (relativo a proyecto)"
 	@echo "                   SOURCE=postgresql://...  → pg_dump en vivo + restore"
+	@echo ""
+	@echo "$(BOLD)  Gmail / Facturas DIAN$(RESET)"
+	@echo "  $(GREEN)gmail-setup$(RESET)            Instrucciones + verifica credenciales OAuth2"
+	@echo "  $(GREEN)gmail-revoke$(RESET)           Elimina token guardado (fuerza re-autenticación)"
 	@echo ""
 	@echo "$(BOLD)  Utilidades$(RESET)"
 	@echo "  $(GREEN)shortcut$(RESET)               Crea acceso directo en escritorio (build previo)"
@@ -152,6 +165,35 @@ endif
 	@echo ""
 	@echo "$(GREEN)Check completado.$(RESET)"
 
+# Verifica que .env y credentials.json existen; muestra qué falta.
+.PHONY: check-env
+check-env:
+	@echo "$(BOLD)Verificando archivos de configuración...$(RESET)"
+	@if [ -f "$(ENV_FILE)" ]; then \
+	  echo "  $(GREEN)✓$(RESET) $(ENV_FILE)                       — variables de entorno"; \
+	  grep -qE "^DATABASE_URL=.+" $(ENV_FILE) \
+	    && echo "  $(GREEN)✓$(RESET)   DATABASE_URL encontrado" \
+	    || echo "  $(YELLOW)!$(RESET)   DATABASE_URL no configurado en $(ENV_FILE)"; \
+	  grep -qE "^JWT_SECRET_KEY=.+" $(ENV_FILE) \
+	    && echo "  $(GREEN)✓$(RESET)   JWT_SECRET_KEY encontrado" \
+	    || echo "  $(YELLOW)!$(RESET)   JWT_SECRET_KEY no configurado en $(ENV_FILE)"; \
+	else \
+	  echo "  $(RED)✗$(RESET) $(ENV_FILE) no encontrado"; \
+	  echo "      Copia $(ENV_EXAMPLE) → $(ENV_FILE) y ajusta los valores"; \
+	fi
+	@if [ -f "$(CREDS_DEST)" ]; then \
+	  echo "  $(GREEN)✓$(RESET) credentials.json                 — Gmail OAuth2 ($(CONFIG_DIR))"; \
+	else \
+	  echo "  $(YELLOW)!$(RESET) credentials.json NO encontrado   — $(CONFIG_DIR)/credentials.json"; \
+	  echo "      Ejecuta 'make gmail-setup' para instrucciones"; \
+	fi
+	@if [ -f "$(CONFIG_DIR)/gmail_token.json" ]; then \
+	  echo "  $(GREEN)✓$(RESET) gmail_token.json                 — token OAuth2 guardado"; \
+	else \
+	  echo "  $(YELLOW)!$(RESET) gmail_token.json no encontrado   — autentica desde la app (Facturas DIAN)"; \
+	fi
+	@echo ""
+
 .PHONY: install-deps
 install-deps:
 	@echo "$(BOLD)Instalando dependencias del sistema (Linux/apt)...$(RESET)"
@@ -182,6 +224,56 @@ else
 	wails dev -tags $(GO_BUILD_TAGS)
 endif
 
+# Regenera los bindings de Wails tras cambiar structs o métodos expuestos.
+.PHONY: generate
+generate:
+	@echo "$(BOLD)$(CYAN)→ Regenerando bindings Wails...$(RESET)"
+	wails generate module
+	@echo "$(GREEN)✓ Bindings actualizados en frontend/wailsjs/$(RESET)"
+
+# =============================================================================
+#  HELPERS INTERNOS — CONFIGS EN BUILD
+# =============================================================================
+
+# _copy-env: copia .env a un directorio objetivo.
+# Si .env no existe, copia .env.example como .env.example (avisa al usuario).
+# Uso: $(MAKE) _copy-env TARGET_DIR=build/bin
+.PHONY: _copy-env
+_copy-env:
+	@if [ -f "$(ENV_FILE)" ]; then \
+	  cp "$(ENV_FILE)" "$(TARGET_DIR)/.env"; \
+	  echo "  $(GREEN)✓$(RESET) .env copiado a $(TARGET_DIR)/"; \
+	elif [ -f "$(ENV_EXAMPLE)" ]; then \
+	  cp "$(ENV_EXAMPLE)" "$(TARGET_DIR)/.env.example"; \
+	  echo "  $(YELLOW)!$(RESET) .env no encontrado — copiado .env.example a $(TARGET_DIR)/"; \
+	  echo "      Renombra $(TARGET_DIR)/.env.example → $(TARGET_DIR)/.env y configura DATABASE_URL"; \
+	else \
+	  printf 'DATABASE_URL=postgresql://luna:tu_password@localhost:5432/farmacia_db?sslmode=disable\nJWT_SECRET_KEY=cambia_esto_por_una_clave_segura_de_32_caracteres_minimo\n' \
+	    > "$(TARGET_DIR)/.env.example"; \
+	  echo "  $(YELLOW)!$(RESET) .env ni .env.example encontrados — generado .env.example mínimo en $(TARGET_DIR)/"; \
+	fi
+
+# _copy-creds-example: incluye el JSON de ejemplo para Gmail en el paquete.
+# Nunca copia credentials.json real (contiene secretos) — solo el template.
+.PHONY: _copy-creds-example
+_copy-creds-example:
+	@if [ -f "$(CREDS_EXAMPLE)" ]; then \
+	  cp "$(CREDS_EXAMPLE)" "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
+	  echo "  $(GREEN)✓$(RESET) credentials.example.json copiado a $(TARGET_DIR)/"; \
+	else \
+	  printf '{"_ver":"Coloca el credentials.json de Google OAuth2 en ~/.config/goFarmacia/credentials.json","installed":{"client_id":"","client_secret":"","redirect_uris":["http://localhost:8094/gmail/oauth2/callback"]}}\n' \
+	    > "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
+	  echo "  $(YELLOW)!$(RESET) credentials.example.json generado en $(TARGET_DIR)/"; \
+	fi
+
+# _copy-common: archivos de acompañamiento para todos los paquetes dist.
+.PHONY: _copy-common
+_copy-common:
+	@$(MAKE) _copy-env TARGET_DIR="$(TARGET_DIR)"
+	@$(MAKE) _copy-creds-example TARGET_DIR="$(TARGET_DIR)"
+	@[ -f README.md    ] && cp README.md    "$(TARGET_DIR)/" || true
+	@[ -f CHANGELOG.md ] && cp CHANGELOG.md "$(TARGET_DIR)/" || true
+
 # =============================================================================
 #  BUILD — NATIVO (detecta SO actual)
 # =============================================================================
@@ -201,6 +293,8 @@ else
 	@echo ""
 	@echo "$(GREEN)✓ Binario:$(RESET) $(BUILD_DIR)/$(APP_NAME)"
 	@ls -lh $(BUILD_DIR)/$(APP_NAME)
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
 endif
 
 .PHONY: build-debug
@@ -219,6 +313,8 @@ else
 		-ldflags "$(LDFLAGS)" \
 		-debug -devtools \
 		-o $(APP_NAME)-debug
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
 endif
 
 # =============================================================================
@@ -241,6 +337,8 @@ build-mac: _guard-mac
 	@echo ""
 	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME).app"
 	@du -sh $(BUILD_DIR)/$(APP_NAME).app
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
 
 .PHONY: build-mac-arm64
 build-mac-arm64: _guard-mac
@@ -251,6 +349,8 @@ build-mac-arm64: _guard-mac
 		-clean \
 		-o $(APP_NAME)-arm64.app
 	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME)-arm64.app"
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
 
 .PHONY: build-mac-amd64
 build-mac-amd64: _guard-mac
@@ -261,6 +361,8 @@ build-mac-amd64: _guard-mac
 		-clean \
 		-o $(APP_NAME)-amd64.app
 	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME)-amd64.app"
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
 
 # =============================================================================
 #  BUILD — Windows  [desde Linux/Mac requiere mingw-w64]
@@ -281,6 +383,8 @@ build-win:
 	@echo ""
 	@echo "$(GREEN)✓ Binario:$(RESET) $(BUILD_DIR)/$(APP_NAME).exe"
 	@ls -lh $(BUILD_DIR)/$(APP_NAME).exe
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
 
 # =============================================================================
 #  BUILD — TODOS
@@ -296,15 +400,6 @@ endif
 # =============================================================================
 #  DISTRIBUCIÓN
 # =============================================================================
-_ENV_EXAMPLE := .env.example
-
-.PHONY: _copy-common
-_copy-common:
-	@cp $(_ENV_EXAMPLE) "$(TARGET_DIR)/" 2>/dev/null || \
-	  printf "DATABASE_URL=postgresql://user:pass@localhost:5432/farmacia_db?sslmode=disable\nJWT_SECRET_KEY=cambia_esto\n" \
-	  > "$(TARGET_DIR)/.env.example"
-	@cp README.md    "$(TARGET_DIR)/"
-	@cp CHANGELOG.md "$(TARGET_DIR)/"
 
 # ── Linux ─────────────────────────────────────────────────────────────────────
 .PHONY: dist-linux
@@ -427,14 +522,59 @@ db-make-admin:
 	  2>/dev/null || echo "$(RED)Error o usuario no encontrado.$(RESET)"
 
 # =============================================================================
+#  GMAIL / FACTURAS DIAN
+# =============================================================================
+
+# Muestra instrucciones de configuración y verifica el estado actual.
+.PHONY: gmail-setup
+gmail-setup:
+	@echo ""
+	@echo "$(BOLD)$(CYAN)  Configuración Gmail API — Facturas Electrónicas DIAN$(RESET)"
+	@echo ""
+	@echo "$(BOLD)Pasos para habilitar Gmail OAuth2:$(RESET)"
+	@echo "  1. Ir a https://console.cloud.google.com"
+	@echo "  2. Crear proyecto o seleccionar uno existente"
+	@echo "  3. Habilitar: APIs y servicios → Biblioteca → Gmail API"
+	@echo "  4. Crear credenciales: APIs y servicios → Credenciales"
+	@echo "     Tipo: OAuth 2.0 → Aplicación de escritorio"
+	@echo "  5. En 'URIs de redirección autorizados' agregar:"
+	@echo "     $(CYAN)http://localhost:8094/gmail/oauth2/callback$(RESET)"
+	@echo "  6. Descargar JSON → renombrar a $(BOLD)credentials.json$(RESET)"
+	@echo "  7. Colocar el archivo en: $(BOLD)$(CONFIG_DIR)/credentials.json$(RESET)"
+	@echo "  8. Abrir la app → sección Compras → Facturas Electrónicas → Conectar Gmail"
+	@echo ""
+	@echo "$(BOLD)Archivo ejemplo disponible:$(RESET) credentials.example.json"
+	@echo ""
+	@echo "$(BOLD)Estado actual:$(RESET)"
+	@mkdir -p "$(CONFIG_DIR)"
+	@if [ -f "$(CREDS_DEST)" ]; then \
+	  echo "  $(GREEN)✓$(RESET) credentials.json  — PRESENTE en $(CONFIG_DIR)"; \
+	else \
+	  echo "  $(RED)✗$(RESET) credentials.json  — NO encontrado"; \
+	  echo "      Destino esperado: $(CREDS_DEST)"; \
+	fi
+	@if [ -f "$(CONFIG_DIR)/gmail_token.json" ]; then \
+	  echo "  $(GREEN)✓$(RESET) gmail_token.json  — autenticación guardada"; \
+	else \
+	  echo "  $(YELLOW)!$(RESET) gmail_token.json  — pendiente (autentica desde la app)"; \
+	fi
+	@echo ""
+
+# Revoca el token OAuth2 guardado (el usuario deberá re-autenticar).
+.PHONY: gmail-revoke
+gmail-revoke:
+	@if [ -f "$(CONFIG_DIR)/gmail_token.json" ]; then \
+	  rm "$(CONFIG_DIR)/gmail_token.json"; \
+	  echo "$(GREEN)✓$(RESET) gmail_token.json eliminado — re-autentica desde la app."; \
+	else \
+	  echo "$(YELLOW)!$(RESET) gmail_token.json no existía en $(CONFIG_DIR)/"; \
+	fi
+
+# =============================================================================
 #  UTILIDADES
 # =============================================================================
 
 # ── Acceso directo de escritorio ──────────────────────────────────────────────
-# Linux : instala ícono + .desktop en XDG + copia a ~/Desktop (trusted)
-# macOS : crea alias .app en ~/Desktop
-# Nota  : ejecutar DESPUÉS de 'make build' (no dispara rebuild automático)
-# ─────────────────────────────────────────────────────────────────────────────
 ICON_SRC  := $(CURDIR)/icono_luna.png
 ICON_NAME := $(APP_NAME)
 ICON_DEST := $(HOME)/.local/share/icons/hicolor/256x256/apps/$(ICON_NAME).png
@@ -452,11 +592,9 @@ else
 	@echo "$(BOLD)$(CYAN)→ Creando acceso directo en escritorio (Linux)...$(RESET)"
 	@test -f "$(BUILD_DIR)/$(APP_NAME)" || \
 	  (echo "$(RED)Error: Binario no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
-	@# Instalar ícono en la caché XDG
 	@mkdir -p ~/.local/share/icons/hicolor/256x256/apps
 	@cp "$(ICON_SRC)" "$(ICON_DEST)"
 	@gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor 2>/dev/null || true
-	@# Generar el archivo .desktop
 	@mkdir -p ~/.local/share/applications
 	@printf '[Desktop Entry]\nVersion=1.0\nName=Droguería Luna\nGenericName=Gestión Farmacéutica\nComment=Sistema de gestión farmacéutica\nExec=%s\nPath=%s\nIcon=%s\nTerminal=false\nType=Application\nCategories=Office;MedicalSoftware;\nStartupWMClass=$(APP_NAME)\n' \
 	  "$(abspath $(BUILD_DIR)/$(APP_NAME))" \
@@ -465,7 +603,6 @@ else
 	  > ~/.local/share/applications/$(APP_NAME).desktop
 	@chmod +x ~/.local/share/applications/$(APP_NAME).desktop
 	@update-desktop-database ~/.local/share/applications 2>/dev/null || true
-	@# Copiar al escritorio y marcar como confiable (GNOME 3.28+)
 	@mkdir -p ~/Desktop
 	@cp ~/.local/share/applications/$(APP_NAME).desktop ~/Desktop/$(APP_NAME).desktop
 	@chmod +x ~/Desktop/$(APP_NAME).desktop
@@ -494,6 +631,9 @@ clean:
 	@rm -f  $(BUILD_DIR)/$(APP_NAME)
 	@rm -f  $(BUILD_DIR)/$(APP_NAME).exe
 	@rm -f  $(BUILD_DIR)/$(APP_NAME)-debug
+	@rm -f  $(BUILD_DIR)/.env
+	@rm -f  $(BUILD_DIR)/.env.example
+	@rm -f  $(BUILD_DIR)/$(CREDS_EXAMPLE)
 	@rm -rf $(BUILD_DIR)/$(APP_NAME).app
 	@rm -rf $(BUILD_DIR)/$(APP_NAME)-arm64.app
 	@rm -rf $(BUILD_DIR)/$(APP_NAME)-amd64.app
