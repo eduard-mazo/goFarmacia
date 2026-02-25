@@ -350,7 +350,7 @@ func (g *GmailService) procesarMensajeConLog(
 	}
 
 	for _, xmlData := range xmlFiles {
-		products, err := processor.ParseInvoiceXMLBytes(xmlData)
+		products, err := processor.ParseDocumentXMLBytes(xmlData)
 		if err != nil || len(products) == 0 {
 			emit("warn", fmt.Sprintf("  XML no parseable: %v", err))
 			continue
@@ -359,27 +359,32 @@ func (g *GmailService) procesarMensajeConLog(
 		cufe := extractCUFE(xmlData)
 		sample := products[0]
 
+		// Determine document type label for logging
+		tipoLabel := tipoDocumentoLabel(sample.DocumentType)
+
 		exists, _ := g.db.ExisteFacturaCompra(messageID, cufe)
 		if exists {
 			result.Duplicadas++
-			emit("info", fmt.Sprintf("  Duplicada: %s (%s)", sample.InvoiceID, sample.SupplierName))
+			emit("info", fmt.Sprintf("  Duplicada: %s [%s] (%s)", sample.InvoiceID, tipoLabel, sample.SupplierName))
 			return nil
 		}
 
 		fechaEmision, _ := time.ParseInLocation("2006-01-02", sample.IssueDate, time.Local)
 		factura := FacturaCompra{
-			UUID:            uuid.NewString(),
-			ProveedorNIT:    sample.SupplierNIT,
-			ProveedorNombre: sample.SupplierName,
-			ClienteNIT:      sample.CustomerNIT,
-			ClienteNombre:   sample.CustomerName,
-			NumeroFactura:   sample.InvoiceID,
-			CUFE:            cufe,
-			FechaEmision:    fechaEmision,
-			Moneda:          sample.Currency,
-			Total:           sample.TotalInvoice,
-			Estado:          "PENDIENTE",
-			EmailMessageID:  messageID,
+			UUID:                uuid.NewString(),
+			ProveedorNIT:        sample.SupplierNIT,
+			ProveedorNombre:     sample.SupplierName,
+			ClienteNIT:          sample.CustomerNIT,
+			ClienteNombre:       sample.CustomerName,
+			NumeroFactura:       sample.InvoiceID,
+			CUFE:                cufe,
+			FechaEmision:        fechaEmision,
+			Moneda:              sample.Currency,
+			Total:               sample.TotalInvoice,
+			Estado:              "PENDIENTE",
+			TipoDocumento:       sample.DocumentType,
+			ReferenciaDocumento: sample.ReferenciaDoc,
+			EmailMessageID:      messageID,
 		}
 
 		var totalIVA, subtotal float64
@@ -407,8 +412,8 @@ func (g *GmailService) procesarMensajeConLog(
 		_ = g.db.UpsertProveedorPorNIT(sample.SupplierNIT, sample.SupplierName)
 		result.Nuevas++
 		emit("ok", fmt.Sprintf(
-			"  ✓ %s — %s — %d líneas",
-			sample.InvoiceID, sample.SupplierName, len(products),
+			"  ✓ %s [%s] — %s — %d líneas",
+			sample.InvoiceID, tipoLabel, sample.SupplierName, len(products),
 		))
 	}
 	return nil
@@ -434,6 +439,23 @@ func (g *GmailService) extractZipAttachment(svc *gmail.Service, msg *gmail.Messa
 }
 
 // extractCUFE scans raw XML bytes for the CUFE/UUID value used for deduplication.
+// tipoDocumentoLabel returns a human-readable short label for DIAN document types.
+func tipoDocumentoLabel(tipo string) string {
+	switch tipo {
+	case "01", "02":
+		return "Factura"
+	case "91":
+		return "Nota Crédito"
+	case "92":
+		return "Nota Débito"
+	default:
+		if tipo == "" {
+			return "Factura"
+		}
+		return tipo
+	}
+}
+
 func extractCUFE(xmlData []byte) string {
 	s := string(xmlData)
 	// Look for the CUFE attribute pattern in UBL 2.1 DIAN invoices

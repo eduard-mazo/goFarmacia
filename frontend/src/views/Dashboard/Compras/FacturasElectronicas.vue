@@ -200,8 +200,28 @@ const logClass: Record<string, string> = {
 
 // ─── Columns ──────────────────────────────────────────────────────────────────
 
+// Document type metadata for DIAN UBL 2.1 classification
+const tipoDocConfig: Record<string, { label: string; class: string }> = {
+  "01": { label: "Factura",      class: "bg-blue-50 text-blue-700 border-blue-200" },
+  "02": { label: "Fac. Export.", class: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  "91": { label: "Nota Crédito", class: "bg-amber-50 text-amber-700 border-amber-200" },
+  "92": { label: "Nota Débito",  class: "bg-orange-50 text-orange-700 border-orange-200" },
+};
+
 const columns: ColumnDef<backend.FacturaCompra>[] = [
-  { accessorKey: "NumeroFactura", header: "N° Factura" },
+  {
+    id: "TipoDocumento",
+    accessorKey: "TipoDocumento",
+    header: "Tipo",
+    cell: ({ row }) => {
+      const tipo: string = row.getValue("TipoDocumento") || "01";
+      const cfg = tipoDocConfig[tipo] ?? { label: tipo, class: "bg-gray-100 text-gray-600 border-gray-200" };
+      return h("span", {
+        class: `inline-flex px-2 py-0.5 rounded text-[10px] font-medium border whitespace-nowrap ${cfg.class}`,
+      }, cfg.label);
+    },
+  },
+  { accessorKey: "NumeroFactura", header: "N° Documento" },
   {
     accessorKey: "FechaEmision",
     header: "Fecha",
@@ -212,7 +232,15 @@ const columns: ColumnDef<backend.FacturaCompra>[] = [
   {
     accessorKey: "Total",
     header: "Total",
-    cell: ({ row }) => h("div", { class: "text-right font-medium" }, formatCOP(row.getValue("Total"))),
+    cell: ({ row }) => {
+      const tipo: string = row.original.TipoDocumento || "01";
+      const isNote91 = tipo === "91";
+      const val = row.getValue<number>("Total");
+      return h("div", {
+        class: `text-right font-medium ${isNote91 ? "text-amber-600" : ""}`,
+        title: isNote91 ? "Nota crédito — reduce el total de compras" : "",
+      }, isNote91 ? `(${formatCOP(val)})` : formatCOP(val));
+    },
   },
   {
     accessorKey: "Estado",
@@ -290,10 +318,27 @@ watch(busqueda, () => {
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <Mail class="h-4 w-4" />
-          Factura {{ detailFactura?.NumeroFactura }}
+          {{ tipoDocConfig[detailFactura?.TipoDocumento || '01']?.label ?? 'Documento' }}
+          {{ detailFactura?.NumeroFactura }}
         </DialogTitle>
       </DialogHeader>
       <template v-if="detailFactura">
+        <!-- Document type banner for notes -->
+        <div
+          v-if="detailFactura.TipoDocumento === '91' || detailFactura.TipoDocumento === '92'"
+          class="flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+          :class="detailFactura.TipoDocumento === '91'
+            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+            : 'bg-orange-50 text-orange-700 border border-orange-200'"
+        >
+          <span class="font-semibold">
+            {{ tipoDocConfig[detailFactura.TipoDocumento]?.label }}
+          </span>
+          <span v-if="detailFactura.ReferenciaDocumento">
+            — referencia a factura: <span class="font-mono font-medium">{{ detailFactura.ReferenciaDocumento }}</span>
+          </span>
+        </div>
+
         <div class="grid grid-cols-2 gap-3 text-xs border rounded-lg p-3 bg-muted/30">
           <div>
             <p class="text-muted-foreground">Proveedor</p>
@@ -314,8 +359,13 @@ watch(busqueda, () => {
             <p class="font-medium">{{ formatCOP(detailFactura.IVA) }}</p>
           </div>
           <div class="col-span-2 border-t pt-2">
-            <p class="text-muted-foreground text-[10px]">TOTAL FACTURA</p>
-            <p class="text-lg font-bold">{{ formatCOP(detailFactura.Total) }}</p>
+            <p class="text-muted-foreground text-[10px]">
+              {{ detailFactura.TipoDocumento === '91' ? 'TOTAL NOTA CRÉDITO' : detailFactura.TipoDocumento === '92' ? 'TOTAL NOTA DÉBITO' : 'TOTAL FACTURA' }}
+            </p>
+            <p class="text-lg font-bold"
+               :class="detailFactura.TipoDocumento === '91' ? 'text-amber-600' : ''">
+              {{ detailFactura.TipoDocumento === '91' ? `(${formatCOP(detailFactura.Total)})` : formatCOP(detailFactura.Total) }}
+            </p>
           </div>
         </div>
 

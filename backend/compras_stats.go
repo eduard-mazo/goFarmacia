@@ -39,11 +39,16 @@ type ProveedoresStatsResponse struct {
 
 // ResumenCompras is a top-level summary of purchase activity.
 type ResumenCompras struct {
-	TotalGastado    float64            `json:"TotalGastado"`
-	NumFacturas     int                `json:"NumFacturas"`
-	NumProveedores  int                `json:"NumProveedores"`
-	TopProveedores  []ProveedorStats   `json:"TopProveedores"`
-	TopProductos    []ProductoComprado `json:"TopProductos"`
+	// Net total: invoices + debit notes − credit notes
+	TotalGastado       float64            `json:"TotalGastado"`
+	// Counts by document type
+	NumFacturas        int                `json:"NumFacturas"`      // tipo 01/02
+	NumNotasCredito    int                `json:"NumNotasCredito"`  // tipo 91
+	NumNotasDebito     int                `json:"NumNotasDebito"`   // tipo 92
+	// Unique active suppliers
+	NumProveedores     int                `json:"NumProveedores"`
+	TopProveedores     []ProveedorStats   `json:"TopProveedores"`
+	TopProductos       []ProductoComprado `json:"TopProductos"`
 }
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
@@ -119,8 +124,11 @@ func (d *Db) ObtenerProveedoresConEstadisticas(page, pageSize int, busqueda stri
 		SELECT
 			p.uuid, COALESCE(p.nit,''), p.nombre,
 			COALESCE(p.telefono,''), COALESCE(p.email,''),
-			COUNT(DISTINCT fc.uuid)            AS total_facturas,
-			COALESCE(SUM(fc.total), 0)         AS total_comprado,
+			COUNT(DISTINCT fc.uuid) FILTER (WHERE COALESCE(fc.tipo_documento,'01') IN ('01','02')) AS total_facturas,
+			COALESCE(SUM(CASE
+			    WHEN COALESCE(fc.tipo_documento,'01') = '91' THEN -fc.total
+			    ELSE fc.total
+			END), 0)                           AS total_comprado,
 			COALESCE(MAX(fc.fecha_emision::text), '') AS ultima_compra
 		FROM proveedors p
 		LEFT JOIN facturas_compra fc ON fc.proveedor_nit = p.nit AND p.nit != ''
@@ -196,17 +204,37 @@ func (d *Db) ObtenerResumenCompras(desde, hasta string) (ResumenCompras, error) 
 	whereClause, args := buildComprasWhere(desde, hasta)
 
 	// ── Totals ──────────────────────────────────────────────────────────────
-	if err := d.QueryRow(ctx,
-		"SELECT COALESCE(SUM(total),0), COUNT(*), COUNT(DISTINCT proveedor_nit) FROM facturas_compra "+whereClause,
+	// TotalGastado is the NET amount: invoices + debit notes − credit notes.
+	// NumFacturas counts only purchase invoices (01, 02).
+	// NumNotasCredito / NumNotasDebito count the respective adjustment docs.
+	totalsWhere := whereClause
+	if totalsWhere == "" {
+		totalsWhere = "WHERE 1=1"
+	}
+	if err := d.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(CASE
+				WHEN COALESCE(tipo_documento,'01') = '91' THEN -total
+				ELSE total
+			END), 0)                                            AS total_neto,
+			COUNT(*) FILTER (WHERE COALESCE(tipo_documento,'01') IN ('01','02')) AS num_facturas,
+			COUNT(*) FILTER (WHERE COALESCE(tipo_documento,'01') = '91')         AS num_notas_credito,
+			COUNT(*) FILTER (WHERE COALESCE(tipo_documento,'01') = '92')         AS num_notas_debito,
+			COUNT(DISTINCT proveedor_nit)                       AS num_proveedores
+		FROM facturas_compra `+whereClause,
 		args...,
-	).Scan(&res.TotalGastado, &res.NumFacturas, &res.NumProveedores); err != nil {
+	).Scan(&res.TotalGastado, &res.NumFacturas, &res.NumNotasCredito, &res.NumNotasDebito, &res.NumProveedores); err != nil {
 		return res, fmt.Errorf("resumen totales: %w", err)
 	}
 
 	// ── Top 5 providers ─────────────────────────────────────────────────────
 	provRows, err := d.Query(ctx,
 		`SELECT proveedor_nit, proveedor_nombre,
-		        COUNT(*) AS num_facturas, SUM(total) AS total_comprado
+		        COUNT(*) FILTER (WHERE COALESCE(tipo_documento,'01') IN ('01','02')) AS num_facturas,
+		        COALESCE(SUM(CASE
+		            WHEN COALESCE(tipo_documento,'01') = '91' THEN -total
+		            ELSE total
+		        END), 0) AS total_comprado
 		 FROM facturas_compra `+whereClause+`
 		 GROUP BY proveedor_nit, proveedor_nombre
 		 ORDER BY total_comprado DESC LIMIT 5`, args...)

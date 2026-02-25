@@ -37,11 +37,3 @@ func UnzipInMemory(zipData []byte) ([][]byte, error) {
 	return xmlFiles, nil
 }
 
-// ParseInvoiceXMLBytes parses a DIAN UBL 2.1 invoice from raw XML bytes.
-func ParseInvoiceXMLBytes(xmlData []byte) ([]ParsedProduct, error) {
-	var invoice Invoice
-	if err := unmarshalInvoice(xmlData, &invoice); err != nil {
-		return nil, err
-	}
-	return buildProducts(invoice)
-}

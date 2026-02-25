@@ -391,7 +391,7 @@ watch(date, (newDate) => {
                 <div class="text-2xl font-bold tracking-tight mt-1 truncate">
                   {{ formatCurrency(resumenCompras.TotalGastado) }}
                 </div>
-                <p class="text-xs text-muted-foreground mt-1">Acumulado histórico — facturas DIAN</p>
+                <p class="text-xs text-muted-foreground mt-1">Neto: facturas − notas crédito</p>
               </div>
               <div class="h-10 w-10 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0">
                 <DollarSign class="h-5 w-5 text-orange-600" />
@@ -404,11 +404,23 @@ watch(date, (newDate) => {
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <p class="text-sm font-medium text-muted-foreground">Facturas recibidas</p>
+                <p class="text-sm font-medium text-muted-foreground">Documentos DIAN</p>
                 <div class="text-2xl font-bold tracking-tight mt-1">
                   {{ resumenCompras.NumFacturas }}
                 </div>
-                <p class="text-xs text-muted-foreground mt-1">Importadas desde Gmail</p>
+                <div class="flex gap-2 mt-1 flex-wrap">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded border bg-blue-50 text-blue-700 border-blue-200">
+                    {{ resumenCompras.NumFacturas }} facturas
+                  </span>
+                  <span v-if="(resumenCompras.NumNotasCredito ?? 0) > 0"
+                    class="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
+                    {{ resumenCompras.NumNotasCredito }} notas cto.
+                  </span>
+                  <span v-if="(resumenCompras.NumNotasDebito ?? 0) > 0"
+                    class="text-[10px] px-1.5 py-0.5 rounded border bg-orange-50 text-orange-700 border-orange-200">
+                    {{ resumenCompras.NumNotasDebito }} notas deb.
+                  </span>
+                </div>
               </div>
               <div class="h-10 w-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
                 <ShoppingBag class="h-5 w-5 text-blue-600" />

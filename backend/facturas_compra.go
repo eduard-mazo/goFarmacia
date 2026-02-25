@@ -23,8 +23,10 @@ type FacturaCompra struct {
 	Subtotal        float64                `json:"Subtotal"`
 	IVA             float64                `json:"IVA"`
 	Total           float64                `json:"Total"`
-	Estado          string                 `json:"Estado"` // PENDIENTE | PROCESADA | IGNORADA
-	EmailMessageID  string                 `json:"EmailMessageID"`
+	Estado              string                 `json:"Estado"` // PENDIENTE | PROCESADA | IGNORADA
+	TipoDocumento       string                 `json:"TipoDocumento"`   // 01=Factura 91=NotaCrédito 92=NotaDébito
+	ReferenciaDocumento string                 `json:"ReferenciaDocumento"` // Para notas: número factura origen
+	EmailMessageID      string                 `json:"EmailMessageID"`
 	Detalles        []FacturaCompraDetalle `json:"Detalles"`
 }
 
@@ -73,15 +75,20 @@ func (d *Db) GuardarFacturaCompra(f FacturaCompra) error {
 		cufe = f.UUID // use UUID as fallback to satisfy unique constraint
 	}
 
+	tipoDoc := f.TipoDocumento
+	if tipoDoc == "" {
+		tipoDoc = "01"
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO facturas_compra
 			(uuid, proveedor_nit, proveedor_nombre, cliente_nit, cliente_nombre,
 			 numero_factura, cufe, fecha_emision, moneda, subtotal, iva, total,
-			 estado, email_message_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+			 estado, tipo_documento, referencia_documento, email_message_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		f.UUID, f.ProveedorNIT, f.ProveedorNombre, f.ClienteNIT, f.ClienteNombre,
 		f.NumeroFactura, cufe, f.FechaEmision, f.Moneda,
-		f.Subtotal, f.IVA, f.Total, f.Estado, f.EmailMessageID,
+		f.Subtotal, f.IVA, f.Total, f.Estado,
+		tipoDoc, f.ReferenciaDocumento, f.EmailMessageID,
 	)
 	if err != nil {
 		return fmt.Errorf("error insertando factura_compra: %w", err)
@@ -134,7 +141,9 @@ func (d *Db) ObtenerFacturasCompraPaginado(page, pageSize int, busqueda string) 
 	query := fmt.Sprintf(`
 		SELECT uuid, proveedor_nit, proveedor_nombre, cliente_nit, cliente_nombre,
 		       numero_factura, COALESCE(cufe,''), fecha_emision, moneda,
-		       subtotal, iva, total, estado, COALESCE(email_message_id,'')
+		       subtotal, iva, total, estado,
+		       COALESCE(tipo_documento,'01'), COALESCE(referencia_documento,''),
+		       COALESCE(email_message_id,'')
 		FROM facturas_compra %s
 		ORDER BY fecha_emision DESC
 		LIMIT $%d OFFSET $%d`, whereClause, argIdx, argIdx+1)
@@ -152,7 +161,8 @@ func (d *Db) ObtenerFacturasCompraPaginado(page, pageSize int, busqueda string) 
 			&f.UUID, &f.ProveedorNIT, &f.ProveedorNombre,
 			&f.ClienteNIT, &f.ClienteNombre, &f.NumeroFactura, &f.CUFE,
 			&f.FechaEmision, &f.Moneda, &f.Subtotal, &f.IVA, &f.Total,
-			&f.Estado, &f.EmailMessageID,
+			&f.Estado, &f.TipoDocumento, &f.ReferenciaDocumento,
+			&f.EmailMessageID,
 		); err != nil {
 			return FacturasCompraResponse{}, err
 		}
@@ -171,13 +181,16 @@ func (d *Db) ObtenerDetalleFacturaCompra(uuid string) (FacturaCompra, error) {
 	err := d.QueryRow(ctx, `
 		SELECT uuid, proveedor_nit, proveedor_nombre, cliente_nit, cliente_nombre,
 		       numero_factura, COALESCE(cufe,''), fecha_emision, moneda,
-		       subtotal, iva, total, estado, COALESCE(email_message_id,'')
+		       subtotal, iva, total, estado,
+		       COALESCE(tipo_documento,'01'), COALESCE(referencia_documento,''),
+		       COALESCE(email_message_id,'')
 		FROM facturas_compra WHERE uuid = $1`, uuid,
 	).Scan(
 		&f.UUID, &f.ProveedorNIT, &f.ProveedorNombre,
 		&f.ClienteNIT, &f.ClienteNombre, &f.NumeroFactura, &f.CUFE,
 		&f.FechaEmision, &f.Moneda, &f.Subtotal, &f.IVA, &f.Total,
-		&f.Estado, &f.EmailMessageID,
+		&f.Estado, &f.TipoDocumento, &f.ReferenciaDocumento,
+		&f.EmailMessageID,
 	)
 	if err != nil {
 		return FacturaCompra{}, err
