@@ -4,7 +4,10 @@ import {
   ObtenerDatosDashboard,
   ObtenerFechasConVentas,
 } from "@/../wailsjs/go/backend/Db";
-import { ObtenerResumenCompras } from "@/../wailsjs/go/backend/GmailService";
+import {
+  ObtenerResumenCompras,
+  SincronizarProveedoresDesdeFacturas,
+} from "@/../wailsjs/go/backend/GmailService";
 import { backend } from "@/../wailsjs/go/models";
 import { CalendarDate, today, getLocalTimeZone } from "@internationalized/date";
 import { format } from "date-fns";
@@ -39,12 +42,14 @@ import {
   ArrowDownToLine,
 } from "lucide-vue-next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { toast } from "vue-sonner";
 
 type DashboardData = backend.DashboardData;
 type ResumenCompras = backend.ResumenCompras;
 
 const dashboardData = ref<DashboardData | null>(null);
 const resumenCompras = ref<ResumenCompras | null>(null);
+const comprasLoading = ref(false);
 const isLoading = ref(true);
 const error = ref<string | null>(null);
 const fechasConVentas = ref<Set<string>>(new Set());
@@ -93,14 +98,16 @@ async function loadFechasConVentas() {
 }
 
 async function loadResumenCompras() {
+  comprasLoading.value = true;
   try {
-    // Last 30 days by default
-    const hasta = new Date();
-    const desde = new Date();
-    desde.setDate(desde.getDate() - 30);
-    const fmt = (d: Date) => d.toISOString().split("T")[0];
-    resumenCompras.value = await ObtenerResumenCompras(fmt(desde), fmt(hasta)) as ResumenCompras;
-  } catch { /* no purchase data — show nothing */ }
+    // Empty strings = all-time (no date filter) so the section always shows
+    // when invoices exist, regardless of when they were synced.
+    resumenCompras.value = await ObtenerResumenCompras("", "") as ResumenCompras;
+  } catch (err) {
+    toast.error("Error al cargar resumen de compras", { description: `${err}` });
+  } finally {
+    comprasLoading.value = false;
+  }
 }
 
 onMounted(() => {
@@ -344,15 +351,38 @@ watch(date, (newDate) => {
     </template>
 
     <!-- ───── COMPRAS SECTION ──────────────────────────────────────────────── -->
-    <template v-if="resumenCompras && (resumenCompras.NumFacturas > 0)">
+    <template v-if="resumenCompras || comprasLoading">
       <!-- Section header -->
       <div class="flex items-center gap-2 pt-2">
         <ArrowDownToLine class="h-4 w-4 text-primary" />
-        <h2 class="text-base font-semibold tracking-tight">Compras — últimos 30 días</h2>
+        <h2 class="text-base font-semibold tracking-tight">Compras — historial completo</h2>
+      </div>
+
+      <!-- Loading skeleton -->
+      <div v-if="comprasLoading" class="grid gap-4 grid-cols-1 sm:grid-cols-3">
+        <Card v-for="i in 3" :key="i" class="animate-pulse">
+          <CardContent class="p-6">
+            <div class="space-y-2">
+              <div class="h-3.5 bg-muted rounded w-3/5"></div>
+              <div class="h-7 bg-muted rounded w-4/5"></div>
+              <div class="h-3 bg-muted rounded w-full"></div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <!-- No invoices yet — nudge to sync -->
+      <div v-else-if="resumenCompras && resumenCompras.NumFacturas === 0"
+        class="border rounded-lg px-6 py-8 text-center bg-muted/20">
+        <ArrowDownToLine class="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+        <p class="text-sm font-medium text-muted-foreground">Sin facturas de compra importadas</p>
+        <p class="text-xs text-muted-foreground mt-1">
+          Ve a <strong>Compras → Facturas Electrónicas</strong> y conecta Gmail para sincronizar.
+        </p>
       </div>
 
       <!-- KPI cards -->
-      <div class="grid gap-4 grid-cols-1 sm:grid-cols-3">
+      <div v-else-if="resumenCompras" class="grid gap-4 grid-cols-1 sm:grid-cols-3">
         <Card>
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
@@ -361,7 +391,7 @@ watch(date, (newDate) => {
                 <div class="text-2xl font-bold tracking-tight mt-1 truncate">
                   {{ formatCurrency(resumenCompras.TotalGastado) }}
                 </div>
-                <p class="text-xs text-muted-foreground mt-1">Monto total en facturas DIAN</p>
+                <p class="text-xs text-muted-foreground mt-1">Acumulado histórico — facturas DIAN</p>
               </div>
               <div class="h-10 w-10 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0">
                 <DollarSign class="h-5 w-5 text-orange-600" />
@@ -391,11 +421,11 @@ watch(date, (newDate) => {
           <CardContent class="p-6">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <p class="text-sm font-medium text-muted-foreground">Proveedores activos</p>
+                <p class="text-sm font-medium text-muted-foreground">Proveedores con compras</p>
                 <div class="text-2xl font-bold tracking-tight mt-1">
                   {{ resumenCompras.NumProveedores }}
                 </div>
-                <p class="text-xs text-muted-foreground mt-1">Con compras en el período</p>
+                <p class="text-xs text-muted-foreground mt-1">Distintos en historial</p>
               </div>
               <div class="h-10 w-10 rounded-xl bg-violet-500/10 flex items-center justify-center shrink-0">
                 <Building2 class="h-5 w-5 text-violet-600" />
@@ -406,7 +436,7 @@ watch(date, (newDate) => {
       </div>
 
       <!-- Top Products + Top Suppliers -->
-      <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
+      <div v-if="resumenCompras && resumenCompras.NumFacturas > 0" class="grid gap-4 grid-cols-1 lg:grid-cols-2">
         <!-- Top productos comprados -->
         <Card>
           <CardHeader class="pb-2">

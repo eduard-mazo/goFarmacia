@@ -79,6 +79,9 @@ func NewGmailService(db *Db) *GmailService {
 func (g *GmailService) Startup(ctx context.Context) {
 	g.ctx = ctx
 	_ = os.MkdirAll(g.configDir, 0o700)
+	// Retroactively populate the proveedors table from any existing invoices.
+	// This is idempotent and runs in the background so it does not block startup.
+	go func() { _, _ = g.db.SincronizarProveedoresDesdeFacturas() }()
 }
 
 func (g *GmailService) credPath() string  { return filepath.Join(g.configDir, "credentials.json") }
@@ -271,6 +274,14 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) (SyncResult, err
 		result.Total, result.Nuevas, result.Duplicadas, len(result.Errores),
 	))
 	emitProgreso()
+
+	// Ensure all discovered suppliers are reflected in the proveedors table.
+	if result.Nuevas > 0 {
+		if n, err := g.db.SincronizarProveedoresDesdeFacturas(); err == nil {
+			emit("info", fmt.Sprintf("Proveedores sincronizados: %d registros actualizados", n))
+		}
+	}
+
 	return result, nil
 }
 
@@ -469,4 +480,10 @@ func (g *GmailService) ObtenerTopProductosDeProveedor(nit string, limit int) ([]
 // ObtenerResumenCompras returns aggregate purchase KPIs for the dashboard.
 func (g *GmailService) ObtenerResumenCompras(desde, hasta string) (ResumenCompras, error) {
 	return g.db.ObtenerResumenCompras(desde, hasta)
+}
+
+// SincronizarProveedoresDesdeFacturas bridges existing purchase invoices into
+// the proveedors table. Returns the number of rows upserted.
+func (g *GmailService) SincronizarProveedoresDesdeFacturas() (int, error) {
+	return g.db.SincronizarProveedoresDesdeFacturas()
 }

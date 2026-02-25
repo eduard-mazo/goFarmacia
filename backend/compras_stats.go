@@ -48,6 +48,45 @@ type ResumenCompras struct {
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
 
+// SincronizarProveedoresDesdeFacturas upserts every distinct supplier found in
+// facturas_compra into the proveedors table. It is idempotent — safe to run
+// on every startup and after every Gmail sync. Returns the number of rows
+// inserted or updated.
+func (d *Db) SincronizarProveedoresDesdeFacturas() (int, error) {
+	result, err := d.DB.Exec(`
+		INSERT INTO proveedors (uuid, nit, nombre, telefono, email, created_at, updated_at)
+		SELECT
+			gen_random_uuid(),
+			proveedor_nit,
+			proveedor_nombre,
+			'',
+			'',
+			NOW(),
+			NOW()
+		FROM (
+			SELECT
+				proveedor_nit,
+				proveedor_nombre,
+				ROW_NUMBER() OVER (
+					PARTITION BY proveedor_nit
+					ORDER BY fecha_emision DESC
+				) AS rn
+			FROM facturas_compra
+			WHERE proveedor_nit IS NOT NULL
+			  AND proveedor_nit <> ''
+		) t
+		WHERE rn = 1
+		ON CONFLICT (nit) WHERE nit <> '' DO UPDATE
+			SET nombre     = EXCLUDED.nombre,
+			    updated_at = NOW()
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("sincronizar proveedores desde facturas: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
+
 // ObtenerProveedoresConEstadisticas returns paginated suppliers enriched with purchase stats.
 func (d *Db) ObtenerProveedoresConEstadisticas(page, pageSize int, busqueda string) (ProveedoresStatsResponse, error) {
 	ctx := context.Background()
@@ -149,64 +188,66 @@ func (d *Db) ObtenerTopProductosDeProveedor(nit string, limit int) ([]ProductoCo
 }
 
 // ObtenerResumenCompras returns aggregate purchase stats for the dashboard.
-// desde/hasta are YYYY-MM-DD strings (empty = no filter).
+// desde/hasta are YYYY-MM-DD strings (empty = all-time, no filter).
 func (d *Db) ObtenerResumenCompras(desde, hasta string) (ResumenCompras, error) {
 	ctx := context.Background()
 	var res ResumenCompras
 
 	whereClause, args := buildComprasWhere(desde, hasta)
 
-	// Totals
+	// ── Totals ──────────────────────────────────────────────────────────────
 	if err := d.QueryRow(ctx,
 		"SELECT COALESCE(SUM(total),0), COUNT(*), COUNT(DISTINCT proveedor_nit) FROM facturas_compra "+whereClause,
 		args...,
 	).Scan(&res.TotalGastado, &res.NumFacturas, &res.NumProveedores); err != nil {
-		return res, err
+		return res, fmt.Errorf("resumen totales: %w", err)
 	}
 
-	// Top 5 providers
-	rows, err := d.Query(ctx, `
-		SELECT proveedor_nit, proveedor_nombre,
-		       COUNT(*) AS num_facturas, SUM(total) AS total_comprado
-		FROM facturas_compra `+whereClause+`
-		GROUP BY proveedor_nit, proveedor_nombre
-		ORDER BY total_comprado DESC LIMIT 5`, args...)
+	// ── Top 5 providers ─────────────────────────────────────────────────────
+	provRows, err := d.Query(ctx,
+		`SELECT proveedor_nit, proveedor_nombre,
+		        COUNT(*) AS num_facturas, SUM(total) AS total_comprado
+		 FROM facturas_compra `+whereClause+`
+		 GROUP BY proveedor_nit, proveedor_nombre
+		 ORDER BY total_comprado DESC LIMIT 5`, args...)
 	if err != nil {
-		return res, err
+		return res, fmt.Errorf("top proveedores: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
+	defer provRows.Close()
+	for provRows.Next() {
 		var s ProveedorStats
 		s.TopProductos = []ProductoComprado{}
-		if err := rows.Scan(&s.NIT, &s.Nombre, &s.TotalFacturas, &s.TotalComprado); err != nil {
+		if err := provRows.Scan(&s.NIT, &s.Nombre, &s.TotalFacturas, &s.TotalComprado); err != nil {
 			continue
 		}
 		res.TopProveedores = append(res.TopProveedores, s)
 	}
-	rows.Close()
+	provRows.Close()
 	if res.TopProveedores == nil {
 		res.TopProveedores = []ProveedorStats{}
 	}
 
-	// Top 10 products by spend
-	prodArgs := append([]any{}, args...)
+	// ── Top 10 products by spend ─────────────────────────────────────────────
+	// Build a self-contained query with its own numbered args to avoid
+	// index collisions when whereClause is reused for the JOIN context.
+	prodWhereClause, prodArgs := buildComprasWhereJoined(desde, hasta)
 	prodArgIdx := len(prodArgs) + 1
 	prodRows, err := d.Query(ctx, fmt.Sprintf(`
 		SELECT
 			d.descripcion,
 			COALESCE(d.codigo_producto,''),
-			SUM(d.cantidad)       AS total_cantidad,
-			SUM(d.total_linea)    AS total_comprado,
+			SUM(d.cantidad)         AS total_cantidad,
+			SUM(d.total_linea)      AS total_comprado,
 			COUNT(DISTINCT fc.uuid) AS num_facturas
 		FROM facturas_compra_detalles d
 		JOIN facturas_compra fc ON fc.uuid = d.factura_compra_uuid
 		%s
 		GROUP BY d.descripcion, d.codigo_producto
-		ORDER BY total_comprado DESC LIMIT $%d`,
-		buildComprasWhereJoined(desde, hasta), prodArgIdx,
-	), append(prodArgs, 10)...)
+		ORDER BY total_comprado DESC
+		LIMIT $%d`, prodWhereClause, prodArgIdx),
+		append(prodArgs, 10)...)
 	if err != nil {
-		return res, err
+		return res, fmt.Errorf("top productos: %w", err)
 	}
 	defer prodRows.Close()
 	for prodRows.Next() {
@@ -250,19 +291,29 @@ func buildComprasWhere(desde, hasta string) (string, []any) {
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
-// buildComprasWhereJoined is the same but prefixed for a JOIN context (fc alias).
-func buildComprasWhereJoined(desde, hasta string) string {
+// buildComprasWhereJoined is the same as buildComprasWhere but uses the `fc`
+// table alias, for queries that JOIN facturas_compra as fc.
+// It returns both the WHERE clause and its own args slice so callers can
+// compose them independently without index collisions.
+func buildComprasWhereJoined(desde, hasta string) (string, []any) {
 	var clauses []string
+	var args []any
 	idx := 1
 	if desde != "" {
-		clauses = append(clauses, fmt.Sprintf("fc.fecha_emision >= $%d", idx))
-		idx++
+		if t, err := time.ParseInLocation("2006-01-02", desde, time.Local); err == nil {
+			clauses = append(clauses, fmt.Sprintf("fc.fecha_emision >= $%d", idx))
+			args = append(args, t)
+			idx++
+		}
 	}
 	if hasta != "" {
-		clauses = append(clauses, fmt.Sprintf("fc.fecha_emision < $%d", idx))
+		if t, err := time.ParseInLocation("2006-01-02", hasta, time.Local); err == nil {
+			clauses = append(clauses, fmt.Sprintf("fc.fecha_emision < $%d", idx))
+			args = append(args, t.AddDate(0, 0, 1))
+		}
 	}
 	if len(clauses) == 0 {
-		return ""
+		return "", args
 	}
-	return "WHERE " + strings.Join(clauses, " AND ")
+	return "WHERE " + strings.Join(clauses, " AND "), args
 }
