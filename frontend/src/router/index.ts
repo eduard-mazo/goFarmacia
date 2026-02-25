@@ -99,6 +99,13 @@ const routes = [
         meta: { role: "admin" },
       },
       {
+        path: "compras/facturas",
+        name: "FacturasElectronicas",
+        component: () =>
+          import("@/views/Dashboard/Compras/FacturasElectronicas.vue"),
+        meta: { role: "admin" },
+      },
+      {
         path: "basedatos",
         name: "AdminBD",
         component: () =>

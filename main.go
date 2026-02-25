@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"goFarmacia/backend"
 
@@ -16,6 +17,7 @@ var assets embed.FS
 func main() {
 	db := backend.GetDbInstance()
 	app := NewApp(db)
+	gmailSvc := backend.NewGmailService(db)
 
 	err := wails.Run(&options.App{
 		Title:            "goFarmacia",
@@ -24,11 +26,15 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 1},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		OnStartup: func(ctx context.Context) {
+			app.startup(ctx)
+			gmailSvc.Startup(ctx)
+		},
+		OnShutdown: app.shutdown,
 		Bind: []any{
 			app,
 			db,
+			gmailSvc,
 		},
 		Windows: &windows.Options{
 			Theme: windows.SystemDefault,

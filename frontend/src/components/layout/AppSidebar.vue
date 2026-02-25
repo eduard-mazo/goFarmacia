@@ -19,6 +19,7 @@ import {
   Wifi,
   WifiOff,
   AlertCircle,
+  Mail,
 } from "lucide-vue-next";
 import NavMain from "@/components/layout/NavMain.vue";
 import NavUser from "@/components/layout/NavUser.vue";
@@ -71,6 +72,13 @@ const erpNav: NavItem[] = [
       { title: "Clientes", url: "/dashboard/clientes", icon: Contact },
       { title: "Vendedores", url: "/dashboard/vendedores", icon: UserCog },
       { title: "Proveedores", url: "/dashboard/proveedores", icon: Truck },
+    ],
+  },
+  {
+    title: "Compras",
+    icon: Mail,
+    items: [
+      { title: "Facturas Electrónicas", url: "/dashboard/compras/facturas", icon: Mail },
     ],
   },
   {
