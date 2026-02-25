@@ -15,17 +15,35 @@ func (d *Db) CrearProveedor(proveedor *Proveedor) error {
 	proveedor.UpdatedAt = time.Now()
 
 	query := `
-		INSERT INTO proveedors (uuid, nombre, telefono, email, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+		INSERT INTO proveedors (uuid, nit, nombre, telefono, email, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
 	_, err := d.DB.Exec(query,
-		proveedor.UUID, proveedor.Nombre, proveedor.Telefono, proveedor.Email, proveedor.CreatedAt, proveedor.UpdatedAt,
+		proveedor.UUID, proveedor.NIT, proveedor.Nombre, proveedor.Telefono,
+		proveedor.Email, proveedor.CreatedAt, proveedor.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("error al insertar proveedor: %w", err)
 	}
 
 	return nil
+}
+
+// UpsertProveedorPorNIT inserts or updates a proveedor matched by NIT.
+// Used during Gmail invoice sync to auto-populate the suppliers list.
+func (d *Db) UpsertProveedorPorNIT(nit, nombre string) error {
+	if nit == "" {
+		return nil
+	}
+	_, err := d.DB.Exec(`
+		INSERT INTO proveedors (uuid, nit, nombre, telefono, email, created_at, updated_at)
+		VALUES ($1, $2, $3, '', '', NOW(), NOW())
+		ON CONFLICT (nit) WHERE nit != '' DO UPDATE
+		  SET nombre    = EXCLUDED.nombre,
+		      updated_at = NOW()`,
+		uuid.New().String(), nit, nombre,
+	)
+	return err
 }
 
 // ObtenerProveedoresPaginado recupera una lista paginada de proveedores.
@@ -38,9 +56,12 @@ func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (Pagi
 	argIdx := 1
 	if search != "" {
 		searchTerm := "%" + strings.ToLower(search) + "%"
-		whereClause = fmt.Sprintf(" AND (LOWER(nombre) LIKE $%d OR LOWER(email) LIKE $%d)", argIdx, argIdx+1)
-		args = append(args, searchTerm, searchTerm)
-		argIdx += 2
+		whereClause = fmt.Sprintf(
+			" AND (LOWER(nombre) LIKE $%d OR LOWER(email) LIKE $%d OR LOWER(nit) LIKE $%d)",
+			argIdx, argIdx+1, argIdx+2,
+		)
+		args = append(args, searchTerm, searchTerm, searchTerm)
+		argIdx += 3
 	}
 
 	var total int64
@@ -53,7 +74,8 @@ func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (Pagi
 	offset := (page - 1) * pageSize
 	paginationClause := fmt.Sprintf(" ORDER BY nombre ASC LIMIT %d OFFSET %d", pageSize, offset)
 
-	selectQuery := "SELECT uuid, nombre, telefono, email " + baseQuery + whereClause + paginationClause
+	selectQuery := "SELECT uuid, COALESCE(nit,''), nombre, COALESCE(telefono,''), COALESCE(email,'') " +
+		baseQuery + whereClause + paginationClause
 	rows, err := d.DB.Query(selectQuery, args...)
 	if err != nil {
 		return PaginatedResult{}, fmt.Errorf("error al obtener proveedores paginados: %w", err)
@@ -62,7 +84,7 @@ func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (Pagi
 
 	for rows.Next() {
 		var p Proveedor
-		if err := rows.Scan(&p.UUID, &p.Nombre, &p.Telefono, &p.Email); err != nil {
+		if err := rows.Scan(&p.UUID, &p.NIT, &p.Nombre, &p.Telefono, &p.Email); err != nil {
 			return PaginatedResult{}, fmt.Errorf("error al escanear proveedor: %w", err)
 		}
 		proveedores = append(proveedores, p)
@@ -74,9 +96,9 @@ func (d *Db) ObtenerProveedoresPaginado(page, pageSize int, search string) (Pagi
 // ObtenerProveedorPorUUID busca un proveedor por su UUID.
 func (d *Db) ObtenerProveedorPorUUID(uuid string) (Proveedor, error) {
 	var p Proveedor
-	query := "SELECT uuid, nombre, telefono, email FROM proveedors WHERE uuid = $1 AND deleted_at IS NULL"
+	query := "SELECT uuid, COALESCE(nit,''), nombre, COALESCE(telefono,''), COALESCE(email,'') FROM proveedors WHERE uuid = $1 AND deleted_at IS NULL"
 
-	err := d.DB.QueryRow(query, uuid).Scan(&p.UUID, &p.Nombre, &p.Telefono, &p.Email)
+	err := d.DB.QueryRow(query, uuid).Scan(&p.UUID, &p.NIT, &p.Nombre, &p.Telefono, &p.Email)
 	if err != nil {
 		return Proveedor{}, fmt.Errorf("error al buscar proveedor por UUID %s: %w", uuid, err)
 	}
@@ -90,10 +112,11 @@ func (d *Db) ActualizarProveedor(proveedor *Proveedor) error {
 
 	query := `
 		UPDATE proveedors
-		SET nombre = $1, telefono = $2, email = $3, updated_at = $4
-		WHERE uuid = $5`
+		SET nit = $1, nombre = $2, telefono = $3, email = $4, updated_at = $5
+		WHERE uuid = $6`
 
-	_, err := d.DB.Exec(query, proveedor.Nombre, proveedor.Telefono, proveedor.Email, proveedor.UpdatedAt, proveedor.UUID)
+	_, err := d.DB.Exec(query, proveedor.NIT, proveedor.Nombre, proveedor.Telefono,
+		proveedor.Email, proveedor.UpdatedAt, proveedor.UUID)
 	if err != nil {
 		return fmt.Errorf("error al actualizar proveedor: %w", err)
 	}

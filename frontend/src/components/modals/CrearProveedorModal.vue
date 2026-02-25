@@ -29,6 +29,7 @@ watch(
   (isOpen) => {
     if (isOpen) {
       proveedor.value = new backend.Proveedor({
+        NIT: "",
         Nombre: "",
         Telefono: "",
         Email: "",
@@ -73,6 +74,15 @@ async function handleSubmit() {
         </DialogDescription>
       </DialogHeader>
       <div class="grid gap-4 py-4">
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="nit" class="text-right">NIT</Label>
+          <Input
+            id="nit"
+            v-model="proveedor.NIT"
+            class="col-span-3 h-10"
+            placeholder="NIT del proveedor (ej. 900123456)"
+          />
+        </div>
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="nombre" class="text-right">Nombre</Label>
           <Input

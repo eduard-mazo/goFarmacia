@@ -18,7 +18,7 @@ type FacturaCompra struct {
 	ClienteNombre   string                 `json:"ClienteNombre"`
 	NumeroFactura   string                 `json:"NumeroFactura"`
 	CUFE            string                 `json:"CUFE"`
-	FechaEmision    time.Time              `json:"FechaEmision"`
+	FechaEmision    time.Time              `json:"FechaEmision" ts_type:"string"`
 	Moneda          string                 `json:"Moneda"`
 	Subtotal        float64                `json:"Subtotal"`
 	IVA             float64                `json:"IVA"`

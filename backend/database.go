@@ -162,6 +162,7 @@ type Proveedor struct {
 	UpdatedAt time.Time  `json:"UpdatedAt" ts_type:"string"`
 	DeletedAt *time.Time `json:"DeletedAt" ts_type:"string"`
 	UUID      string     `json:"uuid"`
+	NIT       string     `json:"NIT"`
 	Nombre    string     `json:"Nombre"`
 	Telefono  string     `json:"Telefono"`
 	Email     string     `json:"Email"`

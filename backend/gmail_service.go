@@ -392,6 +392,8 @@ func (g *GmailService) procesarMensajeConLog(
 		if err := g.db.GuardarFacturaCompra(factura); err != nil {
 			return fmt.Errorf("guardar factura %s: %w", sample.InvoiceID, err)
 		}
+		// Auto-upsert the supplier so the Proveedores list stays populated.
+		_ = g.db.UpsertProveedorPorNIT(sample.SupplierNIT, sample.SupplierName)
 		result.Nuevas++
 		emit("ok", fmt.Sprintf(
 			"  ✓ %s — %s — %d líneas",
@@ -452,4 +454,19 @@ func (g *GmailService) ObtenerDetalleFacturaCompra(facturaUUID string) (FacturaC
 // ActualizarEstadoFacturaCompra updates the processing estado of a purchase invoice.
 func (g *GmailService) ActualizarEstadoFacturaCompra(facturaUUID, estado string) error {
 	return g.db.ActualizarEstadoFacturaCompra(facturaUUID, estado)
+}
+
+// ObtenerProveedoresConEstadisticas returns paginated suppliers enriched with purchase stats.
+func (g *GmailService) ObtenerProveedoresConEstadisticas(page, pageSize int, busqueda string) (ProveedoresStatsResponse, error) {
+	return g.db.ObtenerProveedoresConEstadisticas(page, pageSize, busqueda)
+}
+
+// ObtenerTopProductosDeProveedor returns the top purchased products for a given supplier NIT.
+func (g *GmailService) ObtenerTopProductosDeProveedor(nit string, limit int) ([]ProductoComprado, error) {
+	return g.db.ObtenerTopProductosDeProveedor(nit, limit)
+}
+
+// ObtenerResumenCompras returns aggregate purchase KPIs for the dashboard.
+func (g *GmailService) ObtenerResumenCompras(desde, hasta string) (ResumenCompras, error) {
+	return g.db.ObtenerResumenCompras(desde, hasta)
 }

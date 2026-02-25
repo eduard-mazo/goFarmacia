@@ -92,19 +92,23 @@ function handleDeleteConfirm() {
         <DialogTitle>Editar Proveedor</DialogTitle>
       </DialogHeader>
       <div class="space-y-3 py-2">
-        <div class="space-y-1.5">
-          <Label for="prov-nombre">Nombre</Label>
-          <Input id="prov-nombre" v-model="editableProveedor.Nombre" />
-        </div>
         <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <Label for="prov-nit">NIT</Label>
+            <Input id="prov-nit" v-model="editableProveedor.NIT" placeholder="900123456" />
+          </div>
           <div class="space-y-1.5">
             <Label for="prov-tel">Teléfono</Label>
             <Input id="prov-tel" v-model="editableProveedor.Telefono" />
           </div>
-          <div class="space-y-1.5">
-            <Label for="prov-email">Email</Label>
-            <Input id="prov-email" type="email" v-model="editableProveedor.Email" />
-          </div>
+        </div>
+        <div class="space-y-1.5">
+          <Label for="prov-nombre">Nombre</Label>
+          <Input id="prov-nombre" v-model="editableProveedor.Nombre" />
+        </div>
+        <div class="space-y-1.5">
+          <Label for="prov-email">Email</Label>
+          <Input id="prov-email" type="email" v-model="editableProveedor.Email" />
         </div>
       </div>
       <DialogFooter>

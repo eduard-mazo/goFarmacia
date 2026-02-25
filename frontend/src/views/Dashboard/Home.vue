@@ -4,6 +4,7 @@ import {
   ObtenerDatosDashboard,
   ObtenerFechasConVentas,
 } from "@/../wailsjs/go/backend/Db";
+import { ObtenerResumenCompras } from "@/../wailsjs/go/backend/GmailService";
 import { backend } from "@/../wailsjs/go/models";
 import { CalendarDate, today, getLocalTimeZone } from "@internationalized/date";
 import { format } from "date-fns";
@@ -33,12 +34,17 @@ import {
   Wallet,
   Users,
   Calendar as CalendarIcon,
+  Building2,
+  Package,
+  ArrowDownToLine,
 } from "lucide-vue-next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type DashboardData = backend.DashboardData;
+type ResumenCompras = backend.ResumenCompras;
 
 const dashboardData = ref<DashboardData | null>(null);
+const resumenCompras = ref<ResumenCompras | null>(null);
 const isLoading = ref(true);
 const error = ref<string | null>(null);
 const fechasConVentas = ref<Set<string>>(new Set());
@@ -86,9 +92,21 @@ async function loadFechasConVentas() {
   } catch {}
 }
 
+async function loadResumenCompras() {
+  try {
+    // Last 30 days by default
+    const hasta = new Date();
+    const desde = new Date();
+    desde.setDate(desde.getDate() - 30);
+    const fmt = (d: Date) => d.toISOString().split("T")[0];
+    resumenCompras.value = await ObtenerResumenCompras(fmt(desde), fmt(hasta)) as ResumenCompras;
+  } catch { /* no purchase data — show nothing */ }
+}
+
 onMounted(() => {
   loadFechasConVentas();
   loadDashboardData(date.value);
+  loadResumenCompras();
 });
 
 watch(date, (newDate) => {
@@ -323,6 +341,134 @@ watch(date, (newDate) => {
           </p>
         </CardContent>
       </Card>
+    </template>
+
+    <!-- ───── COMPRAS SECTION ──────────────────────────────────────────────── -->
+    <template v-if="resumenCompras && (resumenCompras.NumFacturas > 0)">
+      <!-- Section header -->
+      <div class="flex items-center gap-2 pt-2">
+        <ArrowDownToLine class="h-4 w-4 text-primary" />
+        <h2 class="text-base font-semibold tracking-tight">Compras — últimos 30 días</h2>
+      </div>
+
+      <!-- KPI cards -->
+      <div class="grid gap-4 grid-cols-1 sm:grid-cols-3">
+        <Card>
+          <CardContent class="p-6">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-muted-foreground">Total comprado</p>
+                <div class="text-2xl font-bold tracking-tight mt-1 truncate">
+                  {{ formatCurrency(resumenCompras.TotalGastado) }}
+                </div>
+                <p class="text-xs text-muted-foreground mt-1">Monto total en facturas DIAN</p>
+              </div>
+              <div class="h-10 w-10 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0">
+                <DollarSign class="h-5 w-5 text-orange-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="p-6">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-medium text-muted-foreground">Facturas recibidas</p>
+                <div class="text-2xl font-bold tracking-tight mt-1">
+                  {{ resumenCompras.NumFacturas }}
+                </div>
+                <p class="text-xs text-muted-foreground mt-1">Importadas desde Gmail</p>
+              </div>
+              <div class="h-10 w-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
+                <ShoppingBag class="h-5 w-5 text-blue-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="p-6">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-medium text-muted-foreground">Proveedores activos</p>
+                <div class="text-2xl font-bold tracking-tight mt-1">
+                  {{ resumenCompras.NumProveedores }}
+                </div>
+                <p class="text-xs text-muted-foreground mt-1">Con compras en el período</p>
+              </div>
+              <div class="h-10 w-10 rounded-xl bg-violet-500/10 flex items-center justify-center shrink-0">
+                <Building2 class="h-5 w-5 text-violet-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <!-- Top Products + Top Suppliers -->
+      <div class="grid gap-4 grid-cols-1 lg:grid-cols-2">
+        <!-- Top productos comprados -->
+        <Card>
+          <CardHeader class="pb-2">
+            <CardTitle class="text-sm font-semibold flex items-center gap-2">
+              <Package class="h-4 w-4 text-orange-500" />
+              Top productos comprados
+            </CardTitle>
+            <p class="text-xs text-muted-foreground">Por monto total facturado</p>
+          </CardHeader>
+          <CardContent class="pt-0">
+            <div v-if="resumenCompras.TopProductos?.length" class="space-y-0 divide-y">
+              <div v-for="(p, i) in resumenCompras.TopProductos.slice(0, 8)" :key="i"
+                class="flex items-center gap-3 py-2">
+                <span class="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0">
+                  {{ i + 1 }}
+                </span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-medium truncate uppercase">{{ p.Descripcion }}</p>
+                  <p class="text-[10px] text-muted-foreground">
+                    {{ p.TotalCantidad }} unid · {{ p.NumFacturas }} factura(s)
+                  </p>
+                </div>
+                <span class="text-xs font-semibold tabular-nums shrink-0">
+                  {{ formatCurrency(p.TotalComprado) }}
+                </span>
+              </div>
+            </div>
+            <p v-else class="text-xs text-muted-foreground py-4 text-center">Sin datos</p>
+          </CardContent>
+        </Card>
+
+        <!-- Top proveedores -->
+        <Card>
+          <CardHeader class="pb-2">
+            <CardTitle class="text-sm font-semibold flex items-center gap-2">
+              <Building2 class="h-4 w-4 text-violet-500" />
+              Top proveedores
+            </CardTitle>
+            <p class="text-xs text-muted-foreground">Por monto total comprado</p>
+          </CardHeader>
+          <CardContent class="pt-0">
+            <div v-if="resumenCompras.TopProveedores?.length" class="space-y-0 divide-y">
+              <div v-for="(prov, i) in resumenCompras.TopProveedores" :key="i"
+                class="flex items-center gap-3 py-2">
+                <span class="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0">
+                  {{ i + 1 }}
+                </span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-medium truncate uppercase">{{ prov.Nombre }}</p>
+                  <p class="text-[10px] text-muted-foreground font-mono">
+                    NIT {{ prov.NIT || "—" }} · {{ prov.TotalFacturas }} factura(s)
+                  </p>
+                </div>
+                <span class="text-xs font-semibold tabular-nums shrink-0">
+                  {{ formatCurrency(prov.TotalComprado) }}
+                </span>
+              </div>
+            </div>
+            <p v-else class="text-xs text-muted-foreground py-4 text-center">Sin datos</p>
+          </CardContent>
+        </Card>
+      </div>
     </template>
   </div>
 </template>
