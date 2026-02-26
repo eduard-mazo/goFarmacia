@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"goFarmacia/internal/processor"
@@ -343,17 +344,49 @@ func (g *GmailService) procesarMensajeConLog(
 
 	emit("info", fmt.Sprintf("→ ZIP encontrado: %s", subject))
 
-	xmlFiles, err := processor.UnzipInMemory(zipData)
-	if err != nil || len(xmlFiles) == 0 {
+	unzipped, err := processor.UnzipInMemoryAll(zipData)
+	if err != nil || len(unzipped.XMLFiles) == 0 {
 		emit("warn", fmt.Sprintf("  ZIP sin XML válido: %s", subject))
 		return nil
 	}
 
-	for _, xmlData := range xmlFiles {
+	// Parse PDF (if present) in parallel with XML processing.
+	var (
+		pdfData processor.PDFInvoiceData
+		pdfWg   sync.WaitGroup
+	)
+	if len(unzipped.PDFFiles) > 0 {
+		pdfWg.Add(1)
+		go func() {
+			defer pdfWg.Done()
+			// knownCodes will be filled after XML parse; here we parse without codes
+			// to at least get the raw text ready, then re-run mapping after XML.
+			if d, e := processor.ParsePDFBytes(unzipped.PDFFiles[0], nil); e == nil {
+				pdfData = d
+			}
+		}()
+	}
+
+	for _, xmlData := range unzipped.XMLFiles {
 		products, err := processor.ParseDocumentXMLBytes(xmlData)
 		if err != nil || len(products) == 0 {
 			emit("warn", fmt.Sprintf("  XML no parseable: %v", err))
 			continue
+		}
+
+		// Wait for PDF parse then re-run code mapping with known codes.
+		pdfWg.Wait()
+		if pdfData.RawText != "" {
+			codes := make([]string, 0, len(products))
+			for _, p := range products {
+				if p.Code != "" {
+					codes = append(codes, p.Code)
+				}
+			}
+			if refined, e := processor.ParsePDFBytes(unzipped.PDFFiles[0], codes); e == nil {
+				pdfData = refined
+			}
+			products = processor.EnrichProductsFromPDF(products, pdfData)
 		}
 
 		cufe := extractCUFE(xmlData)
@@ -424,18 +457,44 @@ func (g *GmailService) extractZipAttachment(svc *gmail.Service, msg *gmail.Messa
 		if !strings.HasSuffix(strings.ToLower(part.Filename), ".zip") || part.Body == nil {
 			continue
 		}
-		if len(part.Body.Data) > 0 {
-			return base64.URLEncoding.DecodeString(part.Body.Data)
-		}
-		if part.Body.AttachmentId != "" {
-			att, err := svc.Users.Messages.Attachments.Get("me", msg.Id, part.Body.AttachmentId).Do()
-			if err != nil {
-				return nil, err
-			}
-			return base64.URLEncoding.DecodeString(att.Data)
+		data, err := g.downloadAttachmentPart(svc, msg.Id, part)
+		if err == nil && len(data) > 0 {
+			return data, nil
 		}
 	}
 	return nil, fmt.Errorf("no ZIP attachment")
+}
+
+// downloadAttachmentPart downloads a single Gmail message part (attachment).
+// It handles both inline base64 data and remote attachment IDs.
+func (g *GmailService) downloadAttachmentPart(
+	svc *gmail.Service, messageID string, part *gmail.MessagePart,
+) ([]byte, error) {
+	if part.Body == nil {
+		return nil, fmt.Errorf("no body")
+	}
+	if len(part.Body.Data) > 0 {
+		return base64.URLEncoding.DecodeString(part.Body.Data)
+	}
+	if part.Body.AttachmentId != "" {
+		att, err := svc.Users.Messages.Attachments.Get("me", messageID, part.Body.AttachmentId).Do()
+		if err != nil {
+			return nil, err
+		}
+		return base64.URLEncoding.DecodeString(att.Data)
+	}
+	return nil, fmt.Errorf("no data and no attachment ID")
+}
+
+// emitSyncLog emits a single log entry on the "gmail:sync:log" Wails event.
+// Used by background jobs (enrichment, backfill) to report progress to the UI.
+func (g *GmailService) emitSyncLog(nivel, msg string) {
+	entry := SyncLogEntry{
+		Nivel:   nivel,
+		Mensaje: msg,
+		Ts:      time.Now().Format("15:04:05"),
+	}
+	wailsruntime.EventsEmit(g.ctx, "gmail:sync:log", entry)
 }
 
 // extractCUFE scans raw XML bytes for the CUFE/UUID value used for deduplication.

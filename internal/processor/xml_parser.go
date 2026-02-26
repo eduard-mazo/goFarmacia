@@ -56,6 +56,9 @@ type LegalMonetaryTotal struct {
 
 // Item contains product description, code, and extra properties.
 type Item struct {
+	// Name is the standard UBL product name (cbc:Name).
+	// Some suppliers populate this while others use Description for LOTE info.
+	Name                       string                     `xml:"Name"`
 	Description                string                     `xml:"Description"`
 	StandardItemIdentification StandardItemIdentification `xml:"StandardItemIdentification"`
 	SellersItemIdentification  SellersItemIdentification  `xml:"SellersItemIdentification"`
@@ -301,40 +304,82 @@ func buildInvoiceProducts(inv Invoice) []ParsedProduct {
 	customerName := resolvePartyName(inv.Customer.Party)
 	var products []ParsedProduct
 	for _, line := range inv.InvoiceLines {
-		props := make(map[string]string)
-		for _, prop := range line.Item.AdditionalItemProperties {
-			props[prop.Name] = prop.Value
-		}
-		var lineTax float64
-		for _, tx := range line.TaxTotal {
-			lineTax += tx.TaxAmount
-		}
-		code := line.Item.StandardItemIdentification.ID
-		if code == "" {
-			code = line.Item.SellersItemIdentification.ID
-		}
-		products = append(products, ParsedProduct{
-			Description:   line.Item.Description,
-			Code:          code,
-			Quantity:      line.InvoicedQuantity,
-			UnitPrice:     line.Price.PriceAmount,
-			Total:         line.LineExtensionAmount,
-			TaxAmount:     lineTax,
-			Properties:    props,
-			InvoiceID:     inv.ID,
-			IssueDate:     inv.IssueDate,
-			IssueTime:     inv.IssueTime,
-			SupplierName:  supplierName,
-			SupplierNIT:   inv.Supplier.Party.PartyTaxScheme.CompanyID,
-			CustomerName:  customerName,
-			CustomerNIT:   inv.Customer.Party.PartyTaxScheme.CompanyID,
-			Currency:      inv.DocumentCurrency,
-			TotalInvoice:  inv.MonetaryTotal.PayableAmount,
-			DocumentType:  "01",
-			ReferenciaDoc: "",
-		})
+		products = append(products, buildLineProduct(
+			line.Item, line.InvoicedQuantity, line.Price.PriceAmount,
+			line.LineExtensionAmount, line.TaxTotal,
+			inv.ID, inv.IssueDate, inv.IssueTime,
+			supplierName, inv.Supplier.Party.PartyTaxScheme.CompanyID,
+			customerName, inv.Customer.Party.PartyTaxScheme.CompanyID,
+			inv.DocumentCurrency, inv.MonetaryTotal.PayableAmount,
+			"01", "",
+		))
 	}
 	return products
+}
+
+// buildLineProduct creates a ParsedProduct from item fields shared across all document types.
+// It handles LOTE descriptions: preserves LOTE/VENCE data in Properties and upgrades
+// to the cbc:Name field when available (fallback to raw description when not).
+func buildLineProduct(
+	item Item, quantity, unitPrice, lineTotal float64, taxes []TaxTotal,
+	invoiceID, issueDate, issueTime string,
+	supplierName, supplierNIT, customerName, customerNIT string,
+	currency string, totalInvoice float64,
+	docType, refDoc string,
+) ParsedProduct {
+	props := make(map[string]string)
+	for _, prop := range item.AdditionalItemProperties {
+		props[prop.Name] = prop.Value
+	}
+	var lineTax float64
+	for _, tx := range taxes {
+		lineTax += tx.TaxAmount
+	}
+	code := item.StandardItemIdentification.ID
+	if code == "" {
+		code = item.SellersItemIdentification.ID
+	}
+
+	// Choose description: prefer cbc:Name over cbc:Description when Description
+	// is only a batch/lot reference (common in some suppliers like INVERSIONES
+	// MACRODESCUENTOS that encode LOTE info in Description instead of a real name).
+	desc := item.Description
+	if IsLoteDescription(desc) {
+		// Extract lot/expiry data into properties before discarding
+		lote, vence := ParseLoteInfo(desc)
+		if lote != "" {
+			props["lote"] = lote
+		}
+		if vence != "" {
+			props["vencimiento"] = vence
+		}
+		// Use Name if available; otherwise keep Description (PDF enrichment will fix it later)
+		if item.Name != "" {
+			props["descripcion_xml"] = desc
+			desc = item.Name
+		}
+	}
+
+	return ParsedProduct{
+		Description:   desc,
+		Code:          code,
+		Quantity:      quantity,
+		UnitPrice:     unitPrice,
+		Total:         lineTotal,
+		TaxAmount:     lineTax,
+		Properties:    props,
+		InvoiceID:     invoiceID,
+		IssueDate:     issueDate,
+		IssueTime:     issueTime,
+		SupplierName:  supplierName,
+		SupplierNIT:   supplierNIT,
+		CustomerName:  customerName,
+		CustomerNIT:   customerNIT,
+		Currency:      currency,
+		TotalInvoice:  totalInvoice,
+		DocumentType:  docType,
+		ReferenciaDoc: refDoc,
+	}
 }
 
 func buildCreditNoteProducts(cn CreditNote) []ParsedProduct {
@@ -343,38 +388,15 @@ func buildCreditNoteProducts(cn CreditNote) []ParsedProduct {
 	refDoc := cn.DiscrepancyResponse.ReferenceID
 	var products []ParsedProduct
 	for _, line := range cn.CreditNoteLines {
-		props := make(map[string]string)
-		for _, prop := range line.Item.AdditionalItemProperties {
-			props[prop.Name] = prop.Value
-		}
-		var lineTax float64
-		for _, tx := range line.TaxTotal {
-			lineTax += tx.TaxAmount
-		}
-		code := line.Item.StandardItemIdentification.ID
-		if code == "" {
-			code = line.Item.SellersItemIdentification.ID
-		}
-		products = append(products, ParsedProduct{
-			Description:   line.Item.Description,
-			Code:          code,
-			Quantity:      line.CreditedQuantity,
-			UnitPrice:     line.Price.PriceAmount,
-			Total:         line.LineExtensionAmount,
-			TaxAmount:     lineTax,
-			Properties:    props,
-			InvoiceID:     cn.ID,
-			IssueDate:     cn.IssueDate,
-			IssueTime:     cn.IssueTime,
-			SupplierName:  supplierName,
-			SupplierNIT:   cn.Supplier.Party.PartyTaxScheme.CompanyID,
-			CustomerName:  customerName,
-			CustomerNIT:   cn.Customer.Party.PartyTaxScheme.CompanyID,
-			Currency:      cn.DocumentCurrency,
-			TotalInvoice:  cn.MonetaryTotal.PayableAmount,
-			DocumentType:  "91",
-			ReferenciaDoc: refDoc,
-		})
+		products = append(products, buildLineProduct(
+			line.Item, line.CreditedQuantity, line.Price.PriceAmount,
+			line.LineExtensionAmount, line.TaxTotal,
+			cn.ID, cn.IssueDate, cn.IssueTime,
+			supplierName, cn.Supplier.Party.PartyTaxScheme.CompanyID,
+			customerName, cn.Customer.Party.PartyTaxScheme.CompanyID,
+			cn.DocumentCurrency, cn.MonetaryTotal.PayableAmount,
+			"91", refDoc,
+		))
 	}
 	return products
 }
@@ -383,45 +405,21 @@ func buildDebitNoteProducts(dn DebitNote) []ParsedProduct {
 	supplierName := resolvePartyName(dn.Supplier.Party)
 	customerName := resolvePartyName(dn.Customer.Party)
 	refDoc := dn.DiscrepancyResponse.ReferenceID
-	// DebitNote may use RequestedMonetaryTotal or LegalMonetaryTotal
 	total := dn.LegalMonetaryTotal.PayableAmount
 	if total == 0 {
 		total = dn.RequestedMonetaryTotal.PayableAmount
 	}
 	var products []ParsedProduct
 	for _, line := range dn.DebitNoteLines {
-		props := make(map[string]string)
-		for _, prop := range line.Item.AdditionalItemProperties {
-			props[prop.Name] = prop.Value
-		}
-		var lineTax float64
-		for _, tx := range line.TaxTotal {
-			lineTax += tx.TaxAmount
-		}
-		code := line.Item.StandardItemIdentification.ID
-		if code == "" {
-			code = line.Item.SellersItemIdentification.ID
-		}
-		products = append(products, ParsedProduct{
-			Description:   line.Item.Description,
-			Code:          code,
-			Quantity:      line.DebitedQuantity,
-			UnitPrice:     line.Price.PriceAmount,
-			Total:         line.LineExtensionAmount,
-			TaxAmount:     lineTax,
-			Properties:    props,
-			InvoiceID:     dn.ID,
-			IssueDate:     dn.IssueDate,
-			IssueTime:     dn.IssueTime,
-			SupplierName:  supplierName,
-			SupplierNIT:   dn.Supplier.Party.PartyTaxScheme.CompanyID,
-			CustomerName:  customerName,
-			CustomerNIT:   dn.Customer.Party.PartyTaxScheme.CompanyID,
-			Currency:      dn.DocumentCurrency,
-			TotalInvoice:  total,
-			DocumentType:  "92",
-			ReferenciaDoc: refDoc,
-		})
+		products = append(products, buildLineProduct(
+			line.Item, line.DebitedQuantity, line.Price.PriceAmount,
+			line.LineExtensionAmount, line.TaxTotal,
+			dn.ID, dn.IssueDate, dn.IssueTime,
+			supplierName, dn.Supplier.Party.PartyTaxScheme.CompanyID,
+			customerName, dn.Customer.Party.PartyTaxScheme.CompanyID,
+			dn.DocumentCurrency, total,
+			"92", refDoc,
+		))
 	}
 	return products
 }

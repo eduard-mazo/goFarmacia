@@ -24,14 +24,14 @@ import {
 import {
   Mail, RefreshCw, ShieldCheck, ShieldOff, Eye,
   Search, Loader2, CheckCircle2, AlertCircle, FolderOpen,
-  CalendarDays, ChevronDown,
+  CalendarDays, ChevronDown, FileSearch,
 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
 import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
 import { backend } from "@/../wailsjs/go/models";
 import {
   EstadoAuth, IniciarOAuth2, RevocarAuth,
-  SincronizarConOpciones,
+  SincronizarConOpciones, EnriquecerDescripciones,
   ObtenerFacturasCompra, ObtenerDetalleFacturaCompra,
   ActualizarEstadoFacturaCompra,
 } from "@/../wailsjs/go/backend/GmailService";
@@ -58,6 +58,7 @@ const auth = ref<AuthStatus>({ authenticated: false, credPresent: false, configD
 
 // Sync
 const syncing = ref(false);
+const enriqueciendo = ref(false);
 const syncPopoverOpen = ref(false);
 const syncModo = ref<SyncModo>("semana");
 const syncDesde = ref("");
@@ -142,6 +143,25 @@ const iniciarSync = async () => {
     syncLog.value.push({ nivel: "error", mensaje: `Error fatal: ${e}`, ts: new Date().toLocaleTimeString() });
   } finally {
     syncing.value = false;
+  }
+};
+
+const enriquecerDesdesPDF = async () => {
+  if (enriqueciendo.value || syncing.value) return;
+  enriqueciendo.value = true;
+  syncLog.value = [];
+  try {
+    const res = await EnriquecerDescripciones();
+    if (res.Enriquecidas > 0) {
+      toast.success(`${res.Enriquecidas} descripción(es) actualizadas desde PDF`);
+      cargarFacturas();
+    } else {
+      toast.info("Sin descripciones pendientes de enriquecimiento");
+    }
+  } catch (e) {
+    toast.error("Error al enriquecer desde PDF", { description: `${e}` });
+  } finally {
+    enriqueciendo.value = false;
   }
 };
 
@@ -506,6 +526,20 @@ watch(busqueda, () => {
             </div>
           </PopoverContent>
         </Popover>
+
+        <!-- Enrich from PDF -->
+        <Button
+          v-if="auth.authenticated"
+          size="sm"
+          variant="outline"
+          class="h-7 text-xs gap-1.5"
+          :disabled="enriqueciendo || syncing"
+          @click="enriquecerDesdesPDF"
+        >
+          <Loader2 v-if="enriqueciendo" class="h-3.5 w-3.5 animate-spin" />
+          <FileSearch v-else class="h-3.5 w-3.5" />
+          {{ enriqueciendo ? "Enriqueciendo…" : "Enriquecer PDF" }}
+        </Button>
       </div>
     </div>
 
@@ -524,14 +558,14 @@ watch(busqueda, () => {
     </div>
 
     <!-- Real-time sync log -->
-    <div v-if="syncing || syncLog.length > 0"
+    <div v-if="syncing || enriqueciendo || syncLog.length > 0"
       class="shrink-0 border-b bg-slate-950 text-slate-200">
       <!-- Progress bar + counters -->
       <div class="flex items-center gap-4 px-3 py-1.5 border-b border-slate-800 text-xs">
-        <Loader2 v-if="syncing" class="h-3 w-3 animate-spin text-blue-400 shrink-0" />
+        <Loader2 v-if="syncing || enriqueciendo" class="h-3 w-3 animate-spin text-blue-400 shrink-0" />
         <CheckCircle2 v-else class="h-3 w-3 text-green-400 shrink-0" />
         <span class="text-slate-400 font-mono">
-          {{ syncing ? "Sincronizando…" : "Completado" }}
+          {{ enriqueciendo ? "Enriqueciendo desde PDF…" : syncing ? "Sincronizando…" : "Completado" }}
         </span>
         <template v-if="syncProgreso">
           <span class="font-mono text-slate-300">↓ {{ syncProgreso.total }} revisados</span>
