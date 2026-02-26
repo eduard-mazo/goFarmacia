@@ -291,6 +291,23 @@ _copy-creds-example:
 	  echo "  $(YELLOW)!$(RESET) credentials.example.json generado en $(TARGET_DIR)/"; \
 	fi
 
+# _build-sigfix: compila libsigfix.so (LD_PRELOAD shim para SA_ONSTACK).
+# Solo necesario en Linux. En macOS/Windows no se genera.
+SIGFIX_SRC := sigfix.c
+.PHONY: _build-sigfix
+_build-sigfix:
+ifeq ($(UNAME), Linux)
+	@if [ -f "$(SIGFIX_SRC)" ]; then \
+	  gcc -shared -fPIC -O2 -o "$(TARGET_DIR)/libsigfix.so" "$(SIGFIX_SRC)" -ldl; \
+	  printf '#!/bin/bash\nSCRIPT_DIR="$$(cd "$$(dirname "$${BASH_SOURCE[0]}")" && pwd)"\nexec env LD_PRELOAD="$$SCRIPT_DIR/libsigfix.so" "$$SCRIPT_DIR/$(APP_NAME)" "$$@"\n' \
+	    > "$(TARGET_DIR)/$(APP_NAME).sh"; \
+	  chmod +x "$(TARGET_DIR)/$(APP_NAME).sh"; \
+	  echo "  $(GREEN)✓$(RESET) libsigfix.so + $(APP_NAME).sh generados en $(TARGET_DIR)/"; \
+	else \
+	  echo "  $(YELLOW)!$(RESET) sigfix.c no encontrado — omitiendo shim de señales"; \
+	fi
+endif
+
 # _copy-common: archivos de acompañamiento para todos los paquetes dist.
 .PHONY: _copy-common
 _copy-common:
@@ -320,6 +337,7 @@ else
 	@ls -lh $(BUILD_DIR)/$(APP_NAME)
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
 	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _build-sigfix TARGET_DIR=$(BUILD_DIR)
 endif
 
 .PHONY: build-debug
@@ -617,26 +635,27 @@ else
 	@echo "$(BOLD)$(CYAN)→ Creando acceso directo en escritorio (Linux)...$(RESET)"
 	@test -f "$(BUILD_DIR)/$(APP_NAME)" || \
 	  (echo "$(RED)Error: Binario no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
+	@$(MAKE) _build-sigfix TARGET_DIR=$(BUILD_DIR)
 	@mkdir -p ~/.local/share/icons/hicolor/256x256/apps
-	@cp "$(ICON_SRC)" "$(ICON_DEST)"
+	@install -m644 "$(ICON_SRC)" "$(ICON_DEST)"
 	@gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor 2>/dev/null || true
 	@mkdir -p ~/.local/share/applications
-	@printf '[Desktop Entry]\nVersion=1.0\nName=Droguería Luna\nGenericName=Gestión Farmacéutica\nComment=Sistema de gestión farmacéutica\nExec=%s\nPath=%s\nIcon=%s\nTerminal=false\nType=Application\nCategories=Office;MedicalSoftware;\nStartupWMClass=$(APP_NAME)\n' \
-	  "$(abspath $(BUILD_DIR)/$(APP_NAME))" \
+	@printf '[Desktop Entry]\nVersion=1.0\nName=Droguería Luna\nGenericName=Gestión Farmacéutica\nComment=Sistema de gestión farmacéutica\nExec=%s\nPath=%s\nIcon=goFarmacia\nTerminal=false\nType=Application\nCategories=Office;\nStartupWMClass=$(APP_NAME)\nKeywords=farmacia;drogueria;pos;ventas;inventario;\n' \
+	  "$(abspath $(BUILD_DIR)/$(APP_NAME).sh)" \
 	  "$(abspath $(BUILD_DIR))" \
-	  "$(ICON_DEST)" \
 	  > ~/.local/share/applications/$(APP_NAME).desktop
 	@chmod +x ~/.local/share/applications/$(APP_NAME).desktop
 	@update-desktop-database ~/.local/share/applications 2>/dev/null || true
+	@xdg-desktop-menu forceupdate 2>/dev/null || true
 	@mkdir -p ~/Desktop
-	@cp ~/.local/share/applications/$(APP_NAME).desktop ~/Desktop/$(APP_NAME).desktop
-	@chmod +x ~/Desktop/$(APP_NAME).desktop
+	@install -m755 ~/.local/share/applications/$(APP_NAME).desktop ~/Desktop/$(APP_NAME).desktop
 	@gio set ~/Desktop/$(APP_NAME).desktop metadata::trusted true 2>/dev/null || true
 	@echo "$(GREEN)✓ Acceso directo creado$(RESET)"
-	@echo "  Ícono  : $(ICON_DEST)"
-	@echo "  Menú   : ~/.local/share/applications/$(APP_NAME).desktop"
-	@echo "  Desktop: ~/Desktop/$(APP_NAME).desktop"
-	@echo "  $(YELLOW)Si no inicia desde el escritorio, cierra sesión y vuelve a entrar.$(RESET)"
+	@echo "  Launcher: $(BUILD_DIR)/$(APP_NAME).sh (usa LD_PRELOAD para fix de señales)"
+	@echo "  Ícono   : $(ICON_DEST)"
+	@echo "  Menú    : ~/.local/share/applications/$(APP_NAME).desktop"
+	@echo "  Desktop : ~/Desktop/$(APP_NAME).desktop"
+	@echo "  $(YELLOW)Si no aparece en Aplicaciones, cierra sesión y vuelve a entrar.$(RESET)"
 endif
 
 .PHONY: version

@@ -16,8 +16,11 @@ package main
 // uses for async goroutine preemption, and force the X11 GDK backend so
 // the Wayland compositor layer does not install additional bare handlers.
 static void __attribute__((constructor)) earlyGtkSignalSetup(void) {
-    setenv("JSC_SIGNAL_FOR_GC", "12", 0);     // use SIGUSR2 instead of SIGUSR1
-    setenv("GDK_BACKEND", "x11", 0);          // avoid Wayland compositor signals
+    // Force X11 GDK backend so the Wayland compositor layer does not
+    // install additional bare signal handlers that conflict with Go ≥ 1.23.
+    // The SA_ONSTACK fix for WebKit/JSC is handled by LD_PRELOAD=libsigfix.so
+    // (see sigfix.c and the goFarmacia.sh launcher).
+    setenv("GDK_BACKEND", "x11", 0);
 }
 */
 import "C"
