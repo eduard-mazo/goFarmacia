@@ -253,15 +253,40 @@ _copy-env:
 	  echo "  $(YELLOW)!$(RESET) .env ni .env.example encontrados — generado .env.example mínimo en $(TARGET_DIR)/"; \
 	fi
 
-# _copy-creds-example: incluye el JSON de ejemplo para Gmail en el paquete.
-# Nunca copia credentials.json real (contiene secretos) — solo el template.
+# _copy-creds: copia credentials.json al directorio de build.
+#   Prioridad:
+#     1. credentials.json en la raíz del proyecto (dev local)
+#     2. credentials.json instalado en ~/.config/goFarmacia/
+#     3. credentials.example.json como plantilla (fallback)
+#
+# Para builds de DISTRIBUCIÓN (dist-*) solo se incluye el ejemplo — los
+# secretos reales no deben empaquetarse.
+.PHONY: _copy-creds
+_copy-creds:
+	@if [ -f "credentials.json" ]; then \
+	  cp "credentials.json" "$(TARGET_DIR)/credentials.json"; \
+	  echo "  $(GREEN)✓$(RESET) credentials.json copiado desde raíz del proyecto"; \
+	elif [ -f "$(CREDS_DEST)" ]; then \
+	  cp "$(CREDS_DEST)" "$(TARGET_DIR)/credentials.json"; \
+	  echo "  $(GREEN)✓$(RESET) credentials.json copiado desde $(CONFIG_DIR)/"; \
+	elif [ -f "$(CREDS_EXAMPLE)" ]; then \
+	  cp "$(CREDS_EXAMPLE)" "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
+	  echo "  $(YELLOW)!$(RESET) credentials.json no encontrado — copiado credentials.example.json como plantilla"; \
+	  echo "      Configura las credenciales en Ajustes → Credenciales Gmail de la app."; \
+	else \
+	  printf '{"installed":{"client_id":"","client_secret":"","redirect_uris":["http://localhost:8094/gmail/oauth2/callback"]}}\n' \
+	    > "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
+	  echo "  $(YELLOW)!$(RESET) credentials.example.json generado en $(TARGET_DIR)/"; \
+	fi
+
+# _copy-creds-example: solo el template (para paquetes de distribución).
 .PHONY: _copy-creds-example
 _copy-creds-example:
 	@if [ -f "$(CREDS_EXAMPLE)" ]; then \
 	  cp "$(CREDS_EXAMPLE)" "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
 	  echo "  $(GREEN)✓$(RESET) credentials.example.json copiado a $(TARGET_DIR)/"; \
 	else \
-	  printf '{"_ver":"Coloca el credentials.json de Google OAuth2 en ~/.config/goFarmacia/credentials.json","installed":{"client_id":"","client_secret":"","redirect_uris":["http://localhost:8094/gmail/oauth2/callback"]}}\n' \
+	  printf '{"installed":{"client_id":"","client_secret":"","redirect_uris":["http://localhost:8094/gmail/oauth2/callback"]}}\n' \
 	    > "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
 	  echo "  $(YELLOW)!$(RESET) credentials.example.json generado en $(TARGET_DIR)/"; \
 	fi
@@ -294,7 +319,7 @@ else
 	@echo "$(GREEN)✓ Binario:$(RESET) $(BUILD_DIR)/$(APP_NAME)"
 	@ls -lh $(BUILD_DIR)/$(APP_NAME)
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
 endif
 
 .PHONY: build-debug
@@ -314,7 +339,7 @@ else
 		-debug -devtools \
 		-o $(APP_NAME)-debug
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
 endif
 
 # =============================================================================
@@ -338,7 +363,7 @@ build-mac: _guard-mac
 	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME).app"
 	@du -sh $(BUILD_DIR)/$(APP_NAME).app
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
 
 .PHONY: build-mac-arm64
 build-mac-arm64: _guard-mac
@@ -350,7 +375,7 @@ build-mac-arm64: _guard-mac
 		-o $(APP_NAME)-arm64.app
 	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME)-arm64.app"
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
 
 .PHONY: build-mac-amd64
 build-mac-amd64: _guard-mac
@@ -362,7 +387,7 @@ build-mac-amd64: _guard-mac
 		-o $(APP_NAME)-amd64.app
 	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME)-amd64.app"
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
 
 # =============================================================================
 #  BUILD — Windows  [desde Linux/Mac requiere mingw-w64]
@@ -384,7 +409,7 @@ build-win:
 	@echo "$(GREEN)✓ Binario:$(RESET) $(BUILD_DIR)/$(APP_NAME).exe"
 	@ls -lh $(BUILD_DIR)/$(APP_NAME).exe
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds-example TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
 
 # =============================================================================
 #  BUILD — TODOS

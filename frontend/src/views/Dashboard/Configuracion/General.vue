@@ -1,31 +1,28 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
-import { useRouter } from "vue-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "vue-sonner";
 import {
-  Settings,
-  Save,
-  Database,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  Eye,
-  EyeOff,
-  AlertTriangle,
+  Settings, Save, Database, CheckCircle2, XCircle, Loader2,
+  Eye, EyeOff, AlertTriangle, Mail, KeyRound, FileJson, FolderKey,
+  ShieldCheck,
 } from "lucide-vue-next";
 import { useDBStore } from "@/stores/dbStore";
 import { useAuthStore } from "@/stores/auth";
+import {
+  EstadoAuth, ObtenerCredenciales, GuardarCredenciales,
+} from "@/../wailsjs/go/backend/GmailService";
 
 // ── Stores ─────────────────────────────────────────────────────────────────
 const dbStore = useDBStore();
 const authStore = useAuthStore();
-const router = useRouter();
 
 // ── DB config state ─────────────────────────────────────────────────────────
 const dsn = ref(dbStore.dsnHint || "");
@@ -50,12 +47,8 @@ async function handleTestConnection() {
   if (err === null) {
     testResult.value = { ok: true, message: "Conexión exitosa — servidor alcanzable." };
   } else {
-    // If server reachable but DB doesn't exist, that's OK — we'll create it
     const isReachable = err.toLowerCase().includes("servidor alcanzable");
-    testResult.value = {
-      ok: isReachable,
-      message: err,
-    };
+    testResult.value = { ok: isReachable, message: err };
   }
 }
 
@@ -68,14 +61,39 @@ async function handleSaveDB() {
     toast.success("Base de datos configurada", {
       description: "La conexión se estableció y las migraciones se aplicaron.",
     });
-    // If was in setup mode, log out so user registers/logs in with real DB
     if (authStore.currentUser?.UUID === "setup-admin") {
-      setTimeout(() => {
-        authStore.logout();
-      }, 1500);
+      setTimeout(() => authStore.logout(), 1500);
     }
   } else {
     toast.error("Error al configurar base de datos", { description: err });
+  }
+}
+
+// ── Gmail credentials ────────────────────────────────────────────────────────
+interface CredsInfo { Exists: boolean; Path: string; ProjectID: string; ClientID: string; }
+
+const creds = ref<CredsInfo>({ Exists: false, Path: "", ProjectID: "", ClientID: "" });
+const credJSON = ref("");
+const showCredEditor = ref(false);
+const savingCreds = ref(false);
+
+async function loadCreds() {
+  creds.value = await ObtenerCredenciales();
+}
+
+async function handleSaveCreds() {
+  if (!credJSON.value.trim()) return;
+  savingCreds.value = true;
+  try {
+    await GuardarCredenciales(credJSON.value.trim());
+    toast.success("credentials.json guardado");
+    credJSON.value = "";
+    showCredEditor.value = false;
+    await loadCreds();
+  } catch (e) {
+    toast.error("Error al guardar credenciales", { description: `${e}` });
+  } finally {
+    savingCreds.value = false;
   }
 }
 
@@ -89,44 +107,32 @@ interface AppSettings {
 }
 
 const STORAGE_KEY = "appSettings";
-
 const settings = ref<AppSettings>({
-  nombreTienda: "",
-  direccion: "",
-  telefono: "",
-  tasaIVA: 19,
-  umbralStockBajo: 10,
+  nombreTienda: "", direccion: "", telefono: "", tasaIVA: 19, umbralStockBajo: 10,
 });
 
 function loadSettings() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) {
-    try {
-      settings.value = { ...settings.value, ...JSON.parse(stored) };
-    } catch (e) {
-      console.error("Error al cargar configuración:", e);
-    }
+    try { settings.value = { ...settings.value, ...JSON.parse(stored) }; }
+    catch { /* ignore */ }
   }
 }
 
 function saveSettings() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings.value));
-  toast.success("Configuración guardada", {
-    description: "Los cambios se han aplicado correctamente.",
-  });
+  toast.success("Configuración guardada", { description: "Los cambios se han aplicado correctamente." });
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadSettings();
-  // Sync DSN hint from store (populated by startPolling in DashboardLayout)
-  if (!dsn.value && dbStore.dsnHint) {
-    dsn.value = dbStore.dsnHint;
-  }
+  if (!dsn.value && dbStore.dsnHint) dsn.value = dbStore.dsnHint;
+  await loadCreds();
 });
 </script>
 
 <template>
-  <div class="p-6 space-y-6 max-w-2xl">
+  <div class="p-6 space-y-6">
     <!-- Page header -->
     <div>
       <h1 class="text-2xl font-semibold tracking-tight flex items-center gap-2">
@@ -134,191 +140,241 @@ onMounted(() => {
         Configuración General
       </h1>
       <p class="text-sm text-muted-foreground mt-0.5">
-        Conexión a base de datos y parámetros del sistema
+        Conexión a base de datos, credenciales Gmail y parámetros del sistema
       </p>
     </div>
 
-    <!-- ═══ Database connection card ═══════════════════════════════════════ -->
-    <Card class="" :class="{ 'border-amber-300': dbStore.setupMode }">
-      <CardHeader class="pb-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <Database class="h-4 w-4 text-muted-foreground" />
-            <CardTitle class="text-base font-semibold">Conexión a PostgreSQL</CardTitle>
-          </div>
-          <Badge
-            variant="outline"
-            :class="dbStatusBadge.class"
-            class="text-xs px-2 py-0.5"
-          >
-            <span
-              class="h-1.5 w-1.5 rounded-full mr-1.5 inline-block"
-              :class="{
-                'bg-green-500': dbStore.connected,
-                'bg-amber-400': dbStore.setupMode,
-                'bg-red-500': !dbStore.connected && !dbStore.setupMode,
-              }"
-            />
-            {{ dbStatusBadge.label }}
-          </Badge>
-        </div>
-        <CardDescription v-if="dbStore.setupMode" class="text-amber-700 mt-1 text-sm">
-          <AlertTriangle class="h-3.5 w-3.5 inline mr-1" />
-          El sistema está en modo configuración. Ingresa el DSN de tu base de datos PostgreSQL para comenzar.
-        </CardDescription>
-        <CardDescription v-else-if="dbStore.connected" class="mt-1 text-sm">
-          Servidor conectado. Puedes actualizar el DSN y reconectar si es necesario.
-        </CardDescription>
-      </CardHeader>
+    <!-- ═══ Top row: DB + Gmail side by side ════════════════════════════════ -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
-      <CardContent class="space-y-4">
-        <!-- DSN input -->
-        <div class="grid gap-2">
-          <Label for="dsn">Cadena de conexión (DSN)</Label>
-          <div class="relative">
-            <Input
-              id="dsn"
-              v-model="dsn"
-              :type="showDSN ? 'text' : 'password'"
-              class="h-9 pr-10 font-mono text-sm"
-              placeholder="postgres://usuario:contraseña@host:5432/nombre_bd?sslmode=disable"
-            />
-            <button
-              type="button"
-              @click="showDSN = !showDSN"
-              class="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
-              tabindex="-1"
-            >
-              <EyeOff v-if="showDSN" class="w-4 h-4" />
-              <Eye v-else class="w-4 h-4" />
-            </button>
-          </div>
-          <p class="text-xs text-muted-foreground">
-            Formato URL:
-            <code class="bg-muted px-1 rounded text-[11px]"
-              >postgres://user:pass@host:5432/dbname?sslmode=disable</code
-            >
-            — Si la base de datos no existe, se creará automáticamente.
-          </p>
-        </div>
-
-        <!-- Test result alert -->
-        <Alert
-          v-if="testResult"
-          :variant="testResult.ok ? 'default' : 'destructive'"
-          class="py-2 px-3"
-          :class="testResult.ok ? 'border-green-300 bg-green-50 text-green-800' : ''"
-        >
-          <CheckCircle2 v-if="testResult.ok" class="h-4 w-4 text-green-600" />
-          <XCircle v-else class="h-4 w-4" />
-          <AlertDescription class="ml-6 text-xs">{{ testResult.message }}</AlertDescription>
-        </Alert>
-
-        <!-- Action buttons -->
-        <div class="flex gap-2 pt-1">
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-9 gap-2"
-            :disabled="testLoading || saveLoading || !dsn.trim()"
-            @click="handleTestConnection"
-          >
-            <Loader2 v-if="testLoading" class="h-4 w-4 animate-spin" />
-            <CheckCircle2 v-else class="h-4 w-4" />
-            Probar conexión
-          </Button>
-
-          <Button
-            size="sm"
-            class="h-9 gap-2"
-            :disabled="saveLoading || testLoading || !dsn.trim()"
-            @click="handleSaveDB"
-          >
-            <Loader2 v-if="saveLoading" class="h-4 w-4 animate-spin" />
-            <Database v-else class="h-4 w-4" />
-            {{ saveLoading ? "Conectando..." : "Guardar y Conectar" }}
-          </Button>
-        </div>
-
-        <!-- Post-setup notice -->
-        <p v-if="dbStore.setupMode" class="text-xs text-muted-foreground border-t pt-3">
-          Después de conectar, el sistema cerrará la sesión de configuración. Regístrate o inicia
-          sesión con tu cuenta real.
-        </p>
-      </CardContent>
-    </Card>
-
-    <!-- ═══ General settings (disabled in setup mode) ══════════════════════ -->
-    <template v-if="!dbStore.setupMode">
-      <!-- Datos de la tienda -->
-      <Card class="">
+      <!-- ── Database connection ─────────────────────────────────────────── -->
+      <Card :class="{ 'border-amber-300': dbStore.setupMode }">
         <CardHeader class="pb-4">
-          <CardTitle class="text-base font-semibold">Datos de la Tienda</CardTitle>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <Database class="h-4 w-4 text-muted-foreground" />
+              <CardTitle class="text-base font-semibold">Conexión a PostgreSQL</CardTitle>
+            </div>
+            <Badge variant="outline" :class="dbStatusBadge.class" class="text-xs px-2 py-0.5">
+              <span class="h-1.5 w-1.5 rounded-full mr-1.5 inline-block"
+                :class="{
+                  'bg-green-500': dbStore.connected,
+                  'bg-amber-400': dbStore.setupMode,
+                  'bg-red-500': !dbStore.connected && !dbStore.setupMode,
+                }" />
+              {{ dbStatusBadge.label }}
+            </Badge>
+          </div>
+          <CardDescription v-if="dbStore.setupMode" class="text-amber-700 mt-1 text-sm">
+            <AlertTriangle class="h-3.5 w-3.5 inline mr-1" />
+            Modo configuración. Ingresa el DSN de tu base de datos PostgreSQL para comenzar.
+          </CardDescription>
+          <CardDescription v-else-if="dbStore.connected" class="mt-1 text-sm">
+            Servidor conectado. Puedes actualizar el DSN y reconectar si es necesario.
+          </CardDescription>
         </CardHeader>
+
         <CardContent class="space-y-4">
           <div class="grid gap-2">
-            <Label for="nombreTienda">Nombre de la farmacia</Label>
-            <Input
-              id="nombreTienda"
-              v-model="settings.nombreTienda"
-              class="h-9"
-              placeholder="Ej: Droguería Luna"
-            />
-          </div>
-          <div class="grid gap-2">
-            <Label for="direccion">Dirección</Label>
-            <Input
-              id="direccion"
-              v-model="settings.direccion"
-              class="h-9"
-              placeholder="Dirección del establecimiento"
-            />
-          </div>
-          <div class="grid gap-2">
-            <Label for="telefono">Teléfono de contacto</Label>
-            <Input
-              id="telefono"
-              v-model="settings.telefono"
-              class="h-9"
-              placeholder="Ej: 310 000 0000"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <!-- Parámetros del sistema -->
-      <Card class="">
-        <CardHeader class="pb-4">
-          <CardTitle class="text-base font-semibold">Parámetros del Sistema</CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="grid gap-2">
-            <Label for="tasaIVA">Tasa de IVA (%)</Label>
-            <Input
-              id="tasaIVA"
-              v-model.number="settings.tasaIVA"
-              type="number"
-              min="0"
-              max="100"
-              class="h-9 max-w-[160px]"
-            />
-            <p class="text-xs text-muted-foreground">Porcentaje aplicado a los productos gravados</p>
-          </div>
-          <div class="grid gap-2">
-            <Label for="umbralStock">Umbral de Stock Bajo</Label>
-            <Input
-              id="umbralStock"
-              v-model.number="settings.umbralStockBajo"
-              type="number"
-              min="0"
-              class="h-9 max-w-[160px]"
-            />
+            <Label for="dsn">Cadena de conexión (DSN)</Label>
+            <div class="relative">
+              <Input
+                id="dsn"
+                v-model="dsn"
+                :type="showDSN ? 'text' : 'password'"
+                class="h-9 pr-10 font-mono text-sm"
+                placeholder="postgres://usuario:contraseña@host:5432/nombre_bd?sslmode=disable"
+              />
+              <button type="button" @click="showDSN = !showDSN"
+                class="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                tabindex="-1">
+                <EyeOff v-if="showDSN" class="w-4 h-4" />
+                <Eye v-else class="w-4 h-4" />
+              </button>
+            </div>
             <p class="text-xs text-muted-foreground">
-              Productos con stock igual o menor se marcarán en amarillo
+              Formato:
+              <code class="bg-muted px-1 rounded text-[11px]">postgres://user:pass@host:5432/dbname?sslmode=disable</code>
             </p>
           </div>
+
+          <Alert v-if="testResult" :variant="testResult.ok ? 'default' : 'destructive'" class="py-2 px-3"
+            :class="testResult.ok ? 'border-green-300 bg-green-50 text-green-800' : ''">
+            <CheckCircle2 v-if="testResult.ok" class="h-4 w-4 text-green-600" />
+            <XCircle v-else class="h-4 w-4" />
+            <AlertDescription class="ml-6 text-xs">{{ testResult.message }}</AlertDescription>
+          </Alert>
+
+          <div class="flex gap-2 pt-1">
+            <Button variant="outline" size="sm" class="h-9 gap-2"
+              :disabled="testLoading || saveLoading || !dsn.trim()" @click="handleTestConnection">
+              <Loader2 v-if="testLoading" class="h-4 w-4 animate-spin" />
+              <CheckCircle2 v-else class="h-4 w-4" />
+              Probar
+            </Button>
+            <Button size="sm" class="h-9 gap-2"
+              :disabled="saveLoading || testLoading || !dsn.trim()" @click="handleSaveDB">
+              <Loader2 v-if="saveLoading" class="h-4 w-4 animate-spin" />
+              <Database v-else class="h-4 w-4" />
+              {{ saveLoading ? "Conectando..." : "Guardar y Conectar" }}
+            </Button>
+          </div>
+
+          <p v-if="dbStore.setupMode" class="text-xs text-muted-foreground border-t pt-3">
+            Después de conectar, el sistema cerrará la sesión de configuración. Regístrate con tu cuenta real.
+          </p>
         </CardContent>
       </Card>
+
+      <!-- ── Gmail credentials ───────────────────────────────────────────── -->
+      <Card>
+        <CardHeader class="pb-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <Mail class="h-4 w-4 text-muted-foreground" />
+              <CardTitle class="text-base font-semibold">Credenciales Gmail OAuth2</CardTitle>
+            </div>
+            <Badge variant="outline" class="text-xs px-2 py-0.5"
+              :class="creds.Exists
+                ? 'bg-green-100 text-green-700 border-green-300'
+                : 'bg-red-100 text-red-700 border-red-300'">
+              <span class="h-1.5 w-1.5 rounded-full mr-1.5 inline-block"
+                :class="creds.Exists ? 'bg-green-500' : 'bg-red-500'" />
+              {{ creds.Exists ? "Configuradas" : "No configuradas" }}
+            </Badge>
+          </div>
+          <CardDescription class="mt-1 text-sm">
+            Necesarias para importar facturas DIAN desde Gmail.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent class="space-y-4">
+          <!-- Current credentials info -->
+          <div class="rounded-lg border bg-muted/40 p-3 space-y-2 text-sm">
+            <div class="flex items-center gap-2 text-muted-foreground">
+              <FolderKey class="h-3.5 w-3.5 shrink-0" />
+              <span class="font-mono text-xs break-all select-all">{{ creds.Path }}</span>
+            </div>
+            <Separator />
+            <div v-if="creds.Exists" class="space-y-1.5">
+              <div class="flex items-center gap-2">
+                <FileJson class="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span class="text-xs text-muted-foreground">Proyecto:</span>
+                <span class="font-mono text-xs">{{ creds.ProjectID || "—" }}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <KeyRound class="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span class="text-xs text-muted-foreground">Client ID:</span>
+                <span class="font-mono text-xs truncate max-w-[200px]">{{ creds.ClientID || "—" }}</span>
+              </div>
+              <div class="flex items-center gap-2 pt-0.5">
+                <ShieldCheck class="h-3.5 w-3.5 text-green-600 shrink-0" />
+                <span class="text-xs text-green-700">Archivo presente — listo para usar</span>
+              </div>
+            </div>
+            <div v-else class="flex items-center gap-2 text-amber-700 text-xs">
+              <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
+              Coloca el <code class="bg-muted px-1 rounded">credentials.json</code> de Google OAuth2 en esa ruta.
+            </div>
+          </div>
+
+          <!-- Toggle editor -->
+          <Button variant="outline" size="sm" class="h-8 text-xs gap-1.5 w-full"
+            @click="showCredEditor = !showCredEditor">
+            <FileJson class="h-3.5 w-3.5" />
+            {{ showCredEditor ? "Ocultar editor" : (creds.Exists ? "Actualizar credentials.json" : "Pegar nuevo credentials.json") }}
+          </Button>
+
+          <!-- JSON editor -->
+          <template v-if="showCredEditor">
+            <div class="space-y-2">
+              <Label class="text-xs">Pega aquí el contenido de credentials.json</Label>
+              <Textarea
+                v-model="credJSON"
+                class="font-mono text-xs h-36 resize-none"
+                placeholder='{"installed":{"client_id":"...","client_secret":"...","redirect_uris":["http://localhost:8094/gmail/oauth2/callback"]}}'
+              />
+              <p class="text-xs text-muted-foreground">
+                Descarga desde
+                <strong>Google Cloud Console → APIs → Credenciales → OAuth 2.0 → Aplicación de escritorio</strong>.
+                Asegura que el URI de redirección sea
+                <code class="bg-muted px-1 rounded">http://localhost:8094/gmail/oauth2/callback</code>.
+              </p>
+              <div class="flex gap-2">
+                <Button size="sm" class="h-8 text-xs gap-1.5"
+                  :disabled="savingCreds || !credJSON.trim()" @click="handleSaveCreds">
+                  <Loader2 v-if="savingCreds" class="h-3.5 w-3.5 animate-spin" />
+                  <Save v-else class="h-3.5 w-3.5" />
+                  {{ savingCreds ? "Guardando..." : "Guardar credentials.json" }}
+                </Button>
+                <Button variant="ghost" size="sm" class="h-8 text-xs"
+                  @click="showCredEditor = false; credJSON = ''">
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          </template>
+        </CardContent>
+      </Card>
+    </div>
+
+    <!-- ═══ Bottom section (disabled in setup mode) ═════════════════════════ -->
+    <template v-if="!dbStore.setupMode">
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+        <!-- ── Datos de la tienda ──────────────────────────────────────────── -->
+        <Card>
+          <CardHeader class="pb-4">
+            <CardTitle class="text-base font-semibold">Datos de la Farmacia</CardTitle>
+            <CardDescription class="text-sm">
+              Información visible en tickets y reportes
+            </CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="grid gap-2">
+              <Label for="nombreTienda">Nombre</Label>
+              <Input id="nombreTienda" v-model="settings.nombreTienda" class="h-9"
+                placeholder="Ej: Droguería Luna" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="direccion">Dirección</Label>
+              <Input id="direccion" v-model="settings.direccion" class="h-9"
+                placeholder="Dirección del establecimiento" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="telefono">Teléfono</Label>
+              <Input id="telefono" v-model="settings.telefono" class="h-9"
+                placeholder="Ej: 310 000 0000" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <!-- ── Parámetros del sistema ──────────────────────────────────────── -->
+        <Card>
+          <CardHeader class="pb-4">
+            <CardTitle class="text-base font-semibold">Parámetros del Sistema</CardTitle>
+            <CardDescription class="text-sm">
+              Valores por defecto aplicados en operaciones del POS
+            </CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div class="grid gap-2">
+                <Label for="tasaIVA">Tasa de IVA (%)</Label>
+                <Input id="tasaIVA" v-model.number="settings.tasaIVA" type="number"
+                  min="0" max="100" class="h-9" />
+                <p class="text-xs text-muted-foreground">Porcentaje IVA sobre productos gravados</p>
+              </div>
+              <div class="grid gap-2">
+                <Label for="umbralStock">Umbral Stock Bajo</Label>
+                <Input id="umbralStock" v-model.number="settings.umbralStockBajo" type="number"
+                  min="0" class="h-9" />
+                <p class="text-xs text-muted-foreground">Unidades mínimas antes de alerta</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       <div class="flex justify-end pt-2">
         <Button @click="saveSettings" class="h-9 gap-2">

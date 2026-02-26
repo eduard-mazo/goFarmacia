@@ -42,6 +42,14 @@ type GmailAuthStatus struct {
 	ConfigDir     string `json:"configDir"`
 }
 
+// CredencialesInfo holds the safe-to-display fields of credentials.json.
+type CredencialesInfo struct {
+	Exists    bool   `json:"Exists"`
+	Path      string `json:"Path"`
+	ProjectID string `json:"ProjectID"`
+	ClientID  string `json:"ClientID"`
+}
+
 // SyncOptions controls the scope of a Gmail synchronization run.
 type SyncOptions struct {
 	// Modo: "hoy" | "semana" | "mes" | "rango" | "completo"
@@ -567,4 +575,55 @@ func (g *GmailService) ObtenerResumenCompras(desde, hasta string) (ResumenCompra
 // the proveedors table. Returns the number of rows upserted.
 func (g *GmailService) SincronizarProveedoresDesdeFacturas() (int, error) {
 	return g.db.SincronizarProveedoresDesdeFacturas()
+}
+
+// ObtenerCredenciales reads credentials.json and returns its safe-to-display fields.
+func (g *GmailService) ObtenerCredenciales() CredencialesInfo {
+	path := g.credPath()
+	info := CredencialesInfo{Path: path}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return info
+	}
+	info.Exists = true
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return info
+	}
+	for _, key := range []string{"installed", "web"} {
+		obj, ok := raw[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, ok := obj["project_id"].(string); ok {
+			info.ProjectID = v
+		}
+		if v, ok := obj["client_id"].(string); ok {
+			info.ClientID = v
+		}
+		break
+	}
+	return info
+}
+
+// GuardarCredenciales validates and writes new credentials.json content.
+func (g *GmailService) GuardarCredenciales(jsonContent string) error {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(jsonContent), &raw); err != nil {
+		return fmt.Errorf("JSON inválido: %w", err)
+	}
+	hasKey := false
+	for _, key := range []string{"installed", "web"} {
+		if _, ok := raw[key]; ok {
+			hasKey = true
+			break
+		}
+	}
+	if !hasKey {
+		return fmt.Errorf("el JSON debe tener la clave 'installed' o 'web'")
+	}
+	if err := os.MkdirAll(g.configDir, 0o700); err != nil {
+		return fmt.Errorf("crear directorio de configuración: %w", err)
+	}
+	return os.WriteFile(g.credPath(), []byte(jsonContent), 0o600)
 }
