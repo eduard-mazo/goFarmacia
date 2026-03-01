@@ -106,6 +106,13 @@ const routes = [
         meta: { role: "admin" },
       },
       {
+        path: "tesoreria/bancolombia",
+        name: "TransferenciasBancolombia",
+        component: () =>
+          import("@/views/Dashboard/Tesoreria/TransferenciasBancolombia.vue"),
+        meta: { role: "admin" },
+      },
+      {
         path: "basedatos",
         name: "AdminBD",
         component: () =>

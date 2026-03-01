@@ -20,6 +20,7 @@ import {
   WifiOff,
   AlertCircle,
   Mail,
+  Landmark,
 } from "lucide-vue-next";
 import NavMain from "@/components/layout/NavMain.vue";
 import NavUser from "@/components/layout/NavUser.vue";
@@ -79,6 +80,13 @@ const erpNav: NavItem[] = [
     icon: Mail,
     items: [
       { title: "Facturas Electrónicas", url: "/dashboard/compras/facturas", icon: Mail },
+    ],
+  },
+  {
+    title: "Tesorería",
+    icon: Landmark,
+    items: [
+      { title: "Transferencias Bancolombia", url: "/dashboard/tesoreria/bancolombia", icon: Landmark },
     ],
   },
   {

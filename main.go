@@ -18,6 +18,7 @@ func main() {
 	db := backend.GetDbInstance()
 	app := NewApp(db)
 	gmailSvc := backend.NewGmailService(db)
+	bancolombiasSvc := backend.NewBancolombiaService(db)
 
 	err := wails.Run(&options.App{
 		Title:            "goFarmacia",
@@ -29,12 +30,17 @@ func main() {
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
 			gmailSvc.Startup(ctx)
+			bancolombiasSvc.Startup(ctx)
 		},
-		OnShutdown: app.shutdown,
+		OnShutdown: func(ctx context.Context) {
+			bancolombiasSvc.Shutdown()
+			app.shutdown(ctx)
+		},
 		Bind: []any{
 			app,
 			db,
 			gmailSvc,
+			bancolombiasSvc,
 		},
 		Windows: &windows.Options{
 			Theme: windows.SystemDefault,

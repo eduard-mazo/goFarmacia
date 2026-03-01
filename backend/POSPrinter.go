@@ -4,7 +4,7 @@ package backend
 //
 // Printer: USB VID 0x0416 / PID 0x5011 (POS58 family).
 // Paper  : 58 mm, ~32 columns at normal size.
-// Charset: CP858 (Latin-1 + Euro sign) — covers full Spanish alphabet.
+// Charset: PC850 (Latin-1 multilingual) — covers full Spanish alphabet.
 //
 // Public API (Wails-bound via *Db):
 //   ImprimirRecibo(factura Factura) error
@@ -28,14 +28,13 @@ const (
 	posVendorID  gousb.ID = 0x0416
 	posProductID gousb.ID = 0x5011
 
-	// CP858 code-page selector (ESC t 2).
-	cpCP858 byte = 0x02
+	// ESC t n — PC850 Multilingual (Latin-1) code page.
+	// Covers all Spanish accented chars: á é í ó ú ñ Á É Í Ó Ú Ñ ¿ ¡
+	cpPC850 byte = 0x02
 
 	// Printable columns at normal character size on 58 mm paper.
 	paperCols = 32
 )
-
-var cp858Enc = charmap.CodePage858.NewEncoder()
 
 // ── receipt — buffered ESC/POS builder ───────────────────────────────────────
 
@@ -51,17 +50,31 @@ func (r *receipt) raw(b ...byte) *receipt { r.buf.Write(b); return r }
 // cmd is an alias for raw — used for named ESC/POS command sequences.
 func (r *receipt) cmd(b ...byte) *receipt { return r.raw(b...) }
 
-// text encodes a UTF-8 string to CP858 and appends it.
-// Characters that cannot be represented are replaced with '?'.
+// text encodes a UTF-8 string to PC850 and appends it.
+// A fresh encoder is created for every call to avoid transformer state issues.
+// Characters not in PC850 are replaced with '?'.
 func (r *receipt) text(s string) *receipt {
-	enc, err := cp858Enc.Bytes([]byte(s))
+	// Create a fresh PC850 encoder each call — avoids state corruption on
+	// sequences like repeated calls after an encoding error.
+	b, err := charmap.CodePage850.NewEncoder().Bytes([]byte(s))
 	if err != nil {
-		// Fallback: write as-is (pure ASCII at least won't corrupt).
-		r.buf.WriteString(s)
+		// Fallback: strip to safe ASCII so the printer does not misparse commands.
+		r.buf.WriteString(sanitizeToASCII(s))
 		return r
 	}
-	r.buf.Write(enc)
+	r.buf.Write(b)
 	return r
+}
+
+// sanitizeToASCII transliterates common Spanish characters to ASCII equivalents.
+// Used only when PC850 encoding fails (should be rare).
+func sanitizeToASCII(s string) string {
+	return strings.NewReplacer(
+		"á", "a", "é", "e", "í", "i", "ó", "o", "ú", "u",
+		"Á", "A", "É", "E", "Í", "I", "Ó", "O", "Ú", "U",
+		"ñ", "n", "Ñ", "N", "ü", "u", "Ü", "U",
+		"¿", "?", "¡", "!", "€", "E",
+	).Replace(s)
 }
 
 // ln appends a line-feed.
@@ -79,20 +92,24 @@ func cmdLeft() []byte          { return []byte{0x1B, 0x61, 0x00} }
 func cmdRight() []byte         { return []byte{0x1B, 0x61, 0x02} }
 func cmdBoldOn() []byte        { return []byte{0x1B, 0x45, 0x01} }
 func cmdBoldOff() []byte       { return []byte{0x1B, 0x45, 0x00} }
-func cmdDblHOn() []byte        { return []byte{0x1D, 0x21, 0x01} } // double height
+func cmdDblHOn() []byte        { return []byte{0x1D, 0x21, 0x01} } // double height only
 func cmdDblHOff() []byte       { return []byte{0x1D, 0x21, 0x00} }
-func cmdDblWOn() []byte        { return []byte{0x1D, 0x21, 0x20} } // double width
+func cmdDblWOn() []byte        { return []byte{0x1D, 0x21, 0x10} } // double width only (bits 4-6 = 001)
 func cmdDblWOff() []byte       { return []byte{0x1D, 0x21, 0x00} }
 func cmdCut() []byte           { return []byte{0x1D, 0x56, 0x42, 0x00} } // partial cut
 
 // ── QR code (ESC/POS model 2) ────────────────────────────────────────────────
 
-// qrData builds the ESC/POS command sequence to print a QR code.
+// qrData builds the ESC/POS GS ( k command sequence to store and print a QR code.
 //
 // Parameters:
-//   data      — string to encode (e.g. "F-0001/550e8400-e29b-…")
-//   moduleSize — dot size 1–8 (3 = ~3 mm per module, good for 58 mm paper)
-//   eccLevel   — error correction: 'L', 'M', 'Q', 'H'
+//
+//	data       — string to encode (e.g. "F-0001|550e8400-e29b-…")
+//	moduleSize — dot size 1–8 (3 = ~3 mm per module, suits 58 mm paper)
+//	eccLevel   — error correction: 'L', 'M', 'Q', 'H'
+//
+// Requirements: printer must support ESC/POS QR model 2 (GS ( k).
+// Most POS58/POS80 printers manufactured after ~2015 support this.
 func qrData(data string, moduleSize byte, eccLevel byte) []byte {
 	if moduleSize < 1 || moduleSize > 8 {
 		moduleSize = 3
@@ -104,24 +121,24 @@ func qrData(data string, moduleSize byte, eccLevel byte) []byte {
 
 	var buf bytes.Buffer
 
-	// 1. Select QR model 2.
+	// 1. Select model 2 (fn=65).
 	buf.Write([]byte{0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00})
 
-	// 2. Set module size.
+	// 2. Set module size (fn=67).
 	buf.Write([]byte{0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, moduleSize})
 
-	// 3. Set error-correction level.
+	// 3. Set error-correction level (fn=69).
 	buf.Write([]byte{0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, eccByte})
 
-	// 4. Store data in printer buffer.
-	//    Payload length = len(data) + 3 (for 0x31, 0x50, 0x30 prefix).
+	// 4. Store data in printer buffer (fn=80).
+	//    Payload length pL+pH counts: cn(1) + fn(1) + m(1) + data.
 	pl := len(data) + 3
 	pL := byte(pl & 0xFF)
 	pH := byte(pl >> 8)
 	buf.Write([]byte{0x1D, 0x28, 0x6B, pL, pH, 0x31, 0x50, 0x30})
 	buf.WriteString(data)
 
-	// 5. Print the stored QR.
+	// 5. Print the stored symbol (fn=81).
 	buf.Write([]byte{0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30})
 
 	return buf.Bytes()
@@ -137,7 +154,6 @@ func formatCOP(v float64) string {
 	if neg {
 		n = -n
 	}
-	// Build digit string right-to-left with dot separators.
 	s := fmt.Sprintf("%d", n)
 	var out []byte
 	for i, c := range s {
@@ -148,7 +164,7 @@ func formatCOP(v float64) string {
 		out = append(out, byte(c))
 	}
 	if neg {
-		return "$ -" + string(out)
+		return "$-" + string(out)
 	}
 	return "$ " + string(out)
 }
@@ -179,26 +195,30 @@ func rpad(s string, w int) string {
 	return strings.Repeat(" ", w-l) + s
 }
 
-// truncate cuts s at max n runes, appending '…' if truncated.
+// truncate cuts s at max n runes. Uses ASCII "..." so CP850 encoding is safe.
 func truncate(s string, n int) string {
 	runes := []rune(s)
 	if len(runes) <= n {
 		return s
 	}
-	return string(runes[:n-1]) + "\u2026" // '…' (replaced by '?' in CP858 fallback)
+	return string(runes[:n-3]) + "..."
 }
 
 // itemLine formats one receipt line for a product.
-// Layout (32 cols): " qty  name              total"
-//   col 0-3   : qty  right-aligned  4 chars
-//   col 4     : space
-//   col 5-22  : name left-aligned  18 chars
-//   col 23-31 : total right-aligned 9 chars
+//
+// Layout (exactly 32 cols):
+//
+//	col 0-2   : qty   right-aligned  3 chars  e.g. "2x "
+//	col 3     : space
+//	col 4-20  : name  left-aligned  17 chars
+//	col 21-31 : total right-aligned 11 chars  e.g. "  $ 12.000"
+//
+// 3 + 1 + 17 + 11 = 32 ✓
 func itemLine(qty int, name string, total float64) string {
 	qtyStr  := rpad(fmt.Sprintf("%dx", qty), 3)
 	nameStr := pad(truncate(name, 17), 17)
-	totStr  := rpad(formatCOP(total), 12)
-	return fmt.Sprintf("%s %s %s", qtyStr, nameStr, totStr)
+	totStr  := rpad(formatCOP(total), 11)
+	return fmt.Sprintf("%s %s%s", qtyStr, nameStr, totStr)
 }
 
 // ── USB device helpers ───────────────────────────────────────────────────────
@@ -214,6 +234,12 @@ func openPrinter() (*gousb.Context, *gousb.Device, error) {
 		ctx.Close()
 		return nil, nil, fmt.Errorf("impresora POS58 no encontrada (VID=%04x PID=%04x)",
 			uint16(posVendorID), uint16(posProductID))
+	}
+	// On Linux the kernel usblp driver may hold the device.
+	// SetAutoDetach releases it automatically so we can claim the interface.
+	if err := dev.SetAutoDetach(true); err != nil {
+		// Non-fatal — some systems do not need it.
+		_ = err
 	}
 	return ctx, dev, nil
 }
@@ -232,7 +258,7 @@ func getOutEndpoint(dev *gousb.Device) (*gousb.OutEndpoint, func(), error) {
 
 	var epOut *gousb.OutEndpoint
 	for _, ep := range intf.Setting.Endpoints {
-		if ep.Address&0x80 == 0 { // OUT endpoint
+		if ep.Address&0x80 == 0 { // OUT endpoint (direction bit = 0)
 			if epOut, err = intf.OutEndpoint(int(ep.Address)); err != nil {
 				intf.Close()
 				cfg.Close()
@@ -297,7 +323,7 @@ func buildReceipt(f Factura) *receipt {
 
 	// ── Init ──────────────────────────────────────────────────────────────────
 	r.raw(cmdInit()...).
-		raw(cmdCodePage(cpCP858)...)
+		raw(cmdCodePage(cpPC850)...)
 
 	// ── Header: store name (double-width, centered) ───────────────────────────
 	r.raw(cmdCenter()...).
@@ -307,9 +333,9 @@ func buildReceipt(f Factura) *receipt {
 		raw(cmdDblWOff()...).
 		raw(cmdBoldOff()...)
 
-	// Store details
+	// Store details (proper UTF-8 — encoder handles á, é, í, ó, ú, ñ)
 	r.raw(cmdCenter()...).text("NIT: 70.120.237-8").ln()
-	r.raw(cmdCenter()...).text("Calle 94 # 48-33, Medell\xedn").ln() // CP858 'í'
+	r.raw(cmdCenter()...).text("Calle 94 # 48-33, Medellín").ln()
 	r.raw(cmdCenter()...).text("Tel: 305 445 6781").ln()
 
 	r.raw(cmdLeft()...).text(separator()).ln()
@@ -331,8 +357,9 @@ func buildReceipt(f Factura) *receipt {
 	r.raw(cmdLeft()...).text(separator()).ln()
 
 	// ── Column headers ────────────────────────────────────────────────────────
+	// Header row mirrors itemLine layout: qty(3)+sp(1)+name(17)+price(11) = 32
 	r.raw(cmdBoldOn()...).
-		text(fmt.Sprintf("%-3s %-17s %12s", "Ud.", "Producto", "Total")).ln().
+		text(fmt.Sprintf("%-3s %-17s%11s", "Ud.", "Descripcion", "Total")).ln().
 		raw(cmdBoldOff()...)
 
 	r.raw(cmdLeft()...).text(separator()).ln()
@@ -340,13 +367,11 @@ func buildReceipt(f Factura) *receipt {
 	// ── Line items ────────────────────────────────────────────────────────────
 	for _, item := range f.Detalles {
 		r.raw(cmdLeft()...).
-			text(itemLine(item.Cantidad, item.Producto.Nombre,
-				item.PrecioTotal)).ln()
+			text(itemLine(item.Cantidad, item.Producto.Nombre, item.PrecioTotal)).ln()
 
-		// If unit price × qty ≠ total, show unit price for clarity.
+		// Show unit price as a sub-line when qty > 1 for clarity.
 		if item.Cantidad > 1 {
-			unitLine := fmt.Sprintf("    %s c/u",
-				rpad(formatCOP(item.PrecioUnitario), 10))
+			unitLine := fmt.Sprintf("    %s c/u", rpad(formatCOP(item.PrecioUnitario), 9))
 			r.raw(cmdLeft()...).text(unitLine).ln()
 		}
 	}
@@ -354,42 +379,39 @@ func buildReceipt(f Factura) *receipt {
 	r.raw(cmdLeft()...).text(separator()).ln()
 
 	// ── Totals ────────────────────────────────────────────────────────────────
-	subtotalLabel := pad("Subtotal:", 20)
-	ivaLabel      := pad("IVA (19%):", 20)
-	totalLabel    := pad("TOTAL:", 20)
+	// Label(21) + value(11) = 32 cols
+	printTotal := func(label, val string) {
+		r.raw(cmdLeft()...).text(pad(label, 21) + rpad(val, 11)).ln()
+	}
 
-	subtotalVal := rpad(formatCOP(f.Subtotal), 12)
-	ivaVal      := rpad(formatCOP(f.IVA), 12)
-
-	r.raw(cmdLeft()...).
-		text(subtotalLabel + subtotalVal).ln().
-		text(ivaLabel + ivaVal).ln()
+	printTotal("Subtotal:", formatCOP(f.Subtotal))
+	printTotal("IVA (19%):", formatCOP(f.IVA))
 
 	r.raw(cmdLeft()...).text(separator()).ln()
 
-	// Grand total — double-height for visibility
+	// Grand total — bold + double height
 	r.raw(cmdRight()...).
 		raw(cmdBoldOn()...).
 		raw(cmdDblHOn()...).
-		text(totalLabel + rpad(formatCOP(f.Total), 12)).ln().
+		text(pad("TOTAL:", 21) + rpad(formatCOP(f.Total), 11)).ln().
 		raw(cmdDblHOff()...).
 		raw(cmdBoldOff()...)
 
 	r.raw(cmdLeft()...).text(separator()).ln()
 
 	// ── QR code ───────────────────────────────────────────────────────────────
-	// Encodes: "F-0001|550e8400-e29b-41d4-a716-446655440000"
-	// A receiving system can parse before/after '|' to look up the invoice.
+	// Encodes "F-0001|550e8400-e29b-41d4-a716-446655440000"
+	// Scan to look up invoice by NumeroFactura or UUID.
 	qrContent := fmt.Sprintf("%s|%s", f.NumeroFactura, f.UUID)
 
 	r.raw(cmdCenter()...)
 	r.raw(qrData(qrContent, 3, 'M')...)
-	r.ln()
 
-	// QR legend
+	// Extra feeds so the QR symbol clears the print head before cut.
+	r.raw('\n', '\n')
+
 	r.raw(cmdCenter()...).text("Escanea para ver tu factura").ln()
-	r.raw(cmdCenter()...).
-		text(truncate(f.NumeroFactura, paperCols)).ln()
+	r.raw(cmdCenter()...).text(truncate(f.NumeroFactura, paperCols)).ln()
 
 	r.raw(cmdLeft()...).text(separator()).ln()
 
@@ -422,31 +444,33 @@ func setupEndpoint(dev *gousb.Device) (*gousb.OutEndpoint, func(), error) {
 func formatCurrency(val float64) string { return formatCOP(val) }
 
 //nolint:unused
-func encodeText(text string) ([]byte, error) { return cp858Enc.Bytes([]byte(text)) }
+func encodeText(s string) ([]byte, error) {
+	return charmap.CodePage850.NewEncoder().Bytes([]byte(s))
+}
 
 //nolint:unused
 func selectCodePage(n byte) []byte { return cmdCodePage(n) }
 
 //nolint:unused
-func center() []byte          { return cmdCenter() }
+func center() []byte { return cmdCenter() }
 
 //nolint:unused
-func left() []byte            { return cmdLeft() }
+func left() []byte { return cmdLeft() }
 
 //nolint:unused
-func right() []byte           { return cmdRight() }
+func right() []byte { return cmdRight() }
 
 //nolint:unused
-func lineBreak() []byte       { return []byte{'\n'} }
+func lineBreak() []byte { return []byte{'\n'} }
 
 //nolint:unused
-func boldOn() []byte          { return cmdBoldOn() }
+func boldOn() []byte { return cmdBoldOn() }
 
 //nolint:unused
-func boldOff() []byte         { return cmdBoldOff() }
+func boldOff() []byte { return cmdBoldOff() }
 
 //nolint:unused
-func doubleHeightOn() []byte  { return cmdDblHOn() }
+func doubleHeightOn() []byte { return cmdDblHOn() }
 
 //nolint:unused
 func doubleHeightOff() []byte { return cmdDblHOff() }
