@@ -17,7 +17,7 @@ import {
   DollarSign, Mail,
 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
+import { EventsOn, EventsOff, BrowserOpenURL } from "@/../wailsjs/runtime";
 import { backend } from "@/../wailsjs/go/models";
 import {
   EstadoAuth, IniciarOAuth2, RevocarAuth,
@@ -127,8 +127,13 @@ async function iniciarAuth() {
   try {
     const url = await IniciarOAuth2();
     authUrl.value = url;
-    showAuthDialog.value = true;
-    // Poll for auth completion
+    // Open browser from the frontend side — more reliable than Go-side BrowserOpenURL
+    // in Wails v2 when multiple services share the same context.
+    BrowserOpenURL(url);
+    toast.info("Navegador abierto", {
+      description: "Autoriza el acceso en el navegador. La app detectará la conexión automáticamente.",
+    });
+    // Poll every 2 s until authenticated (max 5 min)
     const interval = setInterval(async () => {
       const s = await EstadoAuth();
       if (s.authenticated) {
@@ -139,7 +144,6 @@ async function iniciarAuth() {
         await fetchTransferencias();
       }
     }, 2000);
-    // Stop polling after 5 minutes
     setTimeout(() => clearInterval(interval), 300_000);
   } catch (e: any) {
     toast.error("Error al iniciar autenticación", { description: e?.toString() });
@@ -250,6 +254,14 @@ onUnmounted(() => {
           <Loader2 v-if="authenticating" class="h-4 w-4 mr-1.5 animate-spin" />
           <Mail v-else class="h-4 w-4 mr-1.5" />
           Conectar cuenta
+        </Button>
+        <Button
+          v-if="!auth.authenticated && authUrl && authenticating"
+          size="sm"
+          variant="outline"
+          @click="showAuthDialog = true"
+        >
+          Ver enlace
         </Button>
         <Button v-else size="sm" variant="ghost" class="text-red-600 hover:text-red-700 hover:bg-red-50" @click="revocarAuth">
           <ShieldOff class="h-4 w-4 mr-1.5" />
@@ -443,7 +455,8 @@ onUnmounted(() => {
     </DialogContent>
   </Dialog>
 
-  <!-- ── OAuth2 dialog ──────────────────────────────────────────────────────── -->
+  <!-- ── OAuth2 fallback dialog ────────────────────────────────────────────── -->
+  <!-- Only shown if the user clicks "Ver enlace" — browser should already be open -->
   <Dialog v-model:open="showAuthDialog">
     <DialogContent class="max-w-sm">
       <DialogHeader>
@@ -453,19 +466,19 @@ onUnmounted(() => {
         </DialogTitle>
       </DialogHeader>
       <div class="space-y-4 text-sm">
-        <p class="text-muted-foreground">
-          Se abrió el navegador para autorizar el acceso de lectura a la cuenta de Gmail
-          donde Bancolombia envía las notificaciones. Autoriza y vuelve aquí.
-        </p>
         <Alert>
           <CheckCircle2 class="h-4 w-4" />
           <AlertDescription>
-            Esperando autorización... esta ventana se cerrará automáticamente.
+            Esperando autorización... esta ventana se cerrará automáticamente al conectar.
           </AlertDescription>
         </Alert>
-        <div v-if="authUrl" class="text-xs">
-          <p class="text-muted-foreground mb-1">O copia este enlace en el navegador:</p>
-          <code class="block bg-muted rounded p-2 break-all">{{ authUrl }}</code>
+        <div v-if="authUrl" class="space-y-2">
+          <Button class="w-full" @click="BrowserOpenURL(authUrl)">
+            <Mail class="h-4 w-4 mr-2" />
+            Abrir navegador
+          </Button>
+          <p class="text-xs text-muted-foreground">O copia manualmente:</p>
+          <code class="block text-xs bg-muted rounded p-2 break-all select-all">{{ authUrl }}</code>
         </div>
       </div>
     </DialogContent>
