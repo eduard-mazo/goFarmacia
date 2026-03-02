@@ -9,7 +9,7 @@ import (
 type TransferenciaBancolombia struct {
 	UUID          string    `json:"uuid"`
 	EmailID       string    `json:"emailId"`
-	Fecha         time.Time `json:"fecha"`
+	Fecha         time.Time `json:"fecha"    ts_type:"string"`
 	Monto         float64   `json:"monto"`
 	Remitente     string    `json:"remitente"`
 	Referencia    string    `json:"referencia"`
@@ -17,7 +17,7 @@ type TransferenciaBancolombia struct {
 	Concepto      string    `json:"concepto"`
 	RawSubject    string    `json:"rawSubject"`
 	Leido         bool      `json:"leido"`
-	CreadoEn      time.Time `json:"creadoEn"`
+	CreadoEn      time.Time `json:"creadoEn" ts_type:"string"`
 }
 
 // TransferenciasResponse is the paginated response sent to the frontend.
