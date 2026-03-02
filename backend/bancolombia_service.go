@@ -4,16 +4,33 @@ package backend
 //
 // Strategy: hybrid polling
 //   • Background ticker fires every 2 minutes and checks the last 30 messages
-//     from Bancolombia. This keeps the notification feed current without manual
-//     intervention — important for a pharmacy POS where staff need to confirm
-//     that a payment arrived before releasing product.
-//   • Manual "Verificar ahora" button triggers an immediate check on demand.
+//     from the Bancolombia notification sender. This keeps the notification
+//     feed current without manual intervention — important for a pharmacy POS
+//     where staff need to confirm payment before releasing product.
+//   • Manual "Verificar ahora" button for immediate on-demand checking.
 //
 // OAuth2: reuses the same credentials.json as the DIAN Gmail service but saves
-// its token to a separate file (bancolombia_token.json), allowing the user to
-// authenticate a different Gmail account.
+// its token to a separate file (bancolombia_token.json), allowing a different
+// Gmail account to be authenticated.
 //
-// Gmail query: from:notificaciones.bancolombia.com.co OR from:mensajeria.bancolombia.com.co
+// Gmail query: from:notificacionesbancolombia.com
+//   Matches both sender domains used by Bancolombia:
+//     alertasynotificaciones@notificacionesbancolombia.com
+//     alertasynotificaciones@an.notificacionesbancolombia.com
+//
+// Supported email formats
+// ──────────────────────────────────────────────────────────────────────────
+// Format A (classic):
+//   "Bancolombia: Recibiste una transferencia por $65,000 de DAVID SIERRA
+//    en tu cuenta **8368, el 07/05/2025 a las 13:59."
+//
+// Format B (Llave Bancolombia):
+//   "Bancolombia: RECEPTOR, recibiste una transferencia de SANDRA LORENA
+//    VALENCIA CORREA por $70,000.00 en tu producto *8368 conectado a la
+//    llave email@gmail.com el 27/05/25 a las 13:05."
+//
+// Amount format: comma = thousands separator, period = decimal
+//   $65,000 → 65000    |    $70,000.00 → 70000.00
 //
 // Wails events emitted:
 //   "bancolombia:nueva"        → TransferenciaBancolombia  (one per new transfer)
@@ -47,6 +64,39 @@ const (
 	bancolombiaTickerPeriod = 2 * time.Minute
 	bancolombiaCheckCount   = 30 // last N messages per ticker run
 )
+
+// ── Pre-compiled regexes ──────────────────────────────────────────────────────
+
+var (
+	// Date/time: "el 07/05/2025 a las 13:59" or "el 27/05/25 a las 13:05"
+	reBancoFechaHora = regexp.MustCompile(
+		`(?i)el (\d{2}/\d{2}/\d{2,4}) a las (\d{2}:\d{2})`,
+	)
+
+	// Format A: "transferencia por $65,000 de NOMBRE en tu"
+	// Captures: [1]=monto  [2]=remitente
+	reBancoFormatoA = regexp.MustCompile(
+		`(?i)transferencia por \$([\d,]+(?:\.[\d]{1,2})?) de ([A-Z][A-Z ]+?) (?:en tu|,)`,
+	)
+
+	// Format B: "transferencia de NOMBRE por $70,000.00"
+	// Captures: [1]=remitente  [2]=monto
+	reBancoFormatoB = regexp.MustCompile(
+		`(?i)transferencia de ([A-Z][A-Z ]+?) por \$([\d,]+(?:\.[\d]{1,2})?)`,
+	)
+
+	// Account: "cuenta **8368", "cuenta *8368", "producto *8368"
+	reBancoCuenta = regexp.MustCompile(
+		`(?i)(?:cuenta|producto) \*+(\d+)`,
+	)
+
+	// HTML tag stripper
+	reBancoHTMLTags   = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
+	reBancoHTMLStrip  = regexp.MustCompile(`<[^>]+>`)
+	reBancoWhitespace = regexp.MustCompile(`\s+`)
+)
+
+// ── Service ───────────────────────────────────────────────────────────────────
 
 // BancolombiaService handles Gmail polling for Bancolombia transfer notifications.
 // It is bound to Wails and exposed to the frontend.
@@ -84,18 +134,15 @@ func NewBancolombiaService(db *Db) *BancolombiaService {
 }
 
 // Startup is called by Wails when the app starts.
-// It launches the background polling ticker.
 func (b *BancolombiaService) Startup(ctx context.Context) {
 	b.ctx = ctx
 	_ = os.MkdirAll(b.configDir, 0o700)
 
-	// Emit current badge count on startup so the sidebar shows unread count.
 	go func() {
-		time.Sleep(2 * time.Second) // Wait for DB to be ready
+		time.Sleep(2 * time.Second)
 		b.emitBadge()
 	}()
 
-	// Start background ticker only if already authenticated.
 	if b.EstadoAuth().Authenticated {
 		b.startTicker()
 	}
@@ -105,7 +152,6 @@ func (b *BancolombiaService) Startup(ctx context.Context) {
 func (b *BancolombiaService) Shutdown() {
 	select {
 	case <-b.done:
-		// Already closed
 	default:
 		close(b.done)
 	}
@@ -116,7 +162,7 @@ func (b *BancolombiaService) Shutdown() {
 
 func (b *BancolombiaService) startTicker() {
 	if b.ticker != nil {
-		return // Already running
+		return
 	}
 	b.ticker = time.NewTicker(bancolombiaTickerPeriod)
 	go func() {
@@ -138,9 +184,11 @@ func (b *BancolombiaService) startTicker() {
 	}()
 }
 
-// ── OAuth2 ──────────────────────────────────────────────────────────────────
+// ── OAuth2 ────────────────────────────────────────────────────────────────────
 
-func (b *BancolombiaService) credPath() string  { return filepath.Join(b.configDir, "credentials.json") }
+func (b *BancolombiaService) credPath() string {
+	return filepath.Join(b.configDir, "credentials.json")
+}
 func (b *BancolombiaService) tokenPath() string {
 	return filepath.Join(b.configDir, "bancolombia_token.json")
 }
@@ -170,7 +218,6 @@ func (b *BancolombiaService) loadOAuth2Config() (*oauth2.Config, error) {
 }
 
 // IniciarOAuth2 starts the OAuth2 flow for the Bancolombia Gmail account.
-// Returns the auth URL as fallback if the browser does not open automatically.
 func (b *BancolombiaService) IniciarOAuth2() (string, error) {
 	cfg, err := b.loadOAuth2Config()
 	if err != nil {
@@ -182,7 +229,7 @@ func (b *BancolombiaService) IniciarOAuth2() (string, error) {
 	return authURL, nil
 }
 
-// RevocarAuth deletes the saved token, forcing re-authentication.
+// RevocarAuth deletes the saved token.
 func (b *BancolombiaService) RevocarAuth() error {
 	if b.ticker != nil {
 		b.ticker.Stop()
@@ -220,7 +267,6 @@ h2{color:#f59e0b;margin-bottom:8px}p{color:#64748b}</style></head>
 		go func() {
 			time.Sleep(500 * time.Millisecond)
 			_ = srv.Shutdown(context.Background())
-			// Start ticker now that we have a token.
 			b.startTicker()
 			b.emitBadge()
 		}()
@@ -255,10 +301,9 @@ func (b *BancolombiaService) newGmailSvc() (*gmail.Service, error) {
 	return gmail.NewService(context.Background(), option.WithHTTPClient(client))
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
 // VerificarAhora triggers an immediate sync and returns the result.
-// The background ticker continues to run independently.
 func (b *BancolombiaService) VerificarAhora() (BancolombiaCheckResult, error) {
 	result, err := b.sincronizarRecientes()
 	if err != nil {
@@ -288,11 +333,11 @@ func (b *BancolombiaService) ContarNoLeidas() int {
 	return b.db.ContarTransferenciasNoLeidas()
 }
 
-// ── Core sync logic ──────────────────────────────────────────────────────────
+// ── Core sync logic ───────────────────────────────────────────────────────────
 
 func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, error) {
 	result := BancolombiaCheckResult{
-		Ts:     time.Now().Format("15:04:05"),
+		Ts:      time.Now().Format("15:04:05"),
 		Errores: []string{},
 	}
 
@@ -301,8 +346,11 @@ func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, err
 		return result, err
 	}
 
-	// Query: any email from Bancolombia notification domains, last N messages.
-	const query = `from:(notificaciones.bancolombia.com.co OR mensajeria.bancolombia.com.co OR bancolombia.com)`
+	// Both Bancolombia notification domains share the same subdomain suffix.
+	// Gmail substring matches the domain, so one query covers both:
+	//   alertasynotificaciones@notificacionesbancolombia.com
+	//   alertasynotificaciones@an.notificacionesbancolombia.com
+	const query = `from:notificacionesbancolombia.com`
 
 	resp, err := svc.Users.Messages.List("me").
 		Q(query).
@@ -319,7 +367,6 @@ func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, err
 		}
 		t, err := b.parsearMensaje(svc, m.Id)
 		if err != nil || t == nil {
-			// Not a transfer notification — skip silently.
 			continue
 		}
 		isNew, err := b.db.GuardarTransferencia(*t)
@@ -336,90 +383,145 @@ func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, err
 	return result, nil
 }
 
-// parsearMensaje downloads and parses a Gmail message, returning a
-// TransferenciaBancolombia if it contains a transfer notification, or nil
-// if it is not a transfer message (PSE, Nequi, direct transfer).
+// parsearMensaje downloads a Gmail message and extracts transfer details.
+// Returns nil if the message is not a recognizable transfer notification.
 func (b *BancolombiaService) parsearMensaje(svc *gmail.Service, messageID string) (*TransferenciaBancolombia, error) {
 	msg, err := svc.Users.Messages.Get("me", messageID).Format("full").Do()
 	if err != nil {
 		return nil, err
 	}
 
-	// Extract headers.
-	var subject, dateStr string
+	var subject, dateHeader string
 	for _, h := range msg.Payload.Headers {
 		switch h.Name {
 		case "Subject":
 			subject = h.Value
 		case "Date":
-			dateStr = h.Value
+			dateHeader = h.Value
 		}
 	}
 
-	// Only process messages that look like transfer notifications.
-	subjectLower := strings.ToLower(subject)
-	isTransfer := strings.Contains(subjectLower, "transferencia") ||
-		strings.Contains(subjectLower, "recibiste") ||
-		strings.Contains(subjectLower, "recaudos") ||
-		strings.Contains(subjectLower, "pago") ||
-		strings.Contains(subjectLower, "abono") ||
-		strings.Contains(subjectLower, "nequi") ||
-		strings.Contains(subjectLower, "pse")
-	if !isTransfer {
-		return nil, nil
+	// Try the subject first — many Bancolombia notifications put the full
+	// transfer text directly in the subject line (SMS-forwarded style).
+	if t := parseBancolombiaTransfer(subject, messageID, dateHeader); t != nil {
+		return t, nil
 	}
 
-	// Extract body text.
-	body := extractMessageBody(msg.Payload)
-	if body == "" {
-		return nil, nil
+	// Fall back to body text.
+	body := bancolombiaExtractBody(msg.Payload)
+	return parseBancolombiaTransfer(body, messageID, dateHeader), nil
+}
+
+// ── Parser ────────────────────────────────────────────────────────────────────
+
+// parseBancolombiaTransfer extracts transfer details from a text string using
+// the two known Bancolombia notification formats.
+//
+// Returns nil if the text does not match either format.
+func parseBancolombiaTransfer(text, emailID, dateHeader string) *TransferenciaBancolombia {
+	text = strings.TrimSpace(text)
+	if text == "" || !strings.Contains(strings.ToLower(text), "transferencia") {
+		return nil
 	}
 
-	// Parse the relevant fields.
-	monto := parseMontoCOP(body)
-	if monto <= 0 {
-		return nil, nil // Not a money notification
+	var monto float64
+	var remitente string
+
+	// ── Format A: "transferencia por $MONTO de NOMBRE en tu cuenta/producto"
+	if m := reBancoFormatoA.FindStringSubmatch(text); len(m) == 3 {
+		monto = parseBancolombiaAmount(m[1])
+		remitente = strings.TrimSpace(m[2])
 	}
 
-	var fecha time.Time
-	if t, err := parseBancolombiaDate(body, dateStr); err == nil {
-		fecha = t
-	} else {
-		fecha = time.Now()
+	// ── Format B: "transferencia de NOMBRE por $MONTO en tu cuenta/producto"
+	if remitente == "" || monto <= 0 {
+		if m := reBancoFormatoB.FindStringSubmatch(text); len(m) == 3 {
+			remitente = strings.TrimSpace(m[1])
+			monto = parseBancolombiaAmount(m[2])
+		}
 	}
+
+	if monto <= 0 || remitente == "" {
+		return nil
+	}
+
+	// Account number
+	var cuenta string
+	if m := reBancoCuenta.FindStringSubmatch(text); len(m) == 2 {
+		cuenta = "*" + m[1]
+	}
+
+	// Date/time from body, then from email Date header as fallback
+	var fechaStr string
+	if m := reBancoFechaHora.FindStringSubmatch(text); len(m) == 3 {
+		fechaStr = m[1] + " " + m[2]
+	}
+	fecha := parseBancolombiaDate(fechaStr, dateHeader)
 
 	return &TransferenciaBancolombia{
 		UUID:          uuid.NewString(),
-		EmailID:       messageID,
+		EmailID:       emailID,
 		Fecha:         fecha,
 		Monto:         monto,
-		Remitente:     parseField(body, `(?i)(?:de|remitente|ordenante|pagador)\s*:?\s*([A-ZÁÉÍÓÚÑ][^\n<$]{2,50})`),
-		Referencia:    parseField(body, `(?i)(?:confirmaci[oó]n|referencia|n[uú]mero|comprobante)\s*[:#]?\s*(\d{6,20})`),
-		CuentaDestino: parseField(body, `(?i)(?:cuenta\s+(?:de\s+)?(?:destino|beneficiario|cr[eé]dito))\s*:?\s*([*\d]+)`),
-		Concepto:      parseField(body, `(?i)(?:concepto|descripci[oó]n|detalle)\s*:?\s*([^\n<]{3,80})`),
-		RawSubject:    subject,
-	}, nil
+		Remitente:     remitente,
+		CuentaDestino: cuenta,
+		// Concepto: not present in Bancolombia transfer notifications
+		RawSubject: truncate(text, 120),
+	}
 }
 
-// ── Body extraction ──────────────────────────────────────────────────────────
+// parseBancolombiaAmount parses Bancolombia's amount format.
+//
+// Bancolombia uses comma as thousands separator and period as decimal:
+//
+//	$65,000      → 65000
+//	$3,500       → 3500
+//	$70,000.00   → 70000.00
+//	$10,000.00   → 10000.00
+func parseBancolombiaAmount(s string) float64 {
+	s = strings.ReplaceAll(s, ",", "") // remove thousands separator
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
 
-// extractMessageBody walks the MIME tree and returns plain text.
-// Falls back to HTML with tags stripped.
-func extractMessageBody(part *gmail.MessagePart) string {
+// parseBancolombiaDate parses the date extracted from a notification text.
+// Accepts DD/MM/YYYY and DD/MM/YY formats. Falls back to email Date header.
+func parseBancolombiaDate(dateTimeStr, dateHeader string) time.Time {
+	for _, f := range []string{"02/01/2006 15:04", "02/01/06 15:04"} {
+		if t, err := time.ParseInLocation(f, dateTimeStr, time.Local); err == nil {
+			return t
+		}
+	}
+	// RFC2822 email Date header
+	for _, f := range []string{
+		"Mon, 2 Jan 2006 15:04:05 -0700",
+		"Mon, 2 Jan 2006 15:04:05 MST",
+		"2 Jan 2006 15:04:05 -0700",
+	} {
+		if t, err := time.Parse(f, dateHeader); err == nil {
+			return t.Local()
+		}
+	}
+	return time.Now()
+}
+
+// ── Body extraction ───────────────────────────────────────────────────────────
+
+// bancolombiaExtractBody walks the MIME tree and returns the best plain text.
+func bancolombiaExtractBody(part *gmail.MessagePart) string {
 	if part == nil {
 		return ""
 	}
-
-	// Prefer text/plain
 	if part.MimeType == "text/plain" && part.Body != nil && part.Body.Data != "" {
-		b, err := base64.URLEncoding.DecodeString(part.Body.Data)
-		if err == nil {
+		if b, err := base64.URLEncoding.DecodeString(part.Body.Data); err == nil {
 			return string(b)
 		}
 	}
 
-	// Collect text from multipart children.
-	var plain, html string
+	var plain, htmlBody string
 	for _, child := range part.Parts {
 		switch child.MimeType {
 		case "text/plain":
@@ -431,12 +533,11 @@ func extractMessageBody(part *gmail.MessagePart) string {
 		case "text/html":
 			if child.Body != nil && child.Body.Data != "" {
 				if b, err := base64.URLEncoding.DecodeString(child.Body.Data); err == nil {
-					html += string(b)
+					htmlBody += string(b)
 				}
 			}
 		default:
-			// Recurse into nested multipart
-			if t := extractMessageBody(child); t != "" {
+			if t := bancolombiaExtractBody(child); t != "" {
 				plain += t
 			}
 		}
@@ -445,21 +546,13 @@ func extractMessageBody(part *gmail.MessagePart) string {
 	if plain != "" {
 		return plain
 	}
-	if html != "" {
-		return stripHTML(html)
-	}
-	return ""
+	return bancolombiaStripHTML(htmlBody)
 }
 
-// stripHTML removes HTML tags and decodes basic entities.
-func stripHTML(s string) string {
-	// Remove script/style blocks.
-	reScript := regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
-	s = reScript.ReplaceAllString(s, " ")
-	// Remove all tags.
-	reTags := regexp.MustCompile(`<[^>]+>`)
-	s = reTags.ReplaceAllString(s, " ")
-	// Decode common entities.
+// bancolombiaStripHTML removes HTML tags and decodes common entities.
+func bancolombiaStripHTML(s string) string {
+	s = reBancoHTMLTags.ReplaceAllString(s, " ")
+	s = reBancoHTMLStrip.ReplaceAllString(s, " ")
 	s = strings.NewReplacer(
 		"&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">",
 		"&aacute;", "á", "&eacute;", "é", "&iacute;", "í",
@@ -467,71 +560,7 @@ func stripHTML(s string) string {
 		"&Aacute;", "Á", "&Eacute;", "É", "&Iacute;", "Í",
 		"&Oacute;", "Ó", "&Uacute;", "Ú", "&Ntilde;", "Ñ",
 	).Replace(s)
-	// Collapse whitespace.
-	reWS := regexp.MustCompile(`\s+`)
-	return strings.TrimSpace(reWS.ReplaceAllString(s, " "))
-}
-
-// ── Parsing helpers ──────────────────────────────────────────────────────────
-
-// parseMontoCOP extracts the transfer amount from the email body.
-// Bancolombia format: "$1.500.000,00" or "$1.500.000" or "1500000".
-func parseMontoCOP(body string) float64 {
-	// Look for patterns like $1.500.000,00 or $ 1.500.000 or COP 1.500.000
-	reAmount := regexp.MustCompile(
-		`(?i)(?:\$|COP)\s*([\d]{1,3}(?:\.[\d]{3})*(?:,[\d]{1,2})?)`,
-	)
-	matches := reAmount.FindAllStringSubmatch(body, -1)
-
-	var best float64
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		// Normalize: remove thousand-dots, replace decimal-comma with dot
-		raw := strings.ReplaceAll(m[1], ".", "")
-		raw = strings.ReplaceAll(raw, ",", ".")
-		if v, err := strconv.ParseFloat(raw, 64); err == nil && v > best {
-			best = v
-		}
-	}
-	return best
-}
-
-// parseBancolombiaDate tries to find a date in the email body or falls back
-// to the RFC2822 Date header.
-func parseBancolombiaDate(body, dateHeader string) (time.Time, error) {
-	// Try body patterns like "01/03/2026 10:35 a.m." or "2026-03-01"
-	reDate := regexp.MustCompile(`(\d{2}/\d{2}/\d{4})\s+(\d{1,2}:\d{2})\s*(?:a\.?m\.?|p\.?m\.?)?`)
-	if m := reDate.FindStringSubmatch(body); len(m) >= 3 {
-		s := m[1] + " " + m[2]
-		if t, err := time.ParseInLocation("02/01/2006 15:04", s, time.Local); err == nil {
-			return t, nil
-		}
-	}
-
-	// Parse RFC2822 Date header.
-	formats := []string{
-		"Mon, 2 Jan 2006 15:04:05 -0700",
-		"Mon, 2 Jan 2006 15:04:05 MST",
-		"2 Jan 2006 15:04:05 -0700",
-	}
-	for _, f := range formats {
-		if t, err := time.Parse(f, dateHeader); err == nil {
-			return t.Local(), nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("no date found")
-}
-
-// parseField extracts the first capture group of a regex from the body text.
-func parseField(body, pattern string) string {
-	re := regexp.MustCompile(pattern)
-	m := re.FindStringSubmatch(body)
-	if len(m) >= 2 {
-		return strings.TrimSpace(m[1])
-	}
-	return ""
+	return strings.TrimSpace(reBancoWhitespace.ReplaceAllString(s, " "))
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
