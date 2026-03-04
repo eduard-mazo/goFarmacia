@@ -592,14 +592,17 @@ function cellBg(rowIdx: number, col: string, value: string): string {
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel :disabled="deletingRow">Cancelar</AlertDialogCancel>
-        <AlertDialogAction
+        <!-- Use Button (not AlertDialogAction) so the dialog does NOT auto-close
+             before confirmDeleteRow reads deleteRowDialog. The finally block
+             closes it after the async operation completes. -->
+        <Button
           class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           :disabled="deletingRow"
           @click="confirmDeleteRow"
         >
           <Loader2 v-if="deletingRow" class="h-4 w-4 animate-spin mr-2" />
           Eliminar
-        </AlertDialogAction>
+        </Button>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>

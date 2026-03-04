@@ -1,41 +1,137 @@
 package backend
 
-// bancolombia_service.go — Gmail sync for Bancolombia transfer notifications.
+// bancolombia_service.go — Sincronización de Gmail para notificaciones de transferencias Bancolombia.
 //
-// Strategy: hybrid polling
-//   • Background ticker fires every 2 minutes and checks the last 30 messages
-//     from the Bancolombia notification sender. This keeps the notification
-//     feed current without manual intervention — important for a pharmacy POS
-//     where staff need to confirm payment before releasing product.
-//   • Manual "Verificar ahora" button for immediate on-demand checking.
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESCRIPCIÓN GENERAL
+// ═══════════════════════════════════════════════════════════════════════════════
 //
-// OAuth2: reuses the same credentials.json as the DIAN Gmail service but saves
-// its token to a separate file (bancolombia_token.json), allowing a different
-// Gmail account to be authenticated.
+// Este servicio detecta y almacena automáticamente las transferencias bancarias
+// que Bancolombia notifica por correo electrónico. Es crítico para el flujo de
+// caja de la droguería: el personal valida el pago recibido antes de entregar
+// el pedido.
 //
-// Gmail query: from:notificacionesbancolombia.com
-//   Matches both sender domains used by Bancolombia:
-//     alertasynotificaciones@notificacionesbancolombia.com
-//     alertasynotificaciones@an.notificacionesbancolombia.com
+// ═══════════════════════════════════════════════════════════════════════════════
+// ESTRATEGIA DE POLLING
+// ═══════════════════════════════════════════════════════════════════════════════
 //
-// Supported email formats
-// ──────────────────────────────────────────────────────────────────────────
-// Format A (classic):
-//   "Bancolombia: Recibiste una transferencia por $65,000 de DAVID SIERRA
-//    en tu cuenta **8368, el 07/05/2025 a las 13:59."
+//   • Ticker en segundo plano (cada 2 minutos, ver bancolombiaTickerPeriod):
+//     revisa los últimos 30 correos del remitente Bancolombia. Mantiene el feed
+//     actualizado sin intervención manual durante la jornada laboral.
 //
-// Format B (Llave Bancolombia):
-//   "Bancolombia: RECEPTOR, recibiste una transferencia de SANDRA LORENA
-//    VALENCIA CORREA por $70,000.00 en tu producto *8368 conectado a la
-//    llave email@gmail.com el 27/05/25 a las 13:05."
+//   • Sincronización manual ("Sincronizar" en la UI):
+//     permite elegir el período (hoy / semana / mes / rango / completo) y
+//     recuperar mensajes anteriores. Soporta paginación completa mediante
+//     NextPageToken para no perder ningún mensaje aunque Gmail los agrupe en
+//     hilos.
 //
-// Amount format: comma = thousands separator, period = decimal
-//   $65,000 → 65000    |    $70,000.00 → 70000.00
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTENTICACIÓN OAUTH2
+// ═══════════════════════════════════════════════════════════════════════════════
 //
-// Wails events emitted:
-//   "bancolombia:nueva"        → TransferenciaBancolombia  (one per new transfer)
-//   "bancolombia:badge"        → int  (count of unread notifications)
-//   "bancolombia:sync:result"  → BancolombiaCheckResult
+//   • Reutiliza el mismo credentials.json que el servicio DIAN/Gmail (app de
+//     Google Cloud configurada por el administrador).
+//   • Guarda el token en un archivo separado (bancolombia_token.json), lo que
+//     permite autenticar una cuenta Gmail diferente a la de facturas DIAN.
+//   • El flujo de autorización abre un servidor HTTP local en el puerto 8095
+//     y espera el callback de Google. La URL de autorización se devuelve al
+//     frontend, que es responsable de abrir el navegador (BrowserOpenURL).
+//   • Ruta de redirección: http://localhost:8095/bancolombia/oauth2/callback
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONSULTA GMAIL
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   Filtro base: from:notificacionesbancolombia.com
+//   Cubre ambos dominios de Bancolombia:
+//     • alertasynotificaciones@notificacionesbancolombia.com
+//     • alertasynotificaciones@an.notificacionesbancolombia.com
+//
+//   ZONA HORARIA: Los filtros de fecha usan timestamps Unix (not strings
+//   YYYY/MM/DD). Esto es CRÍTICO. Las cadenas "after:2026/03/02" son
+//   interpretadas por Gmail según la zona horaria de la CUENTA Gmail
+//   (que puede ser UTC), no la del servidor. Al usar Unix timestamps se
+//   garantiza que "hoy" corresponde al día correcto en Colombia (COT = UTC-5),
+//   evitando que correos de ayer aparezcan como de hoy.
+//
+//   Ejemplo para modo "hoy" a las 21:00 COT del 02/03/2026:
+//     after:1740891600  → medianoche COT 02/03/2026 = 05:00 UTC 02/03/2026
+//     before:1740978000 → medianoche COT 03/03/2026 = 05:00 UTC 03/03/2026
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// FORMATOS DE CORREO SOPORTADOS
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   Formato A — Transferencia clásica:
+//     "Bancolombia: Recibiste una transferencia por $65,000 de DAVID SIERRA
+//      en tu cuenta **8368, el 07/05/2025 a las 13:59."
+//     Captura: [monto=$65000] [remitente=DAVID SIERRA]
+//
+//   Formato B — Llave Bancolombia / Transferencia dirigida:
+//     "Bancolombia: RECEPTOR, recibiste una transferencia de SANDRA LORENA
+//      VALENCIA CORREA por $70,000.00 en tu producto *8368 conectado a la
+//      llave email@gmail.com el 27/05/25 a las 13:05."
+//     Captura: [remitente=SANDRA LORENA VALENCIA CORREA] [monto=$70000.00]
+//
+//   Separador de miles: coma  |  Decimal: punto
+//     $65,000 → 65000    |    $70,000.00 → 70000.00
+//
+//   NOTA UNICODE: Los patrones de nombre usan \p{L} (letra Unicode) en lugar
+//   de [A-Z], lo que permite capturar nombres con Ñ, Á, É, etc.
+//   (p.ej. "JHOFER LONDOÑO" fallaba con [A-Z] porque Ñ está fuera del rango ASCII).
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// DETECCIÓN DEL TIPO DE TRANSFERENCIA
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   El campo concepto almacena el método de pago detectado del texto:
+//     "llave"        → "Por llave Bancolombia"
+//     "código qr"    → "Por código QR"
+//     (otro)         → "Transferencia normal"
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// MÉTODOS PÚBLICOS EXPUESTOS A WAILS
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   EstadoAuth()                          → BancolombiaAuthStatus
+//     Verifica si credentials.json y bancolombia_token.json existen.
+//
+//   IniciarOAuth2()                       → (url string, err error)
+//     Inicia el flujo OAuth2. Devuelve la URL de autorización de Google.
+//     El frontend abre el navegador; el callback guarda el token automáticamente.
+//
+//   RevocarAuth()                         → error
+//     Elimina el token guardado y detiene el ticker.
+//
+//   SincronizarConPeriodo(opts)           → (BancolombiaCheckResult, error)
+//     Ejecuta una sincronización inmediata para el período indicado.
+//     Modos: "hoy" | "semana" | "mes" | "rango" | "completo"
+//     Emite eventos bancolombia:sync:log en tiempo real y bancolombia:sync:result al finalizar.
+//
+//   ObtenerTransferencias(page, pageSize, soloNoLeidas) → TransferenciasResponse
+//     Devuelve transferencias paginadas desde la BD. (En bancolombia_db.go)
+//
+//   MarcarLeida(uuid)                     → error
+//     Marca una transferencia específica como leída.
+//
+//   MarcarTodasLeidas()                   → error
+//     Marca todas las transferencias no leídas como leídas y actualiza el badge.
+//
+//   EliminarTransferencia(uuid)           → error
+//     Elimina permanentemente una transferencia de la BD.
+//
+//   GetAutoPolling()                      → BancolombiaAutoPollingState
+//   SetAutoPolling(enabled bool)
+//     Habilita/deshabilita el ticker de fondo.
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// EVENTOS WAILS EMITIDOS
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   "bancolombia:nueva"       → TransferenciaBancolombia   (una por transferencia nueva)
+//   "bancolombia:badge"       → int                        (cantidad de no leídas)
+//   "bancolombia:sync:result" → BancolombiaCheckResult     (resumen al finalizar sync)
+//   "bancolombia:sync:log"    → BancolombiaLogEntry        (línea de log en tiempo real)
 
 import (
 	"context"
@@ -75,14 +171,15 @@ var (
 
 	// Format A: "transferencia por $65,000 de NOMBRE en tu"
 	// Captures: [1]=monto  [2]=remitente
+	// \p{L} matches any Unicode letter, covering names with Ñ, Á, É, etc.
 	reBancoFormatoA = regexp.MustCompile(
-		`(?i)transferencia por \$([\d,]+(?:\.[\d]{1,2})?) de ([A-Z][A-Z ]+?) (?:en tu|,)`,
+		`(?i)transferencia por \$([\d,]+(?:\.[\d]{1,2})?) de ([\p{L}][\p{L} ]+?) (?:en tu|,)`,
 	)
 
 	// Format B: "transferencia de NOMBRE por $70,000.00"
 	// Captures: [1]=remitente  [2]=monto
 	reBancoFormatoB = regexp.MustCompile(
-		`(?i)transferencia de ([A-Z][A-Z ]+?) por \$([\d,]+(?:\.[\d]{1,2})?)`,
+		`(?i)transferencia de ([\p{L}][\p{L} ]+?) por \$([\d,]+(?:\.[\d]{1,2})?)`,
 	)
 
 	// Account: "cuenta **8368", "cuenta *8368", "producto *8368"
@@ -101,11 +198,12 @@ var (
 // BancolombiaService handles Gmail polling for Bancolombia transfer notifications.
 // It is bound to Wails and exposed to the frontend.
 type BancolombiaService struct {
-	ctx       context.Context
-	db        *Db
-	configDir string
-	ticker    *time.Ticker
-	done      chan struct{}
+	ctx         context.Context
+	db          *Db
+	configDir   string
+	ticker      *time.Ticker
+	done        chan struct{}
+	autoPolling bool
 }
 
 // BancolombiaAuthStatus reports authentication state to the frontend.
@@ -123,13 +221,21 @@ type BancolombiaCheckResult struct {
 	Ts        string   `json:"ts"`
 }
 
+// BancolombiaLogEntry is one line in the real-time sync log (same pattern as SyncLogEntry).
+type BancolombiaLogEntry struct {
+	Nivel   string `json:"nivel"`   // "info" | "ok" | "warn" | "error"
+	Mensaje string `json:"mensaje"`
+	Ts      string `json:"ts"`
+}
+
 // NewBancolombiaService creates the service. Shares configDir with GmailService.
 func NewBancolombiaService(db *Db) *BancolombiaService {
 	home, _ := os.UserHomeDir()
 	return &BancolombiaService{
-		db:        db,
-		configDir: filepath.Join(home, ".config", "goFarmacia"),
-		done:      make(chan struct{}),
+		db:          db,
+		configDir:   filepath.Join(home, ".config", "goFarmacia"),
+		done:        make(chan struct{}),
+		autoPolling: true,
 	}
 }
 
@@ -218,13 +324,13 @@ func (b *BancolombiaService) loadOAuth2Config() (*oauth2.Config, error) {
 }
 
 // IniciarOAuth2 starts the OAuth2 flow for the Bancolombia Gmail account.
+// Returns the OAuth2 URL — the frontend is responsible for opening the browser.
 func (b *BancolombiaService) IniciarOAuth2() (string, error) {
 	cfg, err := b.loadOAuth2Config()
 	if err != nil {
 		return "", err
 	}
 	authURL := cfg.AuthCodeURL("bancolombia-state", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
-	wailsruntime.BrowserOpenURL(b.ctx, authURL)
 	go b.startCallbackServer(cfg)
 	return authURL, nil
 }
@@ -333,9 +439,68 @@ func (b *BancolombiaService) ContarNoLeidas() int {
 	return b.db.ContarTransferenciasNoLeidas()
 }
 
+// EliminarTransferencia removes a transfer notification by UUID.
+func (b *BancolombiaService) EliminarTransferencia(transferUUID string) error {
+	if err := b.db.EliminarTransferencia(transferUUID); err != nil {
+		return err
+	}
+	b.emitBadge()
+	return nil
+}
+
+// BancolombiaAutoPollingState reports whether auto-polling is active.
+type BancolombiaAutoPollingState struct {
+	Enabled bool `json:"enabled"`
+}
+
+// GetAutoPolling returns whether the background ticker is enabled.
+func (b *BancolombiaService) GetAutoPolling() BancolombiaAutoPollingState {
+	return BancolombiaAutoPollingState{Enabled: b.autoPolling}
+}
+
+// SetAutoPolling enables or disables the background polling ticker.
+func (b *BancolombiaService) SetAutoPolling(enabled bool) {
+	b.autoPolling = enabled
+	if !enabled && b.ticker != nil {
+		b.ticker.Stop()
+		b.ticker = nil
+	} else if enabled && b.ticker == nil && b.EstadoAuth().Authenticated {
+		b.startTicker()
+	}
+}
+
+// BancolombiaOpcionesPeriodo holds sync parameters for a period-based sync call.
+type BancolombiaOpcionesPeriodo struct {
+	Modo  string `json:"modo"`  // hoy | semana | mes | rango | completo
+	Desde string `json:"desde"` // YYYY-MM-DD, only for "rango"
+	Hasta string `json:"hasta"` // YYYY-MM-DD, only for "rango"
+}
+
+// SincronizarConPeriodo performs an immediate sync for the given period.
+func (b *BancolombiaService) SincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) (BancolombiaCheckResult, error) {
+	result, err := b.sincronizarConPeriodo(opts)
+	if err != nil {
+		result.Errores = append(result.Errores, err.Error())
+	}
+	wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
+	b.emitBadge()
+	return result, err
+}
+
+// MarcarTodasLeidas marks all transfer notifications as read.
+func (b *BancolombiaService) MarcarTodasLeidas() error {
+	err := b.db.MarcarTodasLeidas()
+	b.emitBadge()
+	return err
+}
+
 // ── Core sync logic ───────────────────────────────────────────────────────────
 
 func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, error) {
+	return b.sincronizarConPeriodo(BancolombiaOpcionesPeriodo{Modo: "semana"})
+}
+
+func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) (BancolombiaCheckResult, error) {
 	result := BancolombiaCheckResult{
 		Ts:      time.Now().Format("15:04:05"),
 		Errores: []string{},
@@ -350,17 +515,72 @@ func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, err
 	// Gmail substring matches the domain, so one query covers both:
 	//   alertasynotificaciones@notificacionesbancolombia.com
 	//   alertasynotificaciones@an.notificacionesbancolombia.com
-	const query = `from:notificacionesbancolombia.com`
+	query := `from:notificacionesbancolombia.com`
+	maxResults := int64(bancolombiaCheckCount)
 
-	resp, err := svc.Users.Messages.List("me").
-		Q(query).
-		MaxResults(bancolombiaCheckCount).
-		Do()
-	if err != nil {
-		return result, fmt.Errorf("error listando mensajes Bancolombia: %w", err)
+	// Use Colombia timezone (UTC-5) for all date calculations.
+	// IMPORTANT: we use Unix timestamps (not date strings) in Gmail queries.
+	// Date strings like "after:2026/03/02" are interpreted using the Gmail
+	// *account* timezone, which may differ from COT. Unix timestamps are
+	// absolute and timezone-agnostic, guaranteeing correct midnight boundaries.
+	col := time.FixedZone("COT", -5*60*60)
+	now := time.Now().In(col)
+
+	// startOfDay returns midnight COT for the given time value.
+	startOfDay := func(t time.Time) time.Time {
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, col)
 	}
 
-	for _, m := range resp.Messages {
+	switch opts.Modo {
+	case "hoy":
+		from := startOfDay(now)
+		to := from.AddDate(0, 0, 1)
+		query += fmt.Sprintf(" after:%d before:%d", from.Unix(), to.Unix())
+		maxResults = 50
+	case "semana":
+		from := startOfDay(now.AddDate(0, 0, -7))
+		query += fmt.Sprintf(" after:%d", from.Unix())
+		maxResults = 100
+	case "mes":
+		from := startOfDay(now.AddDate(0, -1, 0))
+		query += fmt.Sprintf(" after:%d", from.Unix())
+		maxResults = 200
+	case "rango":
+		if opts.Desde != "" {
+			d, _ := time.ParseInLocation("2006-01-02", opts.Desde, col)
+			query += fmt.Sprintf(" after:%d", startOfDay(d).Unix())
+		}
+		if opts.Hasta != "" {
+			h, _ := time.ParseInLocation("2006-01-02", opts.Hasta, col)
+			query += fmt.Sprintf(" before:%d", startOfDay(h).AddDate(0, 0, 1).Unix())
+		}
+		maxResults = 500
+	case "completo":
+		maxResults = 500
+	}
+
+	// Fetch ALL matching messages by following NextPageToken pagination.
+	var allMessages []*gmail.Message
+	pageToken := ""
+	for {
+		req := svc.Users.Messages.List("me").Q(query).MaxResults(maxResults)
+		if pageToken != "" {
+			req = req.PageToken(pageToken)
+		}
+		resp, err := req.Do()
+		if err != nil {
+			return result, fmt.Errorf("error listando mensajes Bancolombia: %w", err)
+		}
+		allMessages = append(allMessages, resp.Messages...)
+		if resp.NextPageToken == "" {
+			break
+		}
+		pageToken = resp.NextPageToken
+	}
+
+	b.emitLog("info", fmt.Sprintf("Revisando %d mensajes del período…", len(allMessages)))
+
+	for _, m := range allMessages {
 		result.Revisados++
 		if b.db.ExisteTransferencia(m.Id) {
 			continue
@@ -372,13 +592,20 @@ func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, err
 		isNew, err := b.db.GuardarTransferencia(*t)
 		if err != nil {
 			result.Errores = append(result.Errores, fmt.Sprintf("msg %s: %v", m.Id, err))
+			b.emitLog("error", fmt.Sprintf("Error guardando mensaje %s: %v", m.Id, err))
 			continue
 		}
 		if isNew {
 			result.Nuevas++
+			b.emitLog("ok", fmt.Sprintf("✓ %s — $%.0f (%s)", t.Remitente, t.Monto, t.RawSubject))
 			wailsruntime.EventsEmit(b.ctx, "bancolombia:nueva", t)
 		}
 	}
+
+	b.emitLog("info", fmt.Sprintf(
+		"Finalizado — %d revisados, %d nuevas, %d errores",
+		result.Revisados, result.Nuevas, len(result.Errores),
+	))
 
 	return result, nil
 }
@@ -458,6 +685,16 @@ func parseBancolombiaTransfer(text, emailID, dateHeader string) *TransferenciaBa
 	}
 	fecha := parseBancolombiaDate(fechaStr, dateHeader)
 
+	// Extract the full notification sentence (the line that contains "transferencia")
+	// from the input text — this preserves the original wording including date/time.
+	rawSubject := bancolombiaExtractSentence(text)
+	if rawSubject == "" {
+		rawSubject = fmt.Sprintf("Transferencia de %s por $%.0f", remitente, monto)
+	}
+
+	// Detect transfer method from the notification text
+	tipoTransfer := bancolombiaDetectTipo(text)
+
 	return &TransferenciaBancolombia{
 		UUID:          uuid.NewString(),
 		EmailID:       emailID,
@@ -465,8 +702,9 @@ func parseBancolombiaTransfer(text, emailID, dateHeader string) *TransferenciaBa
 		Monto:         monto,
 		Remitente:     remitente,
 		CuentaDestino: cuenta,
-		// Concepto: not present in Bancolombia transfer notifications
-		RawSubject: truncate(text, 120),
+		// Concepto: not present in Bancolombia transfer notifications; reuse for type
+		Concepto:   tipoTransfer,
+		RawSubject: rawSubject,
 	}
 }
 
@@ -565,7 +803,51 @@ func bancolombiaStripHTML(s string) string {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+// bancolombiaExtractSentence finds and returns the sentence (or full text if short)
+// containing the word "transferencia", without URL artifacts.
+func bancolombiaExtractSentence(text string) string {
+	// Split on newlines and periods to get candidate sentences
+	for _, sep := range []string{"\n", ". "} {
+		for _, line := range strings.Split(text, sep) {
+			line = strings.TrimSpace(line)
+			if strings.Contains(strings.ToLower(line), "transferencia") {
+				// Skip lines that are just HTML artifacts (contain URLs or start with "Logo")
+				if strings.Contains(line, "http") || strings.HasPrefix(strings.ToLower(line), "logo") {
+					continue
+				}
+				// Trim "Bancolombia: " prefix if present
+				line = strings.TrimPrefix(line, "Bancolombia: ")
+				return truncate(line, 300)
+			}
+		}
+	}
+	return ""
+}
+
+// bancolombiaDetectTipo determines the transfer method from the notification text.
+func bancolombiaDetectTipo(text string) string {
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "llave"):
+		return "Por llave Bancolombia"
+	case strings.Contains(lower, "código qr"), strings.Contains(lower, "codigo qr"),
+		strings.Contains(lower, " qr "):
+		return "Por código QR"
+	default:
+		return "Transferencia normal"
+	}
+}
+
 func (b *BancolombiaService) emitBadge() {
 	n := b.db.ContarTransferenciasNoLeidas()
 	wailsruntime.EventsEmit(b.ctx, "bancolombia:badge", n)
+}
+
+func (b *BancolombiaService) emitLog(nivel, mensaje string) {
+	entry := BancolombiaLogEntry{
+		Nivel:   nivel,
+		Mensaje: mensaje,
+		Ts:      time.Now().Format("15:04:05"),
+	}
+	wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:log", entry)
 }

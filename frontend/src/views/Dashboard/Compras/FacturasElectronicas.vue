@@ -132,9 +132,9 @@ const iniciarSync = async () => {
       hasta: syncModo.value === "rango" ? syncHasta.value : "",
     };
     const result = await SincronizarConOpciones(opts);
-    if (result.Nuevas > 0) {
-      toast.success(`${result.Nuevas} factura(s) nueva(s) importadas`);
-      cargarFacturas();
+    await cargarFacturas();
+    if (result.nuevas > 0) {
+      toast.success(`${result.nuevas} factura(s) nueva(s) importadas`);
     } else {
       toast.info("Sin facturas nuevas");
     }

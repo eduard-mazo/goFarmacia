@@ -1,3 +1,37 @@
+// bancolombia_db.go — Capa de acceso a datos para las transferencias Bancolombia.
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// TABLA: transferencias_bancolombia
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   uuid           UUID PRIMARY KEY        — identificador único interno
+//   email_id       TEXT UNIQUE NOT NULL    — Message-ID de Gmail; evita duplicados
+//   fecha          TIMESTAMPTZ             — fecha/hora de la transferencia (COT)
+//   monto          NUMERIC(15,2)           — valor recibido en COP
+//   remitente      TEXT                    — nombre del remitente extraído del correo
+//   referencia     TEXT                    — número de referencia Bancolombia (si aplica)
+//   cuenta_destino TEXT                    — últimos dígitos de la cuenta destino
+//   concepto       TEXT                    — método de pago: "Por llave Bancolombia" |
+//                                            "Por código QR" | "Transferencia normal"
+//   raw_subject    TEXT                    — oración completa de la notificación
+//   leido          BOOLEAN DEFAULT false   — indica si fue revisada en la UI
+//   created_at     TIMESTAMPTZ DEFAULT NOW() — cuándo fue importada a la BD
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// IDEMPOTENCIA
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   GuardarTransferencia usa ON CONFLICT (email_id) DO NOTHING, garantizando que
+//   un mismo correo nunca se registre dos veces aunque el sync se ejecute varias
+//   veces sobre el mismo período.
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAGINACIÓN
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//   ObtenerTransferenciasPaginado calcula automáticamente el total de registros
+//   y el total acumulado en COP para alimentar los KPIs del módulo de tesorería.
+
 package backend
 
 import (
@@ -130,6 +164,22 @@ func (d *Db) ObtenerTransferenciasPaginado(page, pageSize int, soloNoLeidas bool
 		PageSize:   pageSize,
 		TotalMonto: totalMonto,
 	}, nil
+}
+
+// EliminarTransferencia deletes a transfer notification by UUID.
+func (d *Db) EliminarTransferencia(uuid string) error {
+	_, err := d.DB.Exec(
+		`DELETE FROM transferencias_bancolombia WHERE uuid = $1`, uuid,
+	)
+	return err
+}
+
+// MarcarTodasLeidas marks every unread transfer notification as read.
+func (d *Db) MarcarTodasLeidas() error {
+	_, err := d.DB.Exec(
+		`UPDATE transferencias_bancolombia SET leido = true WHERE leido = false`,
+	)
+	return err
 }
 
 // ContarTransferenciasNoLeidas returns the count of unread transfer notifications.
