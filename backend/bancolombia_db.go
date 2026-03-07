@@ -35,6 +35,7 @@
 package backend
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -273,24 +274,47 @@ func (d *Db) DesvincularFactura(transferUUID string) error {
 }
 
 // BuscarFacturasVenta searches sale invoices by number or client name.
+// When busqueda is empty, returns the 50 most recent invoices.
+// When busqueda is provided, searches the full table (no limit) so older
+// invoices like FAC-1998 are always found.
 func (d *Db) BuscarFacturasVenta(busqueda string, limit int) ([]FacturaVentaResumen, error) {
-	if limit <= 0 || limit > 50 {
-		limit = 20
-	}
 	like := "%" + strings.ToLower(busqueda) + "%"
-	const q = `
-		SELECT f.uuid, f.numero_factura,
-		       COALESCE(c.nombre || ' ' || c.apellido, '') AS cliente_nombre,
-		       COALESCE(f.total, 0),
-		       COALESCE(f.fecha_emision, NOW())
-		FROM   facturas f
-		LEFT   JOIN clientes c ON f.cliente_id = c.id
-		WHERE  f.deleted_at IS NULL
-		  AND  (LOWER(f.numero_factura) LIKE $1 OR LOWER(COALESCE(c.nombre,'') || ' ' || COALESCE(c.apellido,'')) LIKE $1)
-		ORDER  BY f.fecha_emision DESC
-		LIMIT  $2`
 
-	rows, err := d.DB.Query(q, like, limit)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if busqueda == "" {
+		// No search term — return recent invoices with a cap
+		if limit <= 0 {
+			limit = 50
+		}
+		const q = `
+			SELECT f.uuid, f.numero_factura,
+			       COALESCE(c.nombre || ' ' || c.apellido, '') AS cliente_nombre,
+			       COALESCE(f.total, 0),
+			       COALESCE(f.fecha_emision, NOW())
+			FROM   facturas f
+			LEFT   JOIN clientes c ON f.cliente_id = c.id
+			WHERE  f.deleted_at IS NULL
+			ORDER  BY f.fecha_emision DESC
+			LIMIT  $1`
+		rows, err = d.DB.Query(q, limit)
+	} else {
+		// Search term provided — scan all rows, no LIMIT
+		const q = `
+			SELECT f.uuid, f.numero_factura,
+			       COALESCE(c.nombre || ' ' || c.apellido, '') AS cliente_nombre,
+			       COALESCE(f.total, 0),
+			       COALESCE(f.fecha_emision, NOW())
+			FROM   facturas f
+			LEFT   JOIN clientes c ON f.cliente_id = c.id
+			WHERE  f.deleted_at IS NULL
+			  AND  (LOWER(f.numero_factura) LIKE $1
+			        OR LOWER(COALESCE(c.nombre,'') || ' ' || COALESCE(c.apellido,'')) LIKE $1)
+			ORDER  BY f.fecha_emision DESC`
+		rows, err = d.DB.Query(q, like)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("buscar facturas venta: %w", err)
 	}
