@@ -42,8 +42,11 @@ const (
 	paperColsA = 32 // Font A — normal (12×24 dots)
 	paperColsB = 42 // Font B — small  (9×17 dots)
 
-	// QR bitmap size in dots. Must be ≤ printable width in dots (~384).
-	qrBitmapSize = 120 // pixels; centered on paper
+	// QR bitmap size in dots.
+	qrBitmapSize = 180 // pixels
+
+	// Printable dot width of 58 mm paper (~384 dots).
+	paperDotsWidth = 384
 )
 
 // ── receipt — buffered ESC/POS builder ───────────────────────────────────────
@@ -82,6 +85,13 @@ func cmdDblHOn() []byte        { return []byte{0x1D, 0x21, 0x11} } // double wid
 func cmdDblHOff() []byte       { return []byte{0x1D, 0x21, 0x00} }
 func cmdFontB() []byte         { return []byte{0x1B, 0x4D, 0x01} } // ESC M 1 — Font B (small)
 func cmdFontA() []byte         { return []byte{0x1B, 0x4D, 0x00} } // ESC M 0 — Font A (normal)
+func cmdIntlCharSet(n byte) []byte { return []byte{0x1B, 0x52, n} } // ESC R n — international char set (0=USA)
+
+// switchFontB switches to Font B and re-asserts PC850 + USA char set.
+// Some printers reset the code page on font change, causing '$' → '¥'.
+func (r *receipt) switchFontB() *receipt {
+	return r.raw(cmdFontB()...).raw(cmdCodePage(cpPC850)...).raw(cmdIntlCharSet(0)...)
+}
 func cmdCut() []byte           { return []byte{0x1D, 0x56, 0x42, 0x00} }
 
 // ── QR as raster bitmap ───────────────────────────────────────────────────────
@@ -105,33 +115,39 @@ func qrBitmap(data string) []byte {
 	if err != nil {
 		return nil
 	}
-	return imageToRaster(scaled)
+	return imageToRasterCentered(scaled, paperDotsWidth)
 }
 
-// imageToRaster converts an image.Image to ESC/POS GS v 0 raster bytes.
-func imageToRaster(img image.Image) []byte {
+// imageToRasterCentered converts an image.Image to ESC/POS GS v 0 raster bytes,
+// centering the image horizontally within paperWidth dots by padding with white.
+func imageToRasterCentered(img image.Image, paperWidth int) []byte {
 	bounds := img.Bounds()
 	w := bounds.Max.X - bounds.Min.X
 	h := bounds.Max.Y - bounds.Min.Y
-	bytesPerRow := (w + 7) / 8
 
-	// Build pixel rows
-	pixels := make([]byte, bytesPerRow*h)
+	paperBytesPerRow := (paperWidth + 7) / 8
+	imgBytesPerRow := (w + 7) / 8
+	leftPadBytes := (paperBytesPerRow - imgBytesPerRow) / 2
+	if leftPadBytes < 0 {
+		leftPadBytes = 0
+	}
+
+	// Build pixel rows padded to full paper width (white = 0x00)
+	pixels := make([]byte, paperBytesPerRow*h)
 	for y := range h {
 		for x := range w {
 			r, g, b, _ := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
-			// Luminance: dark pixel → bit = 1 (print)
 			luma := (r*299 + g*587 + b*114) / 1000
-			if luma < 0x8000 { // darker than 50% gray → print dot
-				byteIdx := y*bytesPerRow + x/8
+			if luma < 0x8000 {
+				byteIdx := y*paperBytesPerRow + leftPadBytes + x/8
 				bitIdx := uint(7 - x%8)
 				pixels[byteIdx] |= 1 << bitIdx
 			}
 		}
 	}
 
-	xL := byte(bytesPerRow & 0xFF)
-	xH := byte(bytesPerRow >> 8)
+	xL := byte(paperBytesPerRow & 0xFF)
+	xH := byte(paperBytesPerRow >> 8)
 	yL := byte(h & 0xFF)
 	yH := byte(h >> 8)
 
@@ -323,7 +339,9 @@ func buildReceipt(f Factura) *receipt {
 	r := newReceipt()
 
 	// ── Init ─────────────────────────────────────────────────────────────────
-	r.raw(cmdInit()...).raw(cmdCodePage(cpPC850)...)
+	// ESC R 0 forces USA international character set so '$' (0x24) stays as $
+	// on printers that default to a Japanese/Asian character set.
+	r.raw(cmdInit()...).raw(cmdCodePage(cpPC850)...).raw(cmdIntlCharSet(0)...)
 
 	// ── Header — Font A, center, bold, double size ────────────────────────────
 	r.raw(cmdCenter()...).
@@ -338,7 +356,7 @@ func buildReceipt(f Factura) *receipt {
 	r.raw(cmdCenter()...).text("Tel: 305 445 6781").ln()
 
 	// ── Switch to Font B for body (smaller, more cols) ────────────────────────
-	r.raw(cmdFontB()...)
+	r.switchFontB()
 	r.raw(cmdLeft()...).text(separatorB()).ln()
 
 	// ── Transaction metadata ──────────────────────────────────────────────────
@@ -378,16 +396,17 @@ func buildReceipt(f Factura) *receipt {
 	r.raw(cmdLeft()...).text(totalLineB("IVA (19%):", formatCOP(f.IVA))).ln()
 	r.raw(cmdLeft()...).text(separatorB()).ln()
 
-	// Grand total — back to Font A, double size
+	// Grand total — Font A, double size, two lines: "TOTAL:" then "$ value"
 	r.raw(cmdFontA()...).
 		raw(cmdRight()...).
 		raw(cmdBoldOn()...).
 		raw(cmdDblHOn()...).
-		text(fmt.Sprintf("%-10s%12s", "TOTAL:", formatCOP(f.Total))).ln().
+		text("TOTAL:").ln().
+		text(formatCOP(f.Total)).ln().
 		raw(cmdDblHOff()...).
 		raw(cmdBoldOff()...)
 
-	r.raw(cmdFontB()...)
+	r.switchFontB()
 	r.raw(cmdLeft()...).text(separatorB()).ln()
 
 	// ── QR code (raster bitmap) ───────────────────────────────────────────────
@@ -398,7 +417,7 @@ func buildReceipt(f Factura) *receipt {
 		r.raw(cmdCenter()...)
 		r.raw(qrBytes...)
 		r.raw('\n')
-		r.raw(cmdFontB()...)
+		r.switchFontB()
 		r.raw(cmdCenter()...).text("Escanea para ver tu factura").ln()
 		r.raw(cmdCenter()...).text(f.NumeroFactura).ln()
 		r.raw(cmdLeft()...).text(separatorB()).ln()
