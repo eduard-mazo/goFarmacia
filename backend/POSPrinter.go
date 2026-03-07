@@ -43,7 +43,7 @@ const (
 	paperColsB = 42 // Font B — small  (9×17 dots)
 
 	// QR bitmap size in dots.
-	qrBitmapSize = 180 // pixels
+	qrBitmapSize = 200 // pixels
 
 	// Printable dot width of 58 mm paper (~384 dots).
 	paperDotsWidth = 384
@@ -222,6 +222,32 @@ func truncate(s string, n int) string {
 	return string(runes[:n-3]) + "..."
 }
 
+// itemLineA formats one product line for Font A (32 cols).
+//
+// Layout (32 cols):
+//   col  0-3  : qty    4 chars  e.g. " 50x"
+//   col  4    : space
+//   col  5-21 : name  17 chars
+//   col 22-31 : total 10 chars  right-aligned
+//
+// 4 + 1 + 17 + 10 = 32 ✓
+func itemLineA(qty int, name string, total float64) string {
+	qtyStr  := rpad(fmt.Sprintf("%dx", qty), 4)
+	nameStr := pad(truncate(name, 17), 17)
+	totStr  := rpad(formatCOP(total), 10)
+	return fmt.Sprintf("%s %s%s", qtyStr, nameStr, totStr)
+}
+
+// unitLineA formats the unit-price sub-line for Font A.
+func unitLineA(unitPrice float64) string {
+	return fmt.Sprintf("     %s c/u", formatCOP(unitPrice))
+}
+
+// totalLineA formats a total row for Font A: label(22) + value(10) = 32.
+func totalLineA(label, val string) string {
+	return pad(label, 22) + rpad(val, 10)
+}
+
 // itemLineB formats one product line for Font B (42 cols).
 //
 // Layout (42 cols):
@@ -355,9 +381,10 @@ func buildReceipt(f Factura) *receipt {
 	r.raw(cmdCenter()...).text("Calle 94 # 48-33, Medellin").ln()
 	r.raw(cmdCenter()...).text("Tel: 305 445 6781").ln()
 
-	// ── Switch to Font B for body (smaller, more cols) ────────────────────────
-	r.switchFontB()
-	r.raw(cmdLeft()...).text(separatorB()).ln()
+	// ── Body — Font A throughout ──────────────────────────────────────────────
+	// Font B on ZJ-5890K has ¥ hardcoded at position 0x24 ($) in its ROM;
+	// no ESC/POS command overrides it. Font A renders $ correctly.
+	r.raw(cmdLeft()...).text(separatorA()).ln()
 
 	// ── Transaction metadata ──────────────────────────────────────────────────
 	fecha := f.FechaEmision.Format("02/01/2006  03:04 PM")
@@ -371,34 +398,33 @@ func buildReceipt(f Factura) *receipt {
 		r.text(fmt.Sprintf("Pago    : %s", f.MetodoPago)).ln()
 	}
 
-	r.raw(cmdLeft()...).text(separatorB()).ln()
+	r.raw(cmdLeft()...).text(separatorA()).ln()
 
 	// ── Column headers ────────────────────────────────────────────────────────
-	// Mirrors itemLineB layout: qty(4)+sp(1)+name(22)+price(15) = 42
+	// Mirrors itemLineA layout: qty(4)+sp(1)+name(17)+price(10) = 32
 	r.raw(cmdBoldOn()...).
-		text(fmt.Sprintf("%-4s %-22s%15s", "Ud.", "Descripcion", "Total")).ln().
+		text(fmt.Sprintf("%-4s %-17s%10s", "Ud.", "Descripcion", "Total")).ln().
 		raw(cmdBoldOff()...)
-	r.raw(cmdLeft()...).text(separatorB()).ln()
+	r.raw(cmdLeft()...).text(separatorA()).ln()
 
 	// ── Line items ────────────────────────────────────────────────────────────
 	for _, item := range f.Detalles {
 		r.raw(cmdLeft()...).
-			text(itemLineB(item.Cantidad, item.Producto.Nombre, item.PrecioTotal)).ln()
+			text(itemLineA(item.Cantidad, item.Producto.Nombre, item.PrecioTotal)).ln()
 		if item.Cantidad > 1 {
-			r.raw(cmdLeft()...).text(unitLineB(item.PrecioUnitario)).ln()
+			r.raw(cmdLeft()...).text(unitLineA(item.PrecioUnitario)).ln()
 		}
 	}
 
-	r.raw(cmdLeft()...).text(separatorB()).ln()
+	r.raw(cmdLeft()...).text(separatorA()).ln()
 
 	// ── Totals ────────────────────────────────────────────────────────────────
-	r.raw(cmdLeft()...).text(totalLineB("Subtotal:", formatCOP(f.Subtotal))).ln()
-	r.raw(cmdLeft()...).text(totalLineB("IVA (19%):", formatCOP(f.IVA))).ln()
-	r.raw(cmdLeft()...).text(separatorB()).ln()
+	r.raw(cmdLeft()...).text(totalLineA("Subtotal:", formatCOP(f.Subtotal))).ln()
+	r.raw(cmdLeft()...).text(totalLineA("IVA (19%):", formatCOP(f.IVA))).ln()
+	r.raw(cmdLeft()...).text(separatorA()).ln()
 
-	// Grand total — Font A, double size, two lines: "TOTAL:" then "$ value"
-	r.raw(cmdFontA()...).
-		raw(cmdRight()...).
+	// Grand total — double size, two lines: "TOTAL:" then "$ value"
+	r.raw(cmdRight()...).
 		raw(cmdBoldOn()...).
 		raw(cmdDblHOn()...).
 		text("TOTAL:").ln().
@@ -406,25 +432,21 @@ func buildReceipt(f Factura) *receipt {
 		raw(cmdDblHOff()...).
 		raw(cmdBoldOff()...)
 
-	r.switchFontB()
-	r.raw(cmdLeft()...).text(separatorB()).ln()
+	r.raw(cmdLeft()...).text(separatorA()).ln()
 
 	// ── QR code (raster bitmap) ───────────────────────────────────────────────
 	qrContent := fmt.Sprintf("%s|%s", f.NumeroFactura, f.UUID)
 	qrBytes := qrBitmap(qrContent)
 	if len(qrBytes) > 0 {
-		r.raw(cmdFontA()...)
 		r.raw(cmdCenter()...)
 		r.raw(qrBytes...)
 		r.raw('\n')
-		r.switchFontB()
 		r.raw(cmdCenter()...).text("Escanea para ver tu factura").ln()
 		r.raw(cmdCenter()...).text(f.NumeroFactura).ln()
-		r.raw(cmdLeft()...).text(separatorB()).ln()
+		r.raw(cmdLeft()...).text(separatorA()).ln()
 	}
 
 	// ── Footer ────────────────────────────────────────────────────────────────
-	r.raw(cmdFontA()...)
 	r.raw(cmdCenter()...).
 		raw(cmdBoldOn()...).
 		text("Gracias por su compra!").ln().
