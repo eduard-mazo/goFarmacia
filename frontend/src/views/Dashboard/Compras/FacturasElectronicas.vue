@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { ColumnDef, PaginationState } from "@tanstack/vue-table";
-import { FlexRender, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
+import type { ColumnDef, PaginationState, SortingState } from "@tanstack/vue-table";
+import { FlexRender, getCoreRowModel, getSortedRowModel, useVueTable } from "@tanstack/vue-table";
 import { h, ref, onMounted, onUnmounted, watch, computed, nextTick } from "vue";
 import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import {
 import {
   Mail, RefreshCw, ShieldCheck, ShieldOff, Eye,
   Search, Loader2, CheckCircle2, AlertCircle, FolderOpen,
-  CalendarDays, ChevronDown, FileSearch,
+  CalendarDays, ChevronDown, FileSearch, ArrowUpDown, ArrowUp, ArrowDown,
 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
 import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
@@ -72,6 +72,7 @@ const listaFacturas = ref<backend.FacturaCompra[]>([]);
 const totalFacturas = ref(0);
 const busqueda = ref("");
 const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 10 });
+const sorting = ref<SortingState>([]);
 
 // Detail dialog
 const isDetailOpen = ref(false);
@@ -228,6 +229,20 @@ const tipoDocConfig: Record<string, { label: string; class: string }> = {
   "92": { label: "Nota Débito",  class: "bg-orange-50 text-orange-700 border-orange-200" },
 };
 
+function sortHeader(label: string) {
+  return ({ column }: { column: any }) => h("button", {
+    class: "flex items-center gap-1 group/sort text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors select-none",
+    onClick: () => column.toggleSorting(),
+  }, [
+    label,
+    h(column.getIsSorted() === "asc" ? ArrowUp
+      : column.getIsSorted() === "desc" ? ArrowDown
+      : ArrowUpDown, {
+      class: `h-3 w-3 ${column.getIsSorted() ? "text-primary" : "opacity-30 group-hover/sort:opacity-60"}`,
+    }),
+  ]);
+}
+
 const columns: ColumnDef<backend.FacturaCompra>[] = [
   {
     id: "TipoDocumento",
@@ -241,17 +256,17 @@ const columns: ColumnDef<backend.FacturaCompra>[] = [
       }, cfg.label);
     },
   },
-  { accessorKey: "NumeroFactura", header: "N° Documento" },
+  { accessorKey: "NumeroFactura", header: sortHeader("N° Documento") },
   {
     accessorKey: "FechaEmision",
-    header: "Fecha",
+    header: sortHeader("Fecha"),
     cell: ({ row }) => formatDate(row.getValue("FechaEmision")),
   },
-  { accessorKey: "ProveedorNombre", header: "Proveedor" },
+  { accessorKey: "ProveedorNombre", header: sortHeader("Proveedor") },
   { accessorKey: "ProveedorNIT", header: "NIT" },
   {
     accessorKey: "Total",
-    header: "Total",
+    header: sortHeader("Total"),
     cell: ({ row }) => {
       const tipo: string = row.original.TipoDocumento || "01";
       const isNote91 = tipo === "91";
@@ -264,7 +279,7 @@ const columns: ColumnDef<backend.FacturaCompra>[] = [
   },
   {
     accessorKey: "Estado",
-    header: "Estado",
+    header: sortHeader("Estado"),
     cell: ({ row }) => {
       const e: string = row.getValue("Estado");
       return h("span", {
@@ -292,9 +307,15 @@ const table = useVueTable({
   columns,
   manualPagination: true,
   getCoreRowModel: getCoreRowModel(),
+  getSortedRowModel: getSortedRowModel(),
   get pageCount() { return Math.ceil(totalFacturas.value / pagination.value.pageSize); },
-  state: { get pagination() { return pagination.value; } },
+  state: {
+    get pagination() { return pagination.value; },
+    get sorting() { return sorting.value; },
+  },
   onPaginationChange: (u) => valueUpdater(u, pagination),
+  onSortingChange: (u) => valueUpdater(u, sorting),
+  enableMultiSort: false,
 });
 
 const pageCount = computed(() => table.getPageCount());

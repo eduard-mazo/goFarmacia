@@ -133,7 +133,7 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	row := d.DB.QueryRowContext(ctx, `
 		SELECT uuid, nombre, apellido, cedula, email, contrasena, mfa_enabled, role
 		FROM vendedors
-		WHERE email = $1 AND deleted_at IS NULL
+		WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 	`, req.Email)
 
 	err := row.Scan(&vendedor.UUID, &vendedor.Nombre, &vendedor.Apellido,

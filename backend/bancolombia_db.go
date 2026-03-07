@@ -36,6 +36,7 @@ package backend
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -52,6 +53,17 @@ type TransferenciaBancolombia struct {
 	RawSubject    string    `json:"rawSubject"`
 	Leido         bool      `json:"leido"`
 	CreadoEn      time.Time `json:"creadoEn" ts_type:"string"`
+	FacturaUUID   string    `json:"facturaUuid"`
+	FacturaNumero string    `json:"facturaNumero"`
+}
+
+// FacturaVentaResumen is a summary of a sale invoice for linking to a transfer.
+type FacturaVentaResumen struct {
+	UUID          string    `json:"uuid"`
+	NumeroFactura string    `json:"numeroFactura"`
+	ClienteNombre string    `json:"clienteNombre"`
+	Total         float64   `json:"total"`
+	Fecha         time.Time `json:"fecha" ts_type:"string"`
 }
 
 // TransferenciasResponse is the paginated response sent to the frontend.
@@ -102,7 +114,9 @@ func (d *Db) MarcarTransferenciaLeida(uuid string) error {
 }
 
 // ObtenerTransferenciasPaginado returns a paginated list of transfer notifications.
-func (d *Db) ObtenerTransferenciasPaginado(page, pageSize int, soloNoLeidas bool) (TransferenciasResponse, error) {
+// busqueda filters by remitente/referencia/concepto (case-insensitive substring).
+// estado: "" = todos, "vinculada" = con factura, "sin_vincular" = sin factura.
+func (d *Db) ObtenerTransferenciasPaginado(page, pageSize int, soloNoLeidas bool, busqueda, estado string) (TransferenciasResponse, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -111,31 +125,60 @@ func (d *Db) ObtenerTransferenciasPaginado(page, pageSize int, soloNoLeidas bool
 	}
 	offset := (page - 1) * pageSize
 
-	whereClause := ""
-	args := []any{pageSize, offset}
+	// Build dynamic WHERE clause
+	var conds []string
+	var filterArgs []any
+	argIdx := 1
+
 	if soloNoLeidas {
-		whereClause = "WHERE leido = false"
-		args = []any{pageSize, offset}
+		conds = append(conds, "leido = false")
+	}
+	if busqueda != "" {
+		like := "%" + strings.ToLower(busqueda) + "%"
+		conds = append(conds, fmt.Sprintf(
+			"(LOWER(remitente) LIKE $%d OR LOWER(referencia) LIKE $%d OR LOWER(concepto) LIKE $%d)",
+			argIdx, argIdx, argIdx,
+		))
+		filterArgs = append(filterArgs, like)
+		argIdx++
+	}
+	switch estado {
+	case "vinculada":
+		conds = append(conds, "factura_uuid IS NOT NULL")
+	case "sin_vincular":
+		conds = append(conds, "factura_uuid IS NULL")
 	}
 
+	whereClause := ""
+	if len(conds) > 0 {
+		whereClause = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	// COUNT + SUM using filter args only
 	var total int
 	countQ := fmt.Sprintf(`SELECT COUNT(1) FROM transferencias_bancolombia %s`, whereClause)
-	if err := d.DB.QueryRow(countQ).Scan(&total); err != nil {
+	if err := d.DB.QueryRow(countQ, filterArgs...).Scan(&total); err != nil {
 		return TransferenciasResponse{}, fmt.Errorf("count transferencias: %w", err)
 	}
 
 	var totalMonto float64
 	montoQ := fmt.Sprintf(`SELECT COALESCE(SUM(monto),0) FROM transferencias_bancolombia %s`, whereClause)
-	_ = d.DB.QueryRow(montoQ).Scan(&totalMonto)
+	_ = d.DB.QueryRow(montoQ, filterArgs...).Scan(&totalMonto)
+
+	// Add LIMIT/OFFSET args after filter args
+	dataArgs := append(filterArgs, pageSize, offset)
+	limitIdx := argIdx
+	offsetIdx := argIdx + 1
 
 	dataQ := fmt.Sprintf(`
 		SELECT uuid, email_id, COALESCE(fecha, NOW()), monto, remitente,
-		       referencia, cuenta_destino, concepto, raw_subject, leido, created_at
+		       referencia, cuenta_destino, concepto, raw_subject, leido, created_at,
+		       COALESCE(factura_uuid::text, ''), COALESCE(factura_numero, '')
 		FROM   transferencias_bancolombia %s
 		ORDER  BY fecha DESC NULLS LAST
-		LIMIT  $1 OFFSET $2`, whereClause)
+		LIMIT  $%d OFFSET $%d`, whereClause, limitIdx, offsetIdx)
 
-	rows, err := d.DB.Query(dataQ, args...)
+	rows, err := d.DB.Query(dataQ, dataArgs...)
 	if err != nil {
 		return TransferenciasResponse{}, fmt.Errorf("query transferencias: %w", err)
 	}
@@ -147,7 +190,7 @@ func (d *Db) ObtenerTransferenciasPaginado(page, pageSize int, soloNoLeidas bool
 		if err := rows.Scan(
 			&t.UUID, &t.EmailID, &t.Fecha, &t.Monto, &t.Remitente,
 			&t.Referencia, &t.CuentaDestino, &t.Concepto, &t.RawSubject,
-			&t.Leido, &t.CreadoEn,
+			&t.Leido, &t.CreadoEn, &t.FacturaUUID, &t.FacturaNumero,
 		); err != nil {
 			return TransferenciasResponse{}, err
 		}
@@ -189,4 +232,80 @@ func (d *Db) ContarTransferenciasNoLeidas() int {
 		`SELECT COUNT(1) FROM transferencias_bancolombia WHERE leido = false`,
 	).Scan(&n)
 	return n
+}
+
+// EliminarTransferencias bulk-deletes transfer notifications by UUID slice.
+func (d *Db) EliminarTransferencias(uuids []string) error {
+	if len(uuids) == 0 {
+		return nil
+	}
+	// Build $1,$2,… placeholders
+	placeholders := make([]string, len(uuids))
+	args := make([]any, len(uuids))
+	for i, u := range uuids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = u
+	}
+	q := fmt.Sprintf(
+		`DELETE FROM transferencias_bancolombia WHERE uuid IN (%s)`,
+		strings.Join(placeholders, ","),
+	)
+	_, err := d.DB.Exec(q, args...)
+	return err
+}
+
+// VincularFactura links a sale invoice to a transfer notification.
+func (d *Db) VincularFactura(transferUUID, facturaUUID, facturaNumero string) error {
+	_, err := d.DB.Exec(
+		`UPDATE transferencias_bancolombia SET factura_uuid = $1, factura_numero = $2 WHERE uuid = $3`,
+		facturaUUID, facturaNumero, transferUUID,
+	)
+	return err
+}
+
+// DesvincularFactura removes the invoice link from a transfer notification.
+func (d *Db) DesvincularFactura(transferUUID string) error {
+	_, err := d.DB.Exec(
+		`UPDATE transferencias_bancolombia SET factura_uuid = NULL, factura_numero = '' WHERE uuid = $1`,
+		transferUUID,
+	)
+	return err
+}
+
+// BuscarFacturasVenta searches sale invoices by number or client name.
+func (d *Db) BuscarFacturasVenta(busqueda string, limit int) ([]FacturaVentaResumen, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	like := "%" + strings.ToLower(busqueda) + "%"
+	const q = `
+		SELECT f.uuid, f.numero_factura,
+		       COALESCE(c.nombre || ' ' || c.apellido, '') AS cliente_nombre,
+		       COALESCE(f.total, 0),
+		       COALESCE(f.fecha_emision, NOW())
+		FROM   facturas f
+		LEFT   JOIN clientes c ON f.cliente_id = c.id
+		WHERE  f.deleted_at IS NULL
+		  AND  (LOWER(f.numero_factura) LIKE $1 OR LOWER(COALESCE(c.nombre,'') || ' ' || COALESCE(c.apellido,'')) LIKE $1)
+		ORDER  BY f.fecha_emision DESC
+		LIMIT  $2`
+
+	rows, err := d.DB.Query(q, like, limit)
+	if err != nil {
+		return nil, fmt.Errorf("buscar facturas venta: %w", err)
+	}
+	defer rows.Close()
+
+	var result []FacturaVentaResumen
+	for rows.Next() {
+		var r FacturaVentaResumen
+		if err := rows.Scan(&r.UUID, &r.NumeroFactura, &r.ClienteNombre, &r.Total, &r.Fecha); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	if result == nil {
+		result = []FacturaVentaResumen{}
+	}
+	return result, nil
 }

@@ -99,6 +99,13 @@ const routes = [
         meta: { role: "admin" },
       },
       {
+        path: "configuracion/backups",
+        name: "DriveBackups",
+        component: () =>
+          import("@/views/Dashboard/Configuracion/DriveBackups.vue"),
+        meta: { role: "admin" },
+      },
+      {
         path: "compras/facturas",
         name: "FacturasElectronicas",
         component: () =>

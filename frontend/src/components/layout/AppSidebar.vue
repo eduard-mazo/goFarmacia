@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Mail,
   Landmark,
+  HardDrive,
 } from "lucide-vue-next";
 import NavMain from "@/components/layout/NavMain.vue";
 import NavUser from "@/components/layout/NavUser.vue";
@@ -97,8 +98,15 @@ const erpNav: NavItem[] = [
       { title: "Inventario", url: "/dashboard/reportes/inventario", icon: PackageSearch },
     ],
   },
-  { title: "Base de Datos", url: "/dashboard/basedatos", icon: DatabaseZap },
-  { title: "Configuración", url: "/dashboard/configuracion", icon: Settings },
+  {
+    title: "Sistema",
+    icon: Settings,
+    items: [
+      { title: "Configuración", url: "/dashboard/configuracion", icon: Settings },
+      { title: "Backups Drive", url: "/dashboard/configuracion/backups", icon: HardDrive },
+      { title: "Base de Datos", url: "/dashboard/basedatos", icon: DatabaseZap },
+    ],
+  },
 ];
 
 const currentNav = computed(() =>
@@ -116,22 +124,27 @@ const dbStatus = computed(() => {
   <Sidebar v-bind="props">
     <SidebarHeader class="border-b border-sidebar-border pb-0">
       <NavUser />
-      <!-- Mode switcher — flat pill buttons -->
-      <div v-if="modeStore.isAdmin" class="px-3 pb-3 pt-1 flex gap-1">
-        <button
-          v-for="mode in (['pos', 'erp'] as AppMode[])"
-          :key="mode"
-          @click="modeStore.setMode(mode)"
-          class="flex-1 h-7 rounded text-xs font-semibold tracking-wide transition-colors"
-          :class="modeStore.currentMode === mode
-            ? 'bg-primary text-primary-foreground'
-            : 'text-muted-foreground hover:text-foreground hover:bg-accent'"
-        >
-          {{ mode.toUpperCase() }}
-        </button>
+
+      <!-- Mode switcher -->
+      <div v-if="modeStore.isAdmin" class="px-2 pb-3 pt-1">
+        <div class="flex gap-1 p-1 rounded-lg bg-muted/60">
+          <button
+            v-for="mode in (['pos', 'erp'] as AppMode[])"
+            :key="mode"
+            @click="modeStore.setMode(mode)"
+            class="flex-1 h-7 rounded-md text-xs font-semibold tracking-wide transition-all duration-150"
+            :class="modeStore.currentMode === mode
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'"
+          >
+            {{ mode.toUpperCase() }}
+          </button>
+        </div>
       </div>
       <div v-else class="px-3 pb-3 pt-1">
-        <span class="text-xs font-semibold text-muted-foreground tracking-widest uppercase">POS</span>
+        <span class="text-[10px] font-bold text-muted-foreground tracking-widest uppercase">
+          Punto de Venta
+        </span>
       </div>
     </SidebarHeader>
 
@@ -140,9 +153,20 @@ const dbStatus = computed(() => {
     </SidebarContent>
 
     <SidebarFooter class="border-t border-sidebar-border">
-      <div class="px-3 py-2.5 flex items-center gap-2 text-xs">
-        <component :is="dbStatus.icon" class="h-3.5 w-3.5 shrink-0" :class="dbStatus.color" />
-        <span class="truncate text-muted-foreground">{{ dbStatus.label }}</span>
+      <div class="px-3 py-2.5 flex items-center gap-2.5 text-xs">
+        <div
+          class="flex items-center justify-center h-5 w-5 rounded-full shrink-0"
+          :class="{
+            'bg-emerald-500/10': dbStore.connected,
+            'bg-amber-500/10': dbStore.setupMode,
+            'bg-red-500/10': !dbStore.connected && !dbStore.setupMode,
+          }"
+        >
+          <component :is="dbStatus.icon" class="h-3 w-3 shrink-0" :class="dbStatus.color" />
+        </div>
+        <div class="min-w-0">
+          <span class="truncate text-muted-foreground font-medium">{{ dbStatus.label }}</span>
+        </div>
       </div>
     </SidebarFooter>
   </Sidebar>

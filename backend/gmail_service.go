@@ -199,7 +199,10 @@ func (g *GmailService) newGmailSvc() (*gmail.Service, error) {
 	if err := json.NewDecoder(f).Decode(tok); err != nil {
 		return nil, fmt.Errorf("token inválido: %w", err)
 	}
-	client := cfg.Client(context.Background(), tok)
+	// savingTokenSource (defined in bancolombia_service.go, same package) persists
+	// refreshed access tokens to disk so subsequent app restarts don't hit 401/invalid_grant.
+	src := &savingTokenSource{inner: cfg.TokenSource(context.Background(), tok), save: g.saveToken}
+	client := oauth2.NewClient(context.Background(), src)
 	return gmail.NewService(context.Background(), option.WithHTTPClient(client))
 }
 

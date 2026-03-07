@@ -144,6 +144,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -389,6 +390,30 @@ func (b *BancolombiaService) saveToken(tok *oauth2.Token) error {
 	return json.NewEncoder(f).Encode(tok)
 }
 
+// savingTokenSource wraps an oauth2.TokenSource and persists the token to disk
+// every time the access token changes (i.e. after an automatic refresh).
+// This prevents 401 errors after app restart when the stored access token has expired.
+type savingTokenSource struct {
+	mu    sync.Mutex
+	inner oauth2.TokenSource
+	last  string
+	save  func(*oauth2.Token) error
+}
+
+func (s *savingTokenSource) Token() (*oauth2.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, err := s.inner.Token()
+	if err != nil {
+		return nil, err
+	}
+	if tok.AccessToken != s.last {
+		s.last = tok.AccessToken
+		_ = s.save(tok)
+	}
+	return tok, nil
+}
+
 func (b *BancolombiaService) newGmailSvc() (*gmail.Service, error) {
 	cfg, err := b.loadOAuth2Config()
 	if err != nil {
@@ -403,7 +428,12 @@ func (b *BancolombiaService) newGmailSvc() (*gmail.Service, error) {
 	if err := json.NewDecoder(f).Decode(tok); err != nil {
 		return nil, fmt.Errorf("token inválido: %w", err)
 	}
-	client := cfg.Client(context.Background(), tok)
+	src := &savingTokenSource{
+		inner: cfg.TokenSource(context.Background(), tok),
+		last:  tok.AccessToken,
+		save:  b.saveToken,
+	}
+	client := oauth2.NewClient(context.Background(), src)
 	return gmail.NewService(context.Background(), option.WithHTTPClient(client))
 }
 
@@ -421,8 +451,9 @@ func (b *BancolombiaService) VerificarAhora() (BancolombiaCheckResult, error) {
 }
 
 // ObtenerTransferencias returns a paginated list of transfer notifications.
-func (b *BancolombiaService) ObtenerTransferencias(page, pageSize int, soloNoLeidas bool) (TransferenciasResponse, error) {
-	return b.db.ObtenerTransferenciasPaginado(page, pageSize, soloNoLeidas)
+// busqueda filters by remitente/referencia/concepto; estado: "" | "vinculada" | "sin_vincular".
+func (b *BancolombiaService) ObtenerTransferencias(page, pageSize int, soloNoLeidas bool, busqueda, estado string) (TransferenciasResponse, error) {
+	return b.db.ObtenerTransferenciasPaginado(page, pageSize, soloNoLeidas, busqueda, estado)
 }
 
 // MarcarLeida marks a transfer as read and refreshes the badge count.
@@ -446,6 +477,31 @@ func (b *BancolombiaService) EliminarTransferencia(transferUUID string) error {
 	}
 	b.emitBadge()
 	return nil
+}
+
+// EliminarTransferencias bulk-removes multiple transfer notifications.
+func (b *BancolombiaService) EliminarTransferencias(uuids []string) error {
+	if err := b.db.EliminarTransferencias(uuids); err != nil {
+		return err
+	}
+	b.emitBadge()
+	return nil
+}
+
+// VincularFactura links a sale invoice to a transfer notification.
+func (b *BancolombiaService) VincularFactura(transferUUID, facturaUUID, facturaNumero string) error {
+	return b.db.VincularFactura(transferUUID, facturaUUID, facturaNumero)
+}
+
+// DesvincularFactura removes the invoice link from a transfer notification.
+func (b *BancolombiaService) DesvincularFactura(transferUUID string) error {
+	return b.db.DesvincularFactura(transferUUID)
+}
+
+// BuscarFacturasVenta searches sale invoices by number or client name.
+// An empty busqueda returns the 50 most recent invoices.
+func (b *BancolombiaService) BuscarFacturasVenta(busqueda string) ([]FacturaVentaResumen, error) {
+	return b.db.BuscarFacturasVenta(busqueda, 50)
 }
 
 // BancolombiaAutoPollingState reports whether auto-polling is active.

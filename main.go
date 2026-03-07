@@ -19,6 +19,7 @@ func main() {
 	app := NewApp(db)
 	gmailSvc := backend.NewGmailService(db)
 	bancolombiasSvc := backend.NewBancolombiaService(db)
+	driveSvc := backend.NewDriveBackupService(db)
 
 	err := wails.Run(&options.App{
 		Title:            "goFarmacia",
@@ -31,9 +32,11 @@ func main() {
 			app.startup(ctx)
 			gmailSvc.Startup(ctx)
 			bancolombiasSvc.Startup(ctx)
+			driveSvc.Startup(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
 			bancolombiasSvc.Shutdown()
+			driveSvc.Shutdown()
 			app.shutdown(ctx)
 		},
 		Bind: []any{
@@ -41,6 +44,7 @@ func main() {
 			db,
 			gmailSvc,
 			bancolombiasSvc,
+			driveSvc,
 		},
 		Windows: &windows.Options{
 			Theme: windows.SystemDefault,
