@@ -511,15 +511,15 @@ watch(busqueda, () => {
 <template>
   <!-- Link invoice dialog -->
   <Dialog v-model:open="showLinkDialog">
-    <DialogContent class="max-w-lg">
-      <DialogHeader>
+    <DialogContent class="max-w-lg flex flex-col max-h-[85vh]">
+      <DialogHeader class="shrink-0">
         <DialogTitle class="flex items-center gap-2 text-sm">
           <Link class="h-4 w-4 text-emerald-600" />
           Vincular factura de venta
         </DialogTitle>
       </DialogHeader>
-      <div class="space-y-3">
-        <div class="relative">
+      <div class="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
+        <div class="relative shrink-0">
           <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             v-model="linkSearch"
@@ -529,9 +529,9 @@ watch(busqueda, () => {
           />
           <Loader2 v-if="linkSearching" class="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
         </div>
-        <div v-if="linkResults.length > 0" class="border rounded-lg overflow-hidden">
+        <div v-if="linkResults.length > 0" class="border rounded-lg overflow-hidden flex flex-col min-h-0">
           <table class="w-full text-xs">
-            <thead class="bg-muted border-b">
+            <thead class="bg-muted border-b sticky top-0">
               <tr>
                 <th class="h-7 px-3 text-left font-medium text-muted-foreground">N° Factura</th>
                 <th class="h-7 px-3 text-left font-medium text-muted-foreground">Cliente</th>
@@ -539,6 +539,9 @@ watch(busqueda, () => {
                 <th class="h-7 px-3 text-left font-medium text-muted-foreground">Fecha</th>
               </tr>
             </thead>
+          </table>
+          <div class="overflow-y-auto flex-1">
+          <table class="w-full text-xs">
             <tbody>
               <tr
                 v-for="f in linkResults"
@@ -553,8 +556,9 @@ watch(busqueda, () => {
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
-        <p v-else-if="!linkSearching" class="text-xs text-muted-foreground text-center py-4">
+        <p v-else-if="!linkSearching" class="text-xs text-muted-foreground text-center py-4 shrink-0">
           {{ linkSearch ? `Sin resultados para "${linkSearch}"` : "Sin facturas de venta registradas" }}
         </p>
       </div>

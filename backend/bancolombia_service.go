@@ -205,6 +205,7 @@ type BancolombiaService struct {
 	ticker      *time.Ticker
 	done        chan struct{}
 	autoPolling bool
+	syncMu      sync.Mutex // prevents concurrent sync runs that can deadlock the DB pool
 }
 
 // BancolombiaAuthStatus reports authentication state to the frontend.
@@ -433,8 +434,9 @@ func (b *BancolombiaService) newGmailSvc() (*gmail.Service, error) {
 		last:  tok.AccessToken,
 		save:  b.saveToken,
 	}
-	client := oauth2.NewClient(context.Background(), src)
-	return gmail.NewService(context.Background(), option.WithHTTPClient(client))
+	httpClient := oauth2.NewClient(context.Background(), src)
+	httpClient.Timeout = 90 * time.Second // prevent indefinite hangs that freeze the UI
+	return gmail.NewService(context.Background(), option.WithHTTPClient(httpClient))
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -561,6 +563,14 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		Ts:      time.Now().Format("15:04:05"),
 		Errores: []string{},
 	}
+
+	// Only one sync at a time — prevents DB pool exhaustion and UI freeze
+	// if the ticker fires while a manual sync is already running.
+	if !b.syncMu.TryLock() {
+		b.emitLog("warn", "Sincronización ya en progreso, omitiendo.")
+		return result, nil
+	}
+	defer b.syncMu.Unlock()
 
 	svc, err := b.newGmailSvc()
 	if err != nil {
