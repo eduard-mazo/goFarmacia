@@ -285,33 +285,31 @@ func (d *Db) BuscarFacturasVenta(busqueda string, limit int) ([]FacturaVentaResu
 		err  error
 	)
 	if busqueda == "" {
-		// No search term — return recent invoices with a cap
+		// No search term — return most recent invoices with a cap
 		if limit <= 0 {
 			limit = 50
 		}
 		const q = `
 			SELECT f.uuid, f.numero_factura,
-			       COALESCE(c.nombre || ' ' || c.apellido, '') AS cliente_nombre,
+			       COALESCE(c.nombre || ' ' || COALESCE(c.apellido,''), '') AS cliente_nombre,
 			       COALESCE(f.total, 0),
 			       COALESCE(f.fecha_emision, NOW())
 			FROM   facturas f
-			LEFT   JOIN clientes c ON f.cliente_id = c.id
-			WHERE  f.deleted_at IS NULL
+			LEFT   JOIN clientes c ON f.cliente_uuid = c.uuid
 			ORDER  BY f.fecha_emision DESC
 			LIMIT  $1`
 		rows, err = d.DB.Query(q, limit)
 	} else {
-		// Search term provided — scan all rows, no LIMIT
+		// Search term provided — scan full table, no LIMIT
 		const q = `
 			SELECT f.uuid, f.numero_factura,
-			       COALESCE(c.nombre || ' ' || c.apellido, '') AS cliente_nombre,
+			       COALESCE(c.nombre || ' ' || COALESCE(c.apellido,''), '') AS cliente_nombre,
 			       COALESCE(f.total, 0),
 			       COALESCE(f.fecha_emision, NOW())
 			FROM   facturas f
-			LEFT   JOIN clientes c ON f.cliente_id = c.id
-			WHERE  f.deleted_at IS NULL
-			  AND  (LOWER(f.numero_factura) LIKE $1
-			        OR LOWER(COALESCE(c.nombre,'') || ' ' || COALESCE(c.apellido,'')) LIKE $1)
+			LEFT   JOIN clientes c ON f.cliente_uuid = c.uuid
+			WHERE  LOWER(f.numero_factura) LIKE $1
+			    OR LOWER(COALESCE(c.nombre,'') || ' ' || COALESCE(c.apellido,'')) LIKE $1
 			ORDER  BY f.fecha_emision DESC`
 		rows, err = d.DB.Query(q, like)
 	}

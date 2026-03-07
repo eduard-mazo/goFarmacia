@@ -102,14 +102,10 @@ const columns: ColumnDef<backend.Factura>[] = [
   {
     accessorKey: "FechaEmision",
     header: ({ column }) =>
-      h(
-        Button,
-        {
-          variant: "ghost",
-          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-        },
-        () => ["Fecha", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
-      ),
+      h("button", {
+        class: "flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors select-none",
+        onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
+      }, ["Fecha", h(ArrowUpDown, { class: "h-3 w-3 opacity-50" })]),
     cell: ({ row }) => formatDate(row.getValue("FechaEmision")),
   },
   {
@@ -125,15 +121,10 @@ const columns: ColumnDef<backend.Factura>[] = [
   {
     accessorKey: "Total",
     header: ({ column }) =>
-      h(
-        Button,
-        {
-          variant: "ghost",
-          class: "w-full flex justify-end",
-          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-        },
-        () => ["Total", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
-      ),
+      h("button", {
+        class: "flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors select-none",
+        onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
+      }, ["Total", h(ArrowUpDown, { class: "h-3 w-3 opacity-50" })]),
     cell: ({ row }) =>
       h(
         "div",
