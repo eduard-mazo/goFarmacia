@@ -750,6 +750,10 @@ func (b *BancolombiaService) logUnrecognized(msgID, subject, body string) {
 // Returns nil if the text does not match either format.
 func parseBancolombiaTransfer(text, emailID, dateHeader string) *TransferenciaBancolombia {
 	text = strings.TrimSpace(text)
+	// Normalize whitespace: Bancolombia HTML emails often insert line breaks
+	// inside the transfer sentence (e.g. "por\nQR de NOMBRE"), which breaks
+	// regex matching. Collapse all runs of whitespace into a single space.
+	text = strings.Join(strings.Fields(text), " ")
 	lower := strings.ToLower(text)
 	if text == "" || (!strings.Contains(lower, "transferencia") && !strings.Contains(lower, "recibiste")) {
 		return nil
