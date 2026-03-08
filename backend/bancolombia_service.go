@@ -711,17 +711,29 @@ func (b *BancolombiaService) parsearMensaje(svc *gmail.Service, messageID string
 	body := bancolombiaExtractBody(msg.Payload)
 	t := parseBancolombiaTransfer(body, messageID, dateHeader)
 	if t == nil {
-		// Log unparsed messages so the user can diagnose unrecognized formats.
-		preview := subject
-		if preview == "" {
-			preview = body
-		}
-		if len(preview) > 120 {
-			preview = preview[:120] + "…"
-		}
-		b.emitLog("warn", fmt.Sprintf("Sin formato reconocido: %q", preview))
+		// Write full subject+body to gmail_debug.log for format analysis.
+		b.logUnrecognized(messageID, subject, body)
 	}
 	return t, nil
+}
+
+// logUnrecognized appends an unrecognized email to gmail_debug.log so that
+// new Bancolombia notification formats can be identified and added to the parser.
+func (b *BancolombiaService) logUnrecognized(msgID, subject, body string) {
+	path := filepath.Join(b.configDir, "gmail_debug.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	sep := strings.Repeat("─", 60)
+	bodyPreview := body
+	if len(bodyPreview) > 800 {
+		bodyPreview = bodyPreview[:800] + "\n[truncado]"
+	}
+	fmt.Fprintf(f, "\n%s\nTS:      %s\nMSG_ID:  %s\nSUBJECT: %s\nBODY:\n%s\n",
+		sep, time.Now().Format("2006-01-02 15:04:05"), msgID, subject, bodyPreview)
+	b.emitLog("warn", fmt.Sprintf("Sin formato reconocido (ver gmail_debug.log): subject=%q", subject))
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
