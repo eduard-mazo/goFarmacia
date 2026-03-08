@@ -165,9 +165,10 @@ const (
 // ── Pre-compiled regexes ──────────────────────────────────────────────────────
 
 var (
-	// Date/time: "el 07/05/2025 a las 13:59" or "el 27/05/25 a las 13:05"
+	// Date/time: "el 07/05/2025 a las 13:59", "el 27/05/25 a las 13:05",
+	// or "el 2026/03/08 a las 14:28" (YYYY/MM/DD used in QR notifications)
 	reBancoFechaHora = regexp.MustCompile(
-		`(?i)el (\d{2}/\d{2}/\d{2,4}) a las (\d{2}:\d{2})`,
+		`(?i)el (\d{2,4}/\d{2}/\d{2,4}) a las (\d{2}:\d{2})`,
 	)
 
 	// Format A: "transferencia por $65,000 de NOMBRE en tu"
@@ -181,6 +182,13 @@ var (
 	// Captures: [1]=remitente  [2]=monto
 	reBancoFormatoB = regexp.MustCompile(
 		`(?i)transferencia de ([\p{L}][\p{L} ]+?) por \$([\d,]+(?:\.[\d]{1,2})?)`,
+	)
+
+	// Format C: "Recibiste $6,700.00 por QR de NOMBRE en tu cuenta"
+	// Used for QR payments and some push notifications.
+	// Captures: [1]=monto  [2]=remitente
+	reBancoFormatoC = regexp.MustCompile(
+		`(?i)Recibiste \$([\d,]+(?:\.[\d]{1,2})?) por (?:qr|c[oó]digo qr) de ([\p{L}][\p{L} ]+?) en tu`,
 	)
 
 	// Account: "cuenta **8368", "cuenta *8368", "producto *8368"
@@ -713,7 +721,8 @@ func (b *BancolombiaService) parsearMensaje(svc *gmail.Service, messageID string
 // Returns nil if the text does not match either format.
 func parseBancolombiaTransfer(text, emailID, dateHeader string) *TransferenciaBancolombia {
 	text = strings.TrimSpace(text)
-	if text == "" || !strings.Contains(strings.ToLower(text), "transferencia") {
+	lower := strings.ToLower(text)
+	if text == "" || (!strings.Contains(lower, "transferencia") && !strings.Contains(lower, "recibiste")) {
 		return nil
 	}
 
@@ -731,6 +740,14 @@ func parseBancolombiaTransfer(text, emailID, dateHeader string) *TransferenciaBa
 		if m := reBancoFormatoB.FindStringSubmatch(text); len(m) == 3 {
 			remitente = strings.TrimSpace(m[1])
 			monto = parseBancolombiaAmount(m[2])
+		}
+	}
+
+	// ── Format C: "Recibiste $MONTO por QR de NOMBRE en tu cuenta"
+	if remitente == "" || monto <= 0 {
+		if m := reBancoFormatoC.FindStringSubmatch(text); len(m) == 3 {
+			monto = parseBancolombiaAmount(m[1])
+			remitente = strings.TrimSpace(m[2])
 		}
 	}
 
@@ -794,7 +811,7 @@ func parseBancolombiaAmount(s string) float64 {
 // parseBancolombiaDate parses the date extracted from a notification text.
 // Accepts DD/MM/YYYY and DD/MM/YY formats. Falls back to email Date header.
 func parseBancolombiaDate(dateTimeStr, dateHeader string) time.Time {
-	for _, f := range []string{"02/01/2006 15:04", "02/01/06 15:04"} {
+	for _, f := range []string{"02/01/2006 15:04", "02/01/06 15:04", "2006/01/02 15:04"} {
 		if t, err := time.ParseInLocation(f, dateTimeStr, time.Local); err == nil {
 			return t
 		}
@@ -876,9 +893,10 @@ func bancolombiaExtractSentence(text string) string {
 	for _, sep := range []string{"\n", ". "} {
 		for _, line := range strings.Split(text, sep) {
 			line = strings.TrimSpace(line)
-			if strings.Contains(strings.ToLower(line), "transferencia") {
+			ll := strings.ToLower(line)
+			if strings.Contains(ll, "transferencia") || strings.Contains(ll, "recibiste") {
 				// Skip lines that are just HTML artifacts (contain URLs or start with "Logo")
-				if strings.Contains(line, "http") || strings.HasPrefix(strings.ToLower(line), "logo") {
+				if strings.Contains(line, "http") || strings.HasPrefix(ll, "logo") {
 					continue
 				}
 				// Trim "Bancolombia: " prefix if present

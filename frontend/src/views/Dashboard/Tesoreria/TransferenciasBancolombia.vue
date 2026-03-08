@@ -91,6 +91,7 @@ const autoPolling = ref(true);
 
 const syncLog = ref<LogEntry[]>([]);
 const logRef = ref<HTMLElement | null>(null);
+const showConsole = ref(false);
 
 // Detail dialog
 const selectedItem = ref<Transferencia | null>(null);
@@ -235,6 +236,7 @@ async function iniciarSync() {
   syncPopoverOpen.value = false;
   syncing.value = true;
   syncLog.value = [];
+  showConsole.value = true;
   try {
     const res = await SincronizarConPeriodo({
       modo:  syncModo.value,
@@ -475,8 +477,11 @@ onMounted(async () => {
     });
   });
 
-  EventsOn("bancolombia:sync:result", (res: CheckResult) => {
+  EventsOn("bancolombia:sync:result", async (res: CheckResult) => {
     lastCheck.value = res;
+    if (res.nuevas > 0) {
+      await fetchTransferencias();
+    }
   });
 
   EventsOn("bancolombia:sync:log", (entry: LogEntry) => {
@@ -831,7 +836,7 @@ watch(busqueda, () => {
     </div>
 
     <!-- Sync log -->
-    <div v-if="syncing || syncLog.length > 0" class="shrink-0 border-b bg-slate-950 text-slate-200">
+    <div v-if="showConsole" class="shrink-0 border-b bg-slate-950 text-slate-200">
       <div class="flex items-center gap-4 px-3 py-1.5 border-b border-slate-800 text-xs">
         <Loader2 v-if="syncing" class="h-3 w-3 animate-spin text-blue-400 shrink-0" />
         <CheckCircle2 v-else class="h-3 w-3 text-green-400 shrink-0" />
@@ -841,7 +846,7 @@ watch(busqueda, () => {
           <span class="font-mono text-green-400">✓ {{ lastCheck.nuevas }} nuevas</span>
         </template>
         <button v-if="!syncing" class="ml-auto text-slate-500 hover:text-slate-300 text-[10px]"
-          @click="syncLog = []">Cerrar</button>
+          @click="showConsole = false; syncLog = []">Cerrar</button>
       </div>
       <div ref="logRef" class="overflow-y-auto max-h-36 px-3 py-1.5 font-mono text-[10px] leading-5 space-y-px">
         <div v-for="(entry, i) in syncLog" :key="i" class="flex gap-2">
