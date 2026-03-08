@@ -585,11 +585,10 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		return result, err
 	}
 
-	// Bancolombia uses two sender domains:
-	//   alertasynotificaciones@notificacionesbancolombia.com  — transfers/llave
+	// Gmail substring matches the domain, so one query covers both:
+	//   alertasynotificaciones@notificacionesbancolombia.com
 	//   alertasynotificaciones@an.notificacionesbancolombia.com
-	//   *@bancolombia.com.co                                  — QR payments, push
-	query := `{from:notificacionesbancolombia.com from:bancolombia.com.co}`
+	query := `from:notificacionesbancolombia.com`
 	maxResults := int64(bancolombiaCheckCount)
 
 	// Use Colombia timezone (UTC-5) for all date calculations.
@@ -710,7 +709,19 @@ func (b *BancolombiaService) parsearMensaje(svc *gmail.Service, messageID string
 
 	// Fall back to body text.
 	body := bancolombiaExtractBody(msg.Payload)
-	return parseBancolombiaTransfer(body, messageID, dateHeader), nil
+	t := parseBancolombiaTransfer(body, messageID, dateHeader)
+	if t == nil {
+		// Log unparsed messages so the user can diagnose unrecognized formats.
+		preview := subject
+		if preview == "" {
+			preview = body
+		}
+		if len(preview) > 120 {
+			preview = preview[:120] + "…"
+		}
+		b.emitLog("warn", fmt.Sprintf("Sin formato reconocido: %q", preview))
+	}
+	return t, nil
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
