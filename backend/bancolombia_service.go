@@ -585,11 +585,11 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		return result, err
 	}
 
-	// Both Bancolombia notification domains share the same subdomain suffix.
-	// Gmail substring matches the domain, so one query covers both:
-	//   alertasynotificaciones@notificacionesbancolombia.com
+	// Bancolombia uses two sender domains:
+	//   alertasynotificaciones@notificacionesbancolombia.com  — transfers/llave
 	//   alertasynotificaciones@an.notificacionesbancolombia.com
-	query := `from:notificacionesbancolombia.com`
+	//   *@bancolombia.com.co                                  — QR payments, push
+	query := `{from:notificacionesbancolombia.com from:bancolombia.com.co}`
 	maxResults := int64(bancolombiaCheckCount)
 
 	// Use Colombia timezone (UTC-5) for all date calculations.

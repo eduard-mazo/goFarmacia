@@ -26,7 +26,7 @@ import {
   Landmark, RefreshCw, ShieldCheck, ShieldOff, Loader2,
   CheckCircle2, AlertCircle, ArrowDownLeft, Eye, Mail,
   ChevronDown, CalendarDays, Trash2, FolderOpen, Zap, Key,
-  Search, Link, Unlink, ArrowUpDown, ArrowUp, ArrowDown,
+  Search, Link, Unlink, ArrowUpDown, ArrowUp, ArrowDown, Terminal,
 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
 import { EventsOn, EventsOff, BrowserOpenURL } from "@/../wailsjs/runtime";
@@ -236,7 +236,6 @@ async function iniciarSync() {
   syncPopoverOpen.value = false;
   syncing.value = true;
   syncLog.value = [];
-  showConsole.value = true;
   try {
     const res = await SincronizarConPeriodo({
       modo:  syncModo.value,
@@ -729,6 +728,10 @@ watch(busqueda, () => {
         <Button v-else variant="ghost" size="sm" class="h-7 text-xs gap-1" @click="desconectarGmail">
           <ShieldOff class="h-3.5 w-3.5" />
           Desconectar
+        </Button>
+
+        <Button v-if="auth.authenticated" variant="ghost" size="sm" class="h-7 w-7 p-0" :class="showConsole ? 'text-primary' : ''" @click="showConsole = !showConsole" title="Consola de sincronización">
+          <Terminal class="h-3.5 w-3.5" />
         </Button>
 
         <Popover v-if="auth.authenticated" v-model:open="syncPopoverOpen">
