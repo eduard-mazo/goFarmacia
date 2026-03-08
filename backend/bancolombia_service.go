@@ -717,23 +717,29 @@ func (b *BancolombiaService) parsearMensaje(svc *gmail.Service, messageID string
 	return t, nil
 }
 
-// logUnrecognized appends an unrecognized email to gmail_debug.log so that
-// new Bancolombia notification formats can be identified and added to the parser.
+// logUnrecognized emits the body preview to the console and writes the full
+// content to gmail_debug.log for format analysis.
 func (b *BancolombiaService) logUnrecognized(msgID, subject, body string) {
-	path := filepath.Join(b.configDir, "gmail_debug.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
+	// Emit body preview to console (first 200 chars).
+	bodyPreview := strings.TrimSpace(body)
+	if len(bodyPreview) > 200 {
+		bodyPreview = bodyPreview[:200] + "…"
 	}
-	defer f.Close()
-	sep := strings.Repeat("─", 60)
-	bodyPreview := body
-	if len(bodyPreview) > 800 {
-		bodyPreview = bodyPreview[:800] + "\n[truncado]"
+	b.emitLog("warn", fmt.Sprintf("Sin formato: subject=%q body=%q", subject, bodyPreview))
+
+	// Also write full body to file next to the executable (build/bin/logs/).
+	path := filepath.Join(baseDir(), "logs", "gmail_debug.log")
+	if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+		defer f.Close()
+		full := body
+		if len(full) > 1000 {
+			full = full[:1000] + "\n[truncado]"
+		}
+		fmt.Fprintf(f, "\n%s\nTS: %s  MSG: %s\nSUBJECT: %s\nBODY:\n%s\n",
+			strings.Repeat("─", 60), time.Now().Format("2006-01-02 15:04:05"), msgID, subject, full)
+	} else {
+		b.emitLog("warn", fmt.Sprintf("No se pudo crear gmail_debug.log: %v", err))
 	}
-	fmt.Fprintf(f, "\n%s\nTS:      %s\nMSG_ID:  %s\nSUBJECT: %s\nBODY:\n%s\n",
-		sep, time.Now().Format("2006-01-02 15:04:05"), msgID, subject, bodyPreview)
-	b.emitLog("warn", fmt.Sprintf("Sin formato reconocido (ver gmail_debug.log): subject=%q", subject))
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
