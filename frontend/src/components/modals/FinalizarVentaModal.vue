@@ -50,10 +50,11 @@ const canConfirm = computed(() => {
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     metodoPago.value = "efectivo";
-    efectivoRecibido.value = undefined;
+    efectivoRecibido.value = props.total;
     nextTick(() => {
       setTimeout(() => {
         inputEfectivoRef.value?.focus();
+        inputEfectivoRef.value?.select();
       }, 100);
     });
   }

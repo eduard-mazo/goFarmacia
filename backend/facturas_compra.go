@@ -113,8 +113,17 @@ func (d *Db) GuardarFacturaCompra(f FacturaCompra) error {
 	return tx.Commit()
 }
 
+// validFacturaCompraSort maps frontend column IDs to safe SQL column names.
+var validFacturaCompraSort = map[string]string{
+	"NumeroFactura":   "numero_factura",
+	"FechaEmision":    "fecha_emision",
+	"ProveedorNombre": "proveedor_nombre",
+	"Total":           "total",
+	"Estado":          "estado",
+}
+
 // ObtenerFacturasCompraPaginado returns a paginated list of purchase invoices.
-func (d *Db) ObtenerFacturasCompraPaginado(page, pageSize int, busqueda string) (FacturasCompraResponse, error) {
+func (d *Db) ObtenerFacturasCompraPaginado(page, pageSize int, busqueda, sortField, sortDir string) (FacturasCompraResponse, error) {
 	ctx := context.Background()
 	offset := (page - 1) * pageSize
 
@@ -132,6 +141,17 @@ func (d *Db) ObtenerFacturasCompraPaginado(page, pageSize int, busqueda string) 
 		argIdx += 3
 	}
 
+	// Build ORDER BY — validate to prevent SQL injection
+	col, ok := validFacturaCompraSort[sortField]
+	if !ok {
+		col = "fecha_emision"
+	}
+	dir := "DESC"
+	if strings.ToLower(sortDir) == "asc" {
+		dir = "ASC"
+	}
+	orderClause := fmt.Sprintf("ORDER BY %s %s", col, dir)
+
 	var total int
 	if err := d.QueryRow(ctx, "SELECT COUNT(*) FROM facturas_compra "+whereClause, args...).Scan(&total); err != nil {
 		return FacturasCompraResponse{}, err
@@ -145,8 +165,8 @@ func (d *Db) ObtenerFacturasCompraPaginado(page, pageSize int, busqueda string) 
 		       COALESCE(tipo_documento,'01'), COALESCE(referencia_documento,''),
 		       COALESCE(email_message_id,'')
 		FROM facturas_compra %s
-		ORDER BY fecha_emision DESC
-		LIMIT $%d OFFSET $%d`, whereClause, argIdx, argIdx+1)
+		%s
+		LIMIT $%d OFFSET $%d`, whereClause, orderClause, argIdx, argIdx+1)
 
 	rows, err := d.Query(ctx, query, args...)
 	if err != nil {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/vue-table";
-import { FlexRender, getCoreRowModel, getSortedRowModel, useVueTable } from "@tanstack/vue-table";
+import { FlexRender, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
 import { h, ref, onMounted, onUnmounted, watch, computed, nextTick } from "vue";
 import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import {
 import {
   Mail, RefreshCw, ShieldCheck, ShieldOff, Eye,
   Search, Loader2, CheckCircle2, AlertCircle, FolderOpen,
-  CalendarDays, ChevronDown, FileSearch, ArrowUpDown, ArrowUp, ArrowDown,
+  CalendarDays, ChevronDown, FileSearch, ArrowUpDown, ArrowUp, ArrowDown, Terminal,
 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
 import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
@@ -73,6 +73,9 @@ const totalFacturas = ref(0);
 const busqueda = ref("");
 const pagination = ref<PaginationState>({ pageIndex: 0, pageSize: 10 });
 const sorting = ref<SortingState>([]);
+
+// Console
+const showConsole = ref(false);
 
 // Detail dialog
 const isDetailOpen = ref(false);
@@ -170,7 +173,10 @@ const enriquecerDesdesPDF = async () => {
 
 const cargarFacturas = async () => {
   try {
-    const resp = await ObtenerFacturasCompra(pagination.value.pageIndex + 1, pagination.value.pageSize, busqueda.value);
+    const s = sorting.value[0];
+    const sortField = s?.id ?? "";
+    const sortDir = s?.desc === false ? "asc" : "desc";
+    const resp = await ObtenerFacturasCompra(pagination.value.pageIndex + 1, pagination.value.pageSize, busqueda.value, sortField, sortDir);
     listaFacturas.value = resp.Records ?? [];
     totalFacturas.value = resp.TotalRecords ?? 0;
   } catch (e) {
@@ -306,15 +312,15 @@ const table = useVueTable({
   get data() { return listaFacturas.value; },
   columns,
   manualPagination: true,
+  manualSorting: true,
   getCoreRowModel: getCoreRowModel(),
-  getSortedRowModel: getSortedRowModel(),
   get pageCount() { return Math.ceil(totalFacturas.value / pagination.value.pageSize); },
   state: {
     get pagination() { return pagination.value; },
     get sorting() { return sorting.value; },
   },
   onPaginationChange: (u) => valueUpdater(u, pagination),
-  onSortingChange: (u) => valueUpdater(u, sorting),
+  onSortingChange: (u) => { valueUpdater(u, sorting); pagination.value.pageIndex = 0; },
   enableMultiSort: false,
 });
 
@@ -345,6 +351,7 @@ onUnmounted(() => {
 });
 
 watch(pagination, cargarFacturas, { deep: true });
+watch(sorting, cargarFacturas, { deep: true });
 let debounce: number;
 watch(busqueda, () => {
   clearTimeout(debounce);
@@ -561,6 +568,19 @@ watch(busqueda, () => {
           <FileSearch v-else class="h-3.5 w-3.5" />
           {{ enriqueciendo ? "Enriqueciendo…" : "Enriquecer PDF" }}
         </Button>
+
+        <!-- Terminal / console toggle -->
+        <Button
+          v-if="auth.authenticated"
+          size="sm"
+          variant="outline"
+          class="h-7 text-xs gap-1.5"
+          :class="showConsole ? 'border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800' : ''"
+          @click="showConsole = !showConsole"
+        >
+          <Terminal class="h-3.5 w-3.5" />
+          Consola
+        </Button>
       </div>
     </div>
 
@@ -579,7 +599,7 @@ watch(busqueda, () => {
     </div>
 
     <!-- Real-time sync log -->
-    <div v-if="syncing || enriqueciendo || syncLog.length > 0"
+    <div v-if="showConsole"
       class="shrink-0 border-b bg-slate-950 text-slate-200">
       <!-- Progress bar + counters -->
       <div class="flex items-center gap-4 px-3 py-1.5 border-b border-slate-800 text-xs">

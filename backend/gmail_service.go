@@ -545,8 +545,8 @@ func extractCUFE(xmlData []byte) string {
 }
 
 // ObtenerFacturasCompra returns a paginated list of purchase invoices for the frontend.
-func (g *GmailService) ObtenerFacturasCompra(page, pageSize int, busqueda string) (FacturasCompraResponse, error) {
-	return g.db.ObtenerFacturasCompraPaginado(page, pageSize, busqueda)
+func (g *GmailService) ObtenerFacturasCompra(page, pageSize int, busqueda, sortField, sortDir string) (FacturasCompraResponse, error) {
+	return g.db.ObtenerFacturasCompraPaginado(page, pageSize, busqueda, sortField, sortDir)
 }
 
 // ObtenerDetalleFacturaCompra returns one purchase invoice with all line items.

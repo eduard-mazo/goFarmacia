@@ -53,31 +53,24 @@ const formatDate = (dateString: string) => {
       </p>
     </div>
     <div class="border-t border-dashed border-black my-2"></div>
-    <table class="w-full text-sm">
+    <table class="w-full text-sm table-fixed">
+      <colgroup>
+        <col style="width: 14%" />
+        <col style="width: 52%" />
+        <col style="width: 34%" />
+      </colgroup>
       <thead>
         <tr>
-          <th
-            class="text-left font-bold border-b-2 border-dashed border-black pb-1"
-          >
-            Cant
-          </th>
-          <th
-            class="text-left font-bold border-b-2 border-dashed border-black pb-1"
-          >
-            Producto
-          </th>
-          <th
-            class="text-right font-bold border-b-2 border-dashed border-black pb-1"
-          >
-            Total
-          </th>
+          <th class="text-left font-bold border-b-2 border-dashed border-black pb-1">Cant</th>
+          <th class="text-left font-bold border-b-2 border-dashed border-black pb-1">Producto</th>
+          <th class="text-right font-bold border-b-2 border-dashed border-black pb-1">Total</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="item in factura.Detalles" :key="item.UUID">
           <td class="py-1 align-top">{{ item.Cantidad }}</td>
-          <td class="py-1">{{ item.Producto.Nombre }}</td>
-          <td class="text-right py-1 align-top">
+          <td class="py-1 break-words">{{ item.Producto.Nombre }}</td>
+          <td class="text-right py-1 align-top whitespace-nowrap">
             {{ formatCurrency(item.PrecioTotal) }}
           </td>
         </tr>

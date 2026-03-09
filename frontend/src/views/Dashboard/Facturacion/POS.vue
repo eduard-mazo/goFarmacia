@@ -64,6 +64,7 @@ const clienteSeleccionado = ref("Cliente General");
 const clienteUUID = ref<string>("");
 const debounceTimer = ref<number | undefined>(undefined);
 const isLoading = ref(false);
+const pendingAutoAdd = ref(false);
 const isCreateModalOpen = ref(false);
 const isClienteModalOpen = ref(false);
 const isFinalizarModalOpen = ref(false);
@@ -80,6 +81,7 @@ watch(busqueda, (nuevoValor) => {
   const trimmedValue = nuevoValor.trim();
   if (trimmedValue.length < 1) {
     productosEncontrados.value = [];
+    pendingAutoAdd.value = false;
     return;
   }
   isLoading.value = true;
@@ -87,14 +89,19 @@ watch(busqueda, (nuevoValor) => {
     try {
       const response: ObtenerProductosPaginadoResponse =
         await ObtenerProductosPaginado(1, 10, trimmedValue, "", "asc");
-      // Always show the dropdown — never silently auto-add from the watcher.
-      // Auto-add only happens on Enter (manejarBusquedaConEnter), which is the
-      // correct place for barcode-scanner behaviour.
       productosEncontrados.value = response.Records || [];
       if (productosEncontrados.value.length > 0) {
         highlightedIndex.value = 0;
       }
+      // Barcode auto-add: if Enter was pressed while loading and result is unique
+      if (pendingAutoAdd.value && productosEncontrados.value.length === 1) {
+        pendingAutoAdd.value = false;
+        agregarAlCarrito(productosEncontrados.value[0]!);
+        return;
+      }
+      pendingAutoAdd.value = false;
     } catch (error) {
+      pendingAutoAdd.value = false;
       toast.error("Error de búsqueda", {
         description: "No se pudieron obtener los productos.",
       });
@@ -126,6 +133,9 @@ function manejarBusquedaConEnter() {
     agregarAlCarrito(productosEncontrados.value[highlightedIndex.value]!);
   } else if (productosEncontrados.value.length === 1) {
     agregarAlCarrito(productosEncontrados.value[0]!);
+  } else if (isLoading.value) {
+    // Barcode scan: Enter came before the debounce resolved — flag for auto-add
+    pendingAutoAdd.value = true;
   }
 }
 

@@ -254,12 +254,17 @@ func (b *BancolombiaService) Startup(ctx context.Context) {
 	b.ctx = ctx
 	_ = os.MkdirAll(b.configDir, 0o700)
 
+	// Restore persisted auto-polling preference (default true if not set)
+	if val, err := b.db.GetSetting("bancolombia.autoPolling"); err == nil && val == "false" {
+		b.autoPolling = false
+	}
+
 	go func() {
 		time.Sleep(2 * time.Second)
 		b.emitBadge()
 	}()
 
-	if b.EstadoAuth().Authenticated {
+	if b.autoPolling && b.EstadoAuth().Authenticated {
 		b.startTicker()
 	}
 }
@@ -524,9 +529,14 @@ func (b *BancolombiaService) GetAutoPolling() BancolombiaAutoPollingState {
 	return BancolombiaAutoPollingState{Enabled: b.autoPolling}
 }
 
-// SetAutoPolling enables or disables the background polling ticker.
+// SetAutoPolling enables or disables the background polling ticker and persists the setting.
 func (b *BancolombiaService) SetAutoPolling(enabled bool) {
 	b.autoPolling = enabled
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	_ = b.db.SetSetting("bancolombia.autoPolling", val)
 	if !enabled && b.ticker != nil {
 		b.ticker.Stop()
 		b.ticker = nil
