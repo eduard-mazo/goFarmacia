@@ -42,7 +42,7 @@ package backend
 // CONSULTA GMAIL
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-//   Filtro base: from:notificacionesbancolombia.com
+//   Filtro base: {from:bancolombia.com.co from:notificacionesbancolombia.com}
 //   Cubre ambos dominios de Bancolombia:
 //     • alertasynotificaciones@notificacionesbancolombia.com
 //     • alertasynotificaciones@an.notificacionesbancolombia.com
@@ -595,10 +595,11 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		return result, err
 	}
 
-	// Gmail substring matches the domain, so one query covers both:
-	//   alertasynotificaciones@notificacionesbancolombia.com
+	// Gmail OR query covers all known Bancolombia notification senders:
+	//   alertasynotificaciones@bancolombia.com.co
 	//   alertasynotificaciones@an.notificacionesbancolombia.com
-	query := `from:notificacionesbancolombia.com`
+	//   alertasynotificaciones@notificacionesbancolombia.com
+	query := `{from:bancolombia.com.co from:notificacionesbancolombia.com}`
 	maxResults := int64(bancolombiaCheckCount)
 
 	// Use Colombia timezone (UTC-5) for all date calculations.
