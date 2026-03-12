@@ -106,6 +106,37 @@ func (d *Db) ExisteTransferencia(emailID string) bool {
 	return n > 0
 }
 
+// ExistingEmailIDsSet returns a set of all email_ids from the given list that already
+// exist in the DB. Replaces N individual ExisteTransferencia calls with one batch query.
+func (d *Db) ExistingEmailIDsSet(emailIDs []string) map[string]bool {
+	result := make(map[string]bool, len(emailIDs))
+	if len(emailIDs) == 0 {
+		return result
+	}
+	placeholders := make([]string, len(emailIDs))
+	args := make([]any, len(emailIDs))
+	for i, id := range emailIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	rows, err := d.DB.Query(
+		fmt.Sprintf(`SELECT email_id FROM transferencias_bancolombia WHERE email_id IN (%s)`,
+			strings.Join(placeholders, ",")),
+		args...,
+	)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			result[id] = true
+		}
+	}
+	return result
+}
+
 // MarcarLeida marks a transfer as read by UUID.
 func (d *Db) MarcarTransferenciaLeida(uuid string) error {
 	_, err := d.DB.Exec(

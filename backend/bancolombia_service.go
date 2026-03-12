@@ -240,6 +240,18 @@ type BancolombiaLogEntry struct {
 	Ts      string `json:"ts"`
 }
 
+// BancolombiaProgressEvent is emitted every bancolombiaProgressEvery messages
+// to update the frontend progress indicator without flooding the GTK main loop.
+type BancolombiaProgressEvent struct {
+	Revisados int `json:"revisados"`
+	Total     int `json:"total"`
+	Nuevas    int `json:"nuevas"`
+}
+
+// bancolombiaProgressEvery controls how often progress events are emitted.
+// 10 events per 100 messages = at most ~50 events for a full 500-message sync.
+const bancolombiaProgressEvery = 10
+
 // NewBancolombiaService creates the service. Shares configDir with GmailService.
 func NewBancolombiaService(db *Db) *BancolombiaService {
 	home, _ := os.UserHomeDir()
@@ -488,20 +500,12 @@ func (b *BancolombiaService) ContarNoLeidas() int {
 
 // EliminarTransferencia removes a transfer notification by UUID.
 func (b *BancolombiaService) EliminarTransferencia(transferUUID string) error {
-	if err := b.db.EliminarTransferencia(transferUUID); err != nil {
-		return err
-	}
-	b.emitBadge()
-	return nil
+	return b.db.EliminarTransferencia(transferUUID)
 }
 
 // EliminarTransferencias bulk-removes multiple transfer notifications.
 func (b *BancolombiaService) EliminarTransferencias(uuids []string) error {
-	if err := b.db.EliminarTransferencias(uuids); err != nil {
-		return err
-	}
-	b.emitBadge()
-	return nil
+	return b.db.EliminarTransferencias(uuids)
 }
 
 // VincularFactura links a sale invoice to a transfer notification.
@@ -555,11 +559,13 @@ type BancolombiaOpcionesPeriodo struct {
 
 // SincronizarConPeriodo starts an immediate sync in a background goroutine and
 // returns right away so the Wails call doesn't block the UI thread.
-// ONE event is emitted at the end: "bancolombia:sync:result" carrying the full result + log.
-// No intermediate EventsEmit calls happen during the sync.
+// Manual syncs (user-triggered) emit progress events every N messages so the
+// console shows live feedback. The auto-polling ticker calls sincronizarRecientes
+// which passes emitProgress=false to stay completely silent — avoids GTK blocking
+// when the ticker fires while the user is interacting (e.g., deleting rows).
 func (b *BancolombiaService) SincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) {
 	go func() {
-		result, err := b.sincronizarConPeriodo(opts)
+		result, err := b.sincronizarConPeriodo(opts, true) // manual: emit progress
 		if err != nil {
 			result.Errores = append(result.Errores, err.Error())
 		}
@@ -578,7 +584,9 @@ func (b *BancolombiaService) MarcarTodasLeidas() error {
 // ── Core sync logic ───────────────────────────────────────────────────────────
 
 func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, error) {
-	return b.sincronizarConPeriodo(BancolombiaOpcionesPeriodo{Modo: "semana"})
+	// emitProgress=false: ticker runs completely silent to avoid GTK blocking
+	// when it fires while the user is actively interacting with the UI.
+	return b.sincronizarConPeriodo(BancolombiaOpcionesPeriodo{Modo: "semana"}, false)
 }
 
 // appendLog adds an entry to the result log in-memory (no EventsEmit).
@@ -591,7 +599,7 @@ func appendLog(result *BancolombiaCheckResult, nivel, msg string) {
 	})
 }
 
-func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) (BancolombiaCheckResult, error) {
+func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPeriodo, emitProgress bool) (BancolombiaCheckResult, error) {
 	result := BancolombiaCheckResult{
 		Ts:      time.Now().Format("15:04:05"),
 		Errores: []string{},
@@ -675,11 +683,34 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		pageToken = resp.NextPageToken
 	}
 
-	appendLog(&result, "info", fmt.Sprintf("Revisando %d mensajes del período…", len(allMessages)))
+	total := len(allMessages)
+	appendLog(&result, "info", fmt.Sprintf("Revisando %d mensajes del período…", total))
 
-	for _, m := range allMessages {
+	// Pre-build the set of already-stored email IDs in ONE batch query instead of
+	// querying the DB individually for each message. This is critical when the ticker
+	// fires during user delete operations: N=100 individual SELECTs → 1 IN query.
+	msgIDs := make([]string, len(allMessages))
+	for i, m := range allMessages {
+		msgIDs[i] = m.Id
+	}
+	existingIDs := b.db.ExistingEmailIDsSet(msgIDs)
+
+	for i, m := range allMessages {
 		result.Revisados++
-		if b.db.ExisteTransferencia(m.Id) {
+
+		// Progress events only for manual syncs (emitProgress=true).
+		// The background ticker passes false so it stays completely silent —
+		// goroutine-side EventsEmit calls during active user interaction cause
+		// GTK g_idle_add() congestion and the "Force Quit or Wait" dialog.
+		if emitProgress && i > 0 && i%bancolombiaProgressEvery == 0 {
+			wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:progress", BancolombiaProgressEvent{
+				Revisados: result.Revisados,
+				Total:     total,
+				Nuevas:    result.Nuevas,
+			})
+		}
+
+		if existingIDs[m.Id] {
 			continue
 		}
 		t, err := b.parsearMensaje(svc, m.Id)
@@ -694,7 +725,9 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		}
 		if isNew {
 			result.Nuevas++
-			appendLog(&result, "ok", fmt.Sprintf("✓ %s — $%.0f", t.Remitente, t.Monto))
+			// Log includes the email ID and raw notification text (helps identify QR/yyyy-mm-dd emails).
+			appendLog(&result, "ok", fmt.Sprintf("✓ %s — $%.0f | %s | msgId:%s",
+				t.Remitente, t.Monto, t.RawSubject, t.EmailID))
 		}
 	}
 

@@ -92,6 +92,7 @@ const autoPolling = ref(true);
 const syncLog = ref<LogEntry[]>([]);
 const logRef = ref<HTMLElement | null>(null);
 const showConsole = ref(false);
+const syncProgress = ref<{ revisados: number; total: number; nuevas: number } | null>(null);
 
 // Detail dialog
 const selectedItem = ref<Transferencia | null>(null);
@@ -200,7 +201,12 @@ async function loadAuth() {
   auth.value = await EstadoAuth();
 }
 
+// Generation counter: prevents stale concurrent-fetch responses from overwriting
+// newer data (watcher-triggered fetch can race with a direct call after delete).
+let fetchGen = 0;
+
 async function fetchTransferencias() {
+  const gen = ++fetchGen;
   loading.value = true;
   try {
     const res = await ObtenerTransferencias(
@@ -210,15 +216,19 @@ async function fetchTransferencias() {
       busqueda.value,
       estadoFiltro.value,
     );
+    if (gen !== fetchGen) return; // stale — a newer call supersedes this one
     items.value = res.items ?? [];
     totalItems.value = res.total;
     totalMonto.value = res.totalMonto;
     // Clear stale selections when data refreshes
     selectedUUIDs.value = new Set();
   } catch (e: any) {
+    if (gen !== fetchGen) return;
     toast.error("Error al cargar transferencias", { description: e?.toString() });
   } finally {
-    loading.value = false;
+    // Only clear the loading indicator if no newer call is in flight.
+    // A stale request's finally block must not hide the spinner of the active request.
+    if (gen === fetchGen) loading.value = false;
   }
 }
 
@@ -236,6 +246,7 @@ function iniciarSync() {
   syncPopoverOpen.value = false;
   syncing.value = true;
   syncLog.value = [];
+  syncProgress.value = null;
   // Fire-and-forget: sync runs in a goroutine on the backend.
   // Result arrives via "bancolombia:sync:result" event — no await needed.
   SincronizarConPeriodo({
@@ -315,19 +326,33 @@ async function openDetail(item: Transferencia) {
   }
 }
 
+// Adjusts page if it no longer exists after deletions, then reloads from server.
+// Uses direct mutation on pageIndex (not ref replacement) so the shallow pagination
+// watcher does NOT fire — fetch is called exactly once here.
+async function refreshAfterDelete(newTotal: number) {
+  const lastValidPage = Math.max(0, Math.ceil(newTotal / pagination.value.pageSize) - 1);
+  pagination.value.pageIndex = Math.min(pagination.value.pageIndex, lastValidPage);
+  await fetchTransferencias();
+}
+
 async function eliminar(uuid: string) {
   if (deletingUUID.value) return;
   deletingUUID.value = uuid;
   try {
     await EliminarTransferencia(uuid);
-    items.value = items.value.filter(i => i.uuid !== uuid);
-    totalItems.value = Math.max(0, totalItems.value - 1);
-    if (showDetail.value && selectedItem.value?.uuid === uuid) {
-      showDetail.value = false;
-    }
+    if (showDetail.value && selectedItem.value?.uuid === uuid) showDetail.value = false;
     confirmDeleteUUID.value = null;
     selectedUUIDs.value.delete(uuid);
-    toast.success("Transferencia eliminada");
+
+    // Local mutation: instant removal without a server roundtrip.
+    // A server fetch is only needed when the current page becomes empty
+    // (all rows deleted) but there is still more data to show.
+    items.value = items.value.filter(i => i.uuid !== uuid);
+    const newTotal = Math.max(0, totalItems.value - 1);
+    totalItems.value = newTotal;
+    if (items.value.length === 0 && newTotal > 0) {
+      await refreshAfterDelete(newTotal);
+    }
   } catch (e: any) {
     toast.error("Error al eliminar", { description: e?.toString() });
   } finally {
@@ -365,11 +390,11 @@ async function eliminarSeleccionadas() {
   const uuids = [...selectedUUIDs.value];
   try {
     await EliminarTransferencias(uuids);
-    items.value = items.value.filter(i => !uuids.includes(i.uuid));
-    totalItems.value = Math.max(0, totalItems.value - uuids.length);
     selectedUUIDs.value = new Set();
     confirmBulkDelete.value = false;
-    toast.success(`${uuids.length} transferencia(s) eliminada(s)`);
+    const newTotal = Math.max(0, totalItems.value - uuids.length);
+    totalItems.value = newTotal;
+    await refreshAfterDelete(newTotal);
   } catch (e: any) {
     toast.error("Error al eliminar", { description: e?.toString() });
   } finally {
@@ -456,9 +481,14 @@ onMounted(async () => {
     await loadPollingState();
   }
 
+  EventsOn("bancolombia:sync:progress", (p: { revisados: number; total: number; nuevas: number }) => {
+    syncProgress.value = p;
+  });
+
   EventsOn("bancolombia:sync:result", async (res: CheckResult) => {
     lastCheck.value = res;
     syncing.value = false;
+    syncProgress.value = null;
     // Populate console log from result (delivered in-memory, no per-step IPC)
     if (res.log?.length) {
       syncLog.value.push(...res.log);
@@ -472,9 +502,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   EventsOff("bancolombia:sync:result");
+  EventsOff("bancolombia:sync:progress");
 });
 
-watch(pagination, fetchTransferencias, { deep: true });
+// Shallow watch (no { deep: true }): fires only when pagination.value REFERENCE
+// changes — i.e., when TanStack's valueUpdater replaces it via page/size controls.
+// Direct mutations (pagination.value.pageIndex = 0) do NOT trigger this, so
+// filter handlers below call fetchTransferencias() once without double-fetching.
+watch(pagination, fetchTransferencias);
 watch(soloNoLeidas, () => { pagination.value.pageIndex = 0; fetchTransferencias(); });
 watch(estadoFiltro, () => { pagination.value.pageIndex = 0; fetchTransferencias(); });
 
@@ -577,6 +612,14 @@ watch(busqueda, () => {
           <div v-if="selectedItem.referencia" class="flex items-center justify-between px-3 py-2 gap-4">
             <span class="text-muted-foreground shrink-0">Referencia</span>
             <span class="font-mono text-right">{{ selectedItem.referencia }}</span>
+          </div>
+          <div v-if="selectedItem.rawSubject" class="flex items-start justify-between px-3 py-2 gap-4">
+            <span class="text-muted-foreground shrink-0">Notificación</span>
+            <span class="text-right text-[10px] leading-snug text-muted-foreground/80 max-w-[180px]">{{ selectedItem.rawSubject }}</span>
+          </div>
+          <div v-if="selectedItem.emailId" class="flex items-center justify-between px-3 py-2 gap-4">
+            <span class="text-muted-foreground shrink-0">Msg ID</span>
+            <span class="font-mono text-[10px] text-muted-foreground truncate max-w-[150px]" :title="selectedItem.emailId">{{ selectedItem.emailId }}</span>
           </div>
         </div>
 
@@ -718,7 +761,10 @@ watch(busqueda, () => {
             <Button size="sm" class="h-7 text-xs gap-1.5" :disabled="syncing">
               <Loader2 v-if="syncing" class="h-3.5 w-3.5 animate-spin" />
               <RefreshCw v-else class="h-3.5 w-3.5" />
-              {{ syncing ? "Sincronizando…" : "Sincronizar" }}
+              <span v-if="syncing && syncProgress">
+                {{ syncProgress.revisados }}/{{ syncProgress.total }}
+              </span>
+              <span v-else>{{ syncing ? "Sincronizando…" : "Sincronizar" }}</span>
               <ChevronDown v-if="!syncing" class="h-3 w-3 opacity-60" />
             </Button>
           </PopoverTrigger>
@@ -822,8 +868,16 @@ watch(busqueda, () => {
       <div class="flex items-center gap-4 px-3 py-1.5 border-b border-slate-800 text-xs">
         <Loader2 v-if="syncing" class="h-3 w-3 animate-spin text-blue-400 shrink-0" />
         <CheckCircle2 v-else class="h-3 w-3 text-green-400 shrink-0" />
-        <span class="text-slate-400 font-mono">{{ syncing ? "Sincronizando…" : "Completado" }}</span>
-        <template v-if="lastCheck">
+        <span class="text-slate-400 font-mono">
+          <template v-if="syncing && syncProgress">
+            Procesando {{ syncProgress.revisados }}/{{ syncProgress.total }} mensajes…
+          </template>
+          <template v-else>{{ syncing ? "Sincronizando…" : "Completado" }}</template>
+        </span>
+        <template v-if="syncing && syncProgress && syncProgress.nuevas > 0">
+          <span class="font-mono text-green-400">✓ {{ syncProgress.nuevas }} nuevas</span>
+        </template>
+        <template v-else-if="!syncing && lastCheck">
           <span class="font-mono text-slate-300">↓ {{ lastCheck.revisados }} revisados</span>
           <span class="font-mono text-green-400">✓ {{ lastCheck.nuevas }} nuevas</span>
         </template>
