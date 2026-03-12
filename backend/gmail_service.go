@@ -226,40 +226,28 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) {
 }
 
 // ejecutarSync performs the actual Gmail sync. Called from a goroutine.
+// NO EventsEmit calls happen here — all results are collected in memory
+// and delivered in ONE "gmail:sync:result" event at the end.
 func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 	result := SyncResult{Errores: []string{}, Log: []SyncLogEntry{}}
 
-	svc, err := g.newGmailSvc()
-	if err != nil {
-		entry := SyncLogEntry{Nivel: "error", Mensaje: "Error autenticando Gmail: " + err.Error(), Ts: time.Now().Format("15:04:05")}
-		result.Log = append(result.Log, entry)
-		wailsruntime.EventsEmit(g.ctx, "gmail:sync:log", entry)
-		return result
-	}
-
-	// emit only for notable events (new invoice, error, milestones) — NOT for every duplicate.
-	// This prevents overwhelming WebKit IPC with hundreds of rapid EventsEmit calls.
-	emit := func(nivel, msg string) {
-		entry := SyncLogEntry{
+	// log appends to the in-memory result — never calls EventsEmit.
+	log := func(nivel, msg string) {
+		result.Log = append(result.Log, SyncLogEntry{
 			Nivel:   nivel,
 			Mensaje: msg,
 			Ts:      time.Now().Format("15:04:05"),
-		}
-		result.Log = append(result.Log, entry)
-		wailsruntime.EventsEmit(g.ctx, "gmail:sync:log", entry)
-	}
-
-	emitProgreso := func() {
-		wailsruntime.EventsEmit(g.ctx, "gmail:sync:progreso", map[string]int{
-			"total":      result.Total,
-			"nuevas":     result.Nuevas,
-			"duplicadas": result.Duplicadas,
-			"errores":    len(result.Errores),
 		})
 	}
 
+	svc, err := g.newGmailSvc()
+	if err != nil {
+		log("error", "Error autenticando Gmail: "+err.Error())
+		return result
+	}
+
 	query := g.buildGmailQuery(opts)
-	emit("info", fmt.Sprintf("Modo: %s — revisando correos…", opts.Modo))
+	log("info", fmt.Sprintf("Modo: %s — revisando correos…", opts.Modo))
 
 	var pageToken string
 	for {
@@ -269,25 +257,20 @@ func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 		}
 		resp, err := call.Do()
 		if err != nil {
-			emit("error", "Error listando mensajes: "+err.Error())
+			log("error", "Error listando mensajes: "+err.Error())
 			result.Errores = append(result.Errores, err.Error())
 			return result
 		}
 
 		if len(resp.Messages) == 0 && result.Total == 0 {
-			emit("warn", "Sin facturas con adjunto ZIP en el rango seleccionado")
+			log("warn", "Sin facturas con adjunto ZIP en el rango seleccionado")
 		}
 
 		for _, m := range resp.Messages {
 			result.Total++
-			prevNuevas := result.Nuevas
-			if err := g.procesarMensajeConLog(svc, m.Id, &result, emit); err != nil {
+			if err := g.procesarMensajeConLog(svc, m.Id, &result, log); err != nil {
 				result.Errores = append(result.Errores, fmt.Sprintf("msg %s: %v", m.Id, err))
-				emit("error", fmt.Sprintf("✗ Error procesando mensaje: %v", err))
-			}
-			// Only emit progress on new invoice or every 10 messages (not every duplicate)
-			if result.Nuevas > prevNuevas || result.Total%10 == 0 {
-				emitProgreso()
+				log("error", fmt.Sprintf("✗ Error procesando mensaje: %v", err))
 			}
 		}
 
@@ -297,15 +280,14 @@ func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 		pageToken = resp.NextPageToken
 	}
 
-	emit("ok", fmt.Sprintf(
+	log("ok", fmt.Sprintf(
 		"Listo — %d revisados · %d nuevas · %d duplicadas · %d errores",
 		result.Total, result.Nuevas, result.Duplicadas, len(result.Errores),
 	))
-	emitProgreso()
 
 	if result.Nuevas > 0 {
 		if n, err := g.db.SincronizarProveedoresDesdeFacturas(); err == nil && n > 0 {
-			emit("info", fmt.Sprintf("Proveedores: %d registros actualizados", n))
+			log("info", fmt.Sprintf("Proveedores: %d registros actualizados", n))
 		}
 	}
 

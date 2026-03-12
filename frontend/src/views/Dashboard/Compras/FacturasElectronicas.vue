@@ -322,18 +322,14 @@ onMounted(async () => {
   await cargarEstadoAuth();
   if (auth.value.authenticated) cargarFacturas();
 
-  EventsOn("gmail:sync:log", (entry: SyncLogEntry) => {
-    syncLog.value.push(entry);
-    scrollLog();
-  });
-  EventsOn("gmail:sync:progreso", (p: SyncProgreso) => {
-    syncProgreso.value = p;
-  });
-  EventsOn("gmail:sync:result", async (res: { nuevas: number; errores: string[] }) => {
+  EventsOn("gmail:sync:result", async (res: { nuevas: number; total: number; duplicadas: number; errores: string[]; log: SyncLogEntry[] }) => {
     syncing.value = false;
-    if (res.errores?.length > 0) {
-      syncLog.value.push({ nivel: "error", mensaje: res.errores[0], ts: new Date().toLocaleTimeString() });
+    // Populate console log from result (no per-step IPC — all delivered at end)
+    if (res.log?.length) {
+      syncLog.value.push(...res.log);
+      scrollLog();
     }
+    syncProgreso.value = { total: res.total ?? 0, procesados: res.total ?? 0, nuevas: res.nuevas ?? 0, duplicadas: res.duplicadas ?? 0, errores: res.errores?.length ?? 0 };
     if (res.nuevas > 0) {
       await cargarFacturas();
     }
@@ -341,8 +337,6 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  EventsOff("gmail:sync:log");
-  EventsOff("gmail:sync:progreso");
   EventsOff("gmail:sync:result");
 });
 

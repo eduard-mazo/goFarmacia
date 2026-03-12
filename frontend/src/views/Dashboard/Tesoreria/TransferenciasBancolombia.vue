@@ -456,37 +456,22 @@ onMounted(async () => {
     await loadPollingState();
   }
 
-  EventsOn("bancolombia:nueva", async (t: Transferencia) => {
-    items.value.unshift(t);
-    totalItems.value++;
-    toast.success(`Nueva transferencia: ${formatCOP(t.monto)}`, {
-      description: t.remitente || "Bancolombia",
-    });
-  });
-
   EventsOn("bancolombia:sync:result", async (res: CheckResult) => {
     lastCheck.value = res;
     syncing.value = false;
-    if (res.errores?.length > 0) {
-      toast.error("Error al sincronizar", { description: res.errores[0] });
-    } else if (res.nuevas > 0) {
-      toast.success(`${res.nuevas} nueva(s) transferencia(s) importadas`);
-      await fetchTransferencias();
-    } else {
-      toast.info(`${res.revisados} mensajes revisados — sin transferencias nuevas`);
+    // Populate console log from result (delivered in-memory, no per-step IPC)
+    if (res.log?.length) {
+      syncLog.value.push(...res.log);
+      scrollLog();
     }
-  });
-
-  EventsOn("bancolombia:sync:log", (entry: LogEntry) => {
-    syncLog.value.push(entry);
-    scrollLog();
+    if (res.nuevas > 0) {
+      await fetchTransferencias();
+    }
   });
 });
 
 onUnmounted(() => {
-  EventsOff("bancolombia:nueva");
   EventsOff("bancolombia:sync:result");
-  EventsOff("bancolombia:sync:log");
 });
 
 watch(pagination, fetchTransferencias, { deep: true });

@@ -225,10 +225,12 @@ type BancolombiaAuthStatus struct {
 
 // BancolombiaCheckResult summarizes one sync run.
 type BancolombiaCheckResult struct {
-	Revisados int      `json:"revisados"`
-	Nuevas    int      `json:"nuevas"`
-	Errores   []string `json:"errores"`
-	Ts        string   `json:"ts"`
+	Revisados int                   `json:"revisados"`
+	Nuevas    int                   `json:"nuevas"`
+	Errores   []string              `json:"errores"`
+	Ts        string                `json:"ts"`
+	Log       []BancolombiaLogEntry `json:"log"`   // accumulated in-memory, delivered in final event
+	Badge     int                   `json:"badge"` // unread count — lets frontend update badge without extra call
 }
 
 // BancolombiaLogEntry is one line in the real-time sync log (same pattern as SyncLogEntry).
@@ -296,10 +298,8 @@ func (b *BancolombiaService) startTicker() {
 				if err != nil {
 					result.Errores = append(result.Errores, err.Error())
 				}
+				result.Badge = b.db.ContarTransferenciasNoLeidas()
 				wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
-				if result.Nuevas > 0 {
-					b.emitBadge()
-				}
 			}
 		}
 	}()
@@ -454,15 +454,16 @@ func (b *BancolombiaService) newGmailSvc() (*gmail.Service, error) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-// VerificarAhora triggers an immediate sync and returns the result.
-func (b *BancolombiaService) VerificarAhora() (BancolombiaCheckResult, error) {
-	result, err := b.sincronizarRecientes()
-	if err != nil {
-		result.Errores = append(result.Errores, err.Error())
-	}
-	wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
-	b.emitBadge()
-	return result, err
+// VerificarAhora triggers an immediate sync in a goroutine.
+func (b *BancolombiaService) VerificarAhora() {
+	go func() {
+		result, err := b.sincronizarRecientes()
+		if err != nil {
+			result.Errores = append(result.Errores, err.Error())
+		}
+		result.Badge = b.db.ContarTransferenciasNoLeidas()
+		wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
+	}()
 }
 
 // ObtenerTransferencias returns a paginated list of transfer notifications.
@@ -554,15 +555,16 @@ type BancolombiaOpcionesPeriodo struct {
 
 // SincronizarConPeriodo starts an immediate sync in a background goroutine and
 // returns right away so the Wails call doesn't block the UI thread.
-// The result is delivered via the "bancolombia:sync:result" event.
+// ONE event is emitted at the end: "bancolombia:sync:result" carrying the full result + log.
+// No intermediate EventsEmit calls happen during the sync.
 func (b *BancolombiaService) SincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) {
 	go func() {
 		result, err := b.sincronizarConPeriodo(opts)
 		if err != nil {
 			result.Errores = append(result.Errores, err.Error())
 		}
+		result.Badge = b.db.ContarTransferenciasNoLeidas()
 		wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
-		b.emitBadge()
 	}()
 }
 
@@ -579,16 +581,25 @@ func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, err
 	return b.sincronizarConPeriodo(BancolombiaOpcionesPeriodo{Modo: "semana"})
 }
 
+// appendLog adds an entry to the result log in-memory (no EventsEmit).
+// All log is delivered in the single final sync:result event.
+func appendLog(result *BancolombiaCheckResult, nivel, msg string) {
+	result.Log = append(result.Log, BancolombiaLogEntry{
+		Nivel:   nivel,
+		Mensaje: msg,
+		Ts:      time.Now().Format("15:04:05"),
+	})
+}
+
 func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) (BancolombiaCheckResult, error) {
 	result := BancolombiaCheckResult{
 		Ts:      time.Now().Format("15:04:05"),
 		Errores: []string{},
 	}
 
-	// Only one sync at a time — prevents DB pool exhaustion and UI freeze
-	// if the ticker fires while a manual sync is already running.
+	// Only one sync at a time.
 	if !b.syncMu.TryLock() {
-		b.emitLog("warn", "Sincronización ya en progreso, omitiendo.")
+		appendLog(&result, "warn", "Sincronización ya en progreso, omitiendo.")
 		return result, nil
 	}
 	defer b.syncMu.Unlock()
@@ -664,7 +675,7 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		pageToken = resp.NextPageToken
 	}
 
-	b.emitLog("info", fmt.Sprintf("Revisando %d mensajes del período…", len(allMessages)))
+	appendLog(&result, "info", fmt.Sprintf("Revisando %d mensajes del período…", len(allMessages)))
 
 	for _, m := range allMessages {
 		result.Revisados++
@@ -678,21 +689,19 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		isNew, err := b.db.GuardarTransferencia(*t)
 		if err != nil {
 			result.Errores = append(result.Errores, fmt.Sprintf("msg %s: %v", m.Id, err))
-			b.emitLog("error", fmt.Sprintf("Error guardando mensaje %s: %v", m.Id, err))
+			appendLog(&result, "error", fmt.Sprintf("Error guardando: %v", err))
 			continue
 		}
 		if isNew {
 			result.Nuevas++
-			b.emitLog("ok", fmt.Sprintf("✓ %s — $%.0f (%s)", t.Remitente, t.Monto, t.RawSubject))
-			wailsruntime.EventsEmit(b.ctx, "bancolombia:nueva", t)
+			appendLog(&result, "ok", fmt.Sprintf("✓ %s — $%.0f", t.Remitente, t.Monto))
 		}
 	}
 
-	b.emitLog("info", fmt.Sprintf(
-		"Finalizado — %d revisados, %d nuevas, %d errores",
+	appendLog(&result, "info", fmt.Sprintf(
+		"Listo — %d revisados · %d nuevas · %d errores",
 		result.Revisados, result.Nuevas, len(result.Errores),
 	))
-
 	return result, nil
 }
 
@@ -733,26 +742,19 @@ func (b *BancolombiaService) parsearMensaje(svc *gmail.Service, messageID string
 // logUnrecognized emits the body preview to the console and writes the full
 // content to gmail_debug.log for format analysis.
 func (b *BancolombiaService) logUnrecognized(msgID, subject, body string) {
-	// Emit body preview to console (first 200 chars).
-	bodyPreview := strings.TrimSpace(body)
-	if len(bodyPreview) > 200 {
-		bodyPreview = bodyPreview[:200] + "…"
-	}
-	b.emitLog("warn", fmt.Sprintf("Sin formato: subject=%q body=%q", subject, bodyPreview))
-
-	// Also write full body to file next to the executable (build/bin/logs/).
+	// Write to gmail_debug.log only (no EventsEmit — this runs inside a goroutine).
 	path := filepath.Join(baseDir(), "logs", "gmail_debug.log")
-	if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
-		defer f.Close()
-		full := body
-		if len(full) > 1000 {
-			full = full[:1000] + "\n[truncado]"
-		}
-		fmt.Fprintf(f, "\n%s\nTS: %s  MSG: %s\nSUBJECT: %s\nBODY:\n%s\n",
-			strings.Repeat("─", 60), time.Now().Format("2006-01-02 15:04:05"), msgID, subject, full)
-	} else {
-		b.emitLog("warn", fmt.Sprintf("No se pudo crear gmail_debug.log: %v", err))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
 	}
+	defer f.Close()
+	bodyPreview := strings.TrimSpace(body)
+	if len(bodyPreview) > 1000 {
+		bodyPreview = bodyPreview[:1000] + "\n[truncado]"
+	}
+	fmt.Fprintf(f, "\n%s\nTS: %s  MSG: %s\nSUBJECT: %s\nBODY:\n%s\n",
+		strings.Repeat("─", 60), time.Now().Format("2006-01-02 15:04:05"), msgID, subject, bodyPreview)
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
@@ -968,16 +970,9 @@ func bancolombiaDetectTipo(text string) string {
 	}
 }
 
+// emitBadge is safe to call from Wails IPC goroutines (MarcarLeida, Eliminar, etc.)
+// but must NOT be called from custom background goroutines.
 func (b *BancolombiaService) emitBadge() {
 	n := b.db.ContarTransferenciasNoLeidas()
 	wailsruntime.EventsEmit(b.ctx, "bancolombia:badge", n)
-}
-
-func (b *BancolombiaService) emitLog(nivel, mensaje string) {
-	entry := BancolombiaLogEntry{
-		Nivel:   nivel,
-		Mensaje: mensaje,
-		Ts:      time.Now().Format("15:04:05"),
-	}
-	wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:log", entry)
 }
