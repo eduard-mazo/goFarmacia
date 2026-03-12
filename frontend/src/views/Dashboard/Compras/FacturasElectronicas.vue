@@ -122,32 +122,18 @@ const scrollLog = () => {
   });
 };
 
-const iniciarSync = async () => {
+const iniciarSync = () => {
   if (syncing.value) return;
   syncPopoverOpen.value = false;
   syncing.value = true;
   syncLog.value = [];
   syncProgreso.value = null;
-
-  try {
-    const opts = {
-      modo: syncModo.value,
-      desde: syncModo.value === "rango" ? syncDesde.value : "",
-      hasta: syncModo.value === "rango" ? syncHasta.value : "",
-    };
-    const result = await SincronizarConOpciones(opts);
-    await cargarFacturas();
-    if (result.nuevas > 0) {
-      toast.success(`${result.nuevas} factura(s) nueva(s) importadas`);
-    } else {
-      toast.info("Sin facturas nuevas");
-    }
-  } catch (e) {
-    toast.error("Error al sincronizar", { description: `${e}` });
-    syncLog.value.push({ nivel: "error", mensaje: `Error fatal: ${e}`, ts: new Date().toLocaleTimeString() });
-  } finally {
-    syncing.value = false;
-  }
+  // Fire-and-forget: runs in goroutine on backend, result via "gmail:sync:result" event.
+  SincronizarConOpciones({
+    modo: syncModo.value,
+    desde: syncModo.value === "rango" ? syncDesde.value : "",
+    hasta: syncModo.value === "rango" ? syncHasta.value : "",
+  });
 };
 
 const enriquecerDesdesPDF = async () => {
@@ -343,11 +329,21 @@ onMounted(async () => {
   EventsOn("gmail:sync:progreso", (p: SyncProgreso) => {
     syncProgreso.value = p;
   });
+  EventsOn("gmail:sync:result", async (res: { nuevas: number; errores: string[] }) => {
+    syncing.value = false;
+    if (res.errores?.length > 0) {
+      syncLog.value.push({ nivel: "error", mensaje: res.errores[0], ts: new Date().toLocaleTimeString() });
+    }
+    if (res.nuevas > 0) {
+      await cargarFacturas();
+    }
+  });
 });
 
 onUnmounted(() => {
   EventsOff("gmail:sync:log");
   EventsOff("gmail:sync:progreso");
+  EventsOff("gmail:sync:result");
 });
 
 watch(pagination, cargarFacturas, { deep: true });

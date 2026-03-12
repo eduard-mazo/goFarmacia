@@ -206,24 +206,39 @@ func (g *GmailService) newGmailSvc() (*gmail.Service, error) {
 	return gmail.NewService(context.Background(), option.WithHTTPClient(client))
 }
 
-// SincronizarFacturas runs a full historical sync (no date filter). Kept for backward compat.
-func (g *GmailService) SincronizarFacturas() (SyncResult, error) {
-	return g.SincronizarConOpciones(SyncOptions{Modo: "completo"})
+// SincronizarFacturas runs a full historical sync. Kept for backward compat.
+func (g *GmailService) SincronizarFacturas() {
+	g.SincronizarConOpciones(SyncOptions{Modo: "completo"})
 }
 
-// SincronizarConOpciones runs Gmail sync with scope control and real-time log events.
+// SincronizarConOpciones starts Gmail sync in a background goroutine and returns
+// immediately so the Wails call never blocks the UI thread.
 // Events emitted:
 //
-//	"gmail:sync:log"      → SyncLogEntry  (one per notable action)
-//	"gmail:sync:progreso" → map{total, procesados, nuevas, duplicadas}
-func (g *GmailService) SincronizarConOpciones(opts SyncOptions) (SyncResult, error) {
-	svc, err := g.newGmailSvc()
-	if err != nil {
-		return SyncResult{}, err
-	}
+//	"gmail:sync:log"      → SyncLogEntry  (only for new invoices and errors; NOT for duplicates)
+//	"gmail:sync:progreso" → progress counters (emitted every 10 messages)
+//	"gmail:sync:result"   → SyncResult  (emitted once when complete)
+func (g *GmailService) SincronizarConOpciones(opts SyncOptions) {
+	go func() {
+		result := g.ejecutarSync(opts)
+		wailsruntime.EventsEmit(g.ctx, "gmail:sync:result", result)
+	}()
+}
 
+// ejecutarSync performs the actual Gmail sync. Called from a goroutine.
+func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 	result := SyncResult{Errores: []string{}, Log: []SyncLogEntry{}}
 
+	svc, err := g.newGmailSvc()
+	if err != nil {
+		entry := SyncLogEntry{Nivel: "error", Mensaje: "Error autenticando Gmail: " + err.Error(), Ts: time.Now().Format("15:04:05")}
+		result.Log = append(result.Log, entry)
+		wailsruntime.EventsEmit(g.ctx, "gmail:sync:log", entry)
+		return result
+	}
+
+	// emit only for notable events (new invoice, error, milestones) — NOT for every duplicate.
+	// This prevents overwhelming WebKit IPC with hundreds of rapid EventsEmit calls.
 	emit := func(nivel, msg string) {
 		entry := SyncLogEntry{
 			Nivel:   nivel,
@@ -244,7 +259,7 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) (SyncResult, err
 	}
 
 	query := g.buildGmailQuery(opts)
-	emit("info", fmt.Sprintf("Modo: %s — consulta: %s", opts.Modo, query))
+	emit("info", fmt.Sprintf("Modo: %s — revisando correos…", opts.Modo))
 
 	var pageToken string
 	for {
@@ -255,11 +270,12 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) (SyncResult, err
 		resp, err := call.Do()
 		if err != nil {
 			emit("error", "Error listando mensajes: "+err.Error())
-			return result, fmt.Errorf("error listando mensajes Gmail: %w", err)
+			result.Errores = append(result.Errores, err.Error())
+			return result
 		}
 
 		if len(resp.Messages) == 0 && result.Total == 0 {
-			emit("warn", "Sin mensajes con adjuntos ZIP en el rango seleccionado")
+			emit("warn", "Sin facturas con adjunto ZIP en el rango seleccionado")
 		}
 
 		for _, m := range resp.Messages {
@@ -267,9 +283,10 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) (SyncResult, err
 			prevNuevas := result.Nuevas
 			if err := g.procesarMensajeConLog(svc, m.Id, &result, emit); err != nil {
 				result.Errores = append(result.Errores, fmt.Sprintf("msg %s: %v", m.Id, err))
-				emit("error", fmt.Sprintf("✗ Error en mensaje %s: %v", m.Id, err))
+				emit("error", fmt.Sprintf("✗ Error procesando mensaje: %v", err))
 			}
-			if result.Nuevas > prevNuevas {
+			// Only emit progress on new invoice or every 10 messages (not every duplicate)
+			if result.Nuevas > prevNuevas || result.Total%10 == 0 {
 				emitProgreso()
 			}
 		}
@@ -278,23 +295,21 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) (SyncResult, err
 			break
 		}
 		pageToken = resp.NextPageToken
-		emit("info", fmt.Sprintf("Siguiente página... (%d procesados hasta ahora)", result.Total))
 	}
 
 	emit("ok", fmt.Sprintf(
-		"Finalizado — %d mensajes revisados, %d nuevas, %d duplicadas, %d errores",
+		"Listo — %d revisados · %d nuevas · %d duplicadas · %d errores",
 		result.Total, result.Nuevas, result.Duplicadas, len(result.Errores),
 	))
 	emitProgreso()
 
-	// Ensure all discovered suppliers are reflected in the proveedors table.
 	if result.Nuevas > 0 {
-		if n, err := g.db.SincronizarProveedoresDesdeFacturas(); err == nil {
-			emit("info", fmt.Sprintf("Proveedores sincronizados: %d registros actualizados", n))
+		if n, err := g.db.SincronizarProveedoresDesdeFacturas(); err == nil && n > 0 {
+			emit("info", fmt.Sprintf("Proveedores: %d registros actualizados", n))
 		}
 	}
 
-	return result, nil
+	return result
 }
 
 // buildGmailQuery converts SyncOptions into a Gmail search query string.
@@ -409,8 +424,7 @@ func (g *GmailService) procesarMensajeConLog(
 		exists, _ := g.db.ExisteFacturaCompra(messageID, cufe)
 		if exists {
 			result.Duplicadas++
-			emit("info", fmt.Sprintf("  Duplicada: %s [%s] (%s)", sample.InvoiceID, tipoLabel, sample.SupplierName))
-			return nil
+			return nil // skip emit for duplicates — avoid IPC overhead on large syncs
 		}
 
 		fechaEmision, _ := time.ParseInLocation("2006-01-02", sample.IssueDate, time.Local)
