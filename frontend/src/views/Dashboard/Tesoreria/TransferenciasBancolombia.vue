@@ -231,30 +231,18 @@ async function loadPollingState() {
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
-async function iniciarSync() {
+function iniciarSync() {
   if (syncing.value) return;
   syncPopoverOpen.value = false;
   syncing.value = true;
   syncLog.value = [];
-  try {
-    const res = await SincronizarConPeriodo({
-      modo:  syncModo.value,
-      desde: syncModo.value === "rango" ? syncDesde.value : "",
-      hasta: syncModo.value === "rango" ? syncHasta.value : "",
-    });
-    lastCheck.value = res;
-    await fetchTransferencias();
-    if (res.nuevas > 0) {
-      toast.success(`${res.nuevas} nueva(s) transferencia(s) importadas`);
-    } else {
-      toast.info(`${res.revisados} mensajes revisados — sin transferencias nuevas`);
-    }
-  } catch (e: any) {
-    toast.error("Error al sincronizar", { description: e?.toString() });
-    syncLog.value.push({ nivel: "error", mensaje: `Error fatal: ${e}`, ts: new Date().toLocaleTimeString() });
-  } finally {
-    syncing.value = false;
-  }
+  // Fire-and-forget: sync runs in a goroutine on the backend.
+  // Result arrives via "bancolombia:sync:result" event — no await needed.
+  SincronizarConPeriodo({
+    modo:  syncModo.value,
+    desde: syncModo.value === "rango" ? syncDesde.value : "",
+    hasta: syncModo.value === "rango" ? syncHasta.value : "",
+  });
 }
 
 async function toggleAutoPolling() {
@@ -478,8 +466,14 @@ onMounted(async () => {
 
   EventsOn("bancolombia:sync:result", async (res: CheckResult) => {
     lastCheck.value = res;
-    if (res.nuevas > 0) {
+    syncing.value = false;
+    if (res.errores?.length > 0) {
+      toast.error("Error al sincronizar", { description: res.errores[0] });
+    } else if (res.nuevas > 0) {
+      toast.success(`${res.nuevas} nueva(s) transferencia(s) importadas`);
       await fetchTransferencias();
+    } else {
+      toast.info(`${res.revisados} mensajes revisados — sin transferencias nuevas`);
     }
   });
 

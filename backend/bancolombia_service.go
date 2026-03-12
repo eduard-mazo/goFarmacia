@@ -552,15 +552,18 @@ type BancolombiaOpcionesPeriodo struct {
 	Hasta string `json:"hasta"` // YYYY-MM-DD, only for "rango"
 }
 
-// SincronizarConPeriodo performs an immediate sync for the given period.
-func (b *BancolombiaService) SincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) (BancolombiaCheckResult, error) {
-	result, err := b.sincronizarConPeriodo(opts)
-	if err != nil {
-		result.Errores = append(result.Errores, err.Error())
-	}
-	wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
-	b.emitBadge()
-	return result, err
+// SincronizarConPeriodo starts an immediate sync in a background goroutine and
+// returns right away so the Wails call doesn't block the UI thread.
+// The result is delivered via the "bancolombia:sync:result" event.
+func (b *BancolombiaService) SincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) {
+	go func() {
+		result, err := b.sincronizarConPeriodo(opts)
+		if err != nil {
+			result.Errores = append(result.Errores, err.Error())
+		}
+		wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
+		b.emitBadge()
+	}()
 }
 
 // MarcarTodasLeidas marks all transfer notifications as read.
@@ -595,11 +598,10 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		return result, err
 	}
 
-	// Gmail OR query covers all known Bancolombia notification senders:
-	//   alertasynotificaciones@bancolombia.com.co
-	//   alertasynotificaciones@an.notificacionesbancolombia.com
-	//   alertasynotificaciones@notificacionesbancolombia.com
-	query := `{from:bancolombia.com.co from:notificacionesbancolombia.com}`
+	// Targeted query — only the specific notification senders, not the whole domain.
+	// Using the exact address for bancolombia.com.co avoids fetching account statements,
+	// promotions, and other non-transfer emails from that domain.
+	query := `{from:alertasynotificaciones@bancolombia.com.co from:notificacionesbancolombia.com}`
 	maxResults := int64(bancolombiaCheckCount)
 
 	// Use Colombia timezone (UTC-5) for all date calculations.
