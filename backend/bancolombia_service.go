@@ -274,11 +274,6 @@ func (b *BancolombiaService) Startup(ctx context.Context) {
 		b.autoPolling = false
 	}
 
-	go func() {
-		time.Sleep(2 * time.Second)
-		b.emitBadge()
-	}()
-
 	if b.autoPolling && b.EstadoAuth().Authenticated {
 		b.startTicker()
 	}

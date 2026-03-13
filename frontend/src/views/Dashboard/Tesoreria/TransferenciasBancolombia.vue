@@ -243,24 +243,36 @@ async function loadPollingState() {
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
 // ─── Sync progress polling ────────────────────────────────────────────────────
-// Instead of receiving EventsEmit push events from the goroutine (which saturate
-// the GTK g_idle_add() queue causing "Not Responding"), the frontend polls
-// GetSyncProgress() every 500ms via a normal JS→Go call while a sync is active.
+// Uses recursive setTimeout (NOT setInterval) to poll GetSyncProgress().
+// Critical: setInterval with an async callback fires the NEXT tick before the
+// previous await resolves when g_idle_add is backed up. This causes exponential
+// concurrent-call pile-up → GTK queue saturation → "Not Responding".
+// With recursive setTimeout the next poll only fires AFTER the previous one
+// fully resolves, preventing any concurrent accumulation.
 
-let progressPollTimer: ReturnType<typeof setInterval> | null = null;
+let progressPollTimer: ReturnType<typeof setTimeout> | null = null;
+let progressPollActive = false;
+
+async function progressPollLoop() {
+  if (!progressPollActive) return;
+  try {
+    const p = await GetSyncProgress();
+    if (progressPollActive) syncProgress.value = p;
+  } catch { /* ignore */ }
+  if (progressPollActive) {
+    progressPollTimer = setTimeout(progressPollLoop, 1000);
+  }
+}
 
 function startProgressPoll() {
-  progressPollTimer = setInterval(async () => {
-    try {
-      const p = await GetSyncProgress();
-      syncProgress.value = p;
-    } catch { /* ignore — sync may have ended */ }
-  }, 500);
+  progressPollActive = true;
+  progressPollLoop();
 }
 
 function stopProgressPoll() {
+  progressPollActive = false;
   if (progressPollTimer !== null) {
-    clearInterval(progressPollTimer);
+    clearTimeout(progressPollTimer);
     progressPollTimer = null;
   }
 }
