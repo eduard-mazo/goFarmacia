@@ -36,6 +36,7 @@ import {
   ObtenerTransferencias, MarcarLeida, EliminarTransferencia, EliminarTransferencias,
   SincronizarConPeriodo, SetAutoPolling, GetAutoPolling,
   MarcarTodasLeidas, VincularFactura, DesvincularFactura, BuscarFacturasVenta,
+  GetSyncProgress,
 } from "@/../wailsjs/go/backend/BancolombiaService";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -241,12 +242,36 @@ async function loadPollingState() {
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
+// ─── Sync progress polling ────────────────────────────────────────────────────
+// Instead of receiving EventsEmit push events from the goroutine (which saturate
+// the GTK g_idle_add() queue causing "Not Responding"), the frontend polls
+// GetSyncProgress() every 500ms via a normal JS→Go call while a sync is active.
+
+let progressPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function startProgressPoll() {
+  progressPollTimer = setInterval(async () => {
+    try {
+      const p = await GetSyncProgress();
+      syncProgress.value = p;
+    } catch { /* ignore — sync may have ended */ }
+  }, 500);
+}
+
+function stopProgressPoll() {
+  if (progressPollTimer !== null) {
+    clearInterval(progressPollTimer);
+    progressPollTimer = null;
+  }
+}
+
 function iniciarSync() {
   if (syncing.value) return;
   syncPopoverOpen.value = false;
   syncing.value = true;
   syncLog.value = [];
   syncProgress.value = null;
+  startProgressPoll();
   // Fire-and-forget: sync runs in a goroutine on the backend.
   // Result arrives via "bancolombia:sync:result" event — no await needed.
   SincronizarConPeriodo({
@@ -481,11 +506,8 @@ onMounted(async () => {
     await loadPollingState();
   }
 
-  EventsOn("bancolombia:sync:progress", (p: { revisados: number; total: number; nuevas: number }) => {
-    syncProgress.value = p;
-  });
-
   EventsOn("bancolombia:sync:result", async (res: CheckResult) => {
+    stopProgressPoll();
     lastCheck.value = res;
     syncing.value = false;
     syncProgress.value = null;
@@ -501,8 +523,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  stopProgressPoll();
   EventsOff("bancolombia:sync:result");
-  EventsOff("bancolombia:sync:progress");
 });
 
 // Shallow watch (no { deep: true }): fires only when pagination.value REFERENCE

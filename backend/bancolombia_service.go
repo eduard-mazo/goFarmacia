@@ -207,13 +207,15 @@ var (
 // BancolombiaService handles Gmail polling for Bancolombia transfer notifications.
 // It is bound to Wails and exposed to the frontend.
 type BancolombiaService struct {
-	ctx         context.Context
-	db          *Db
-	configDir   string
-	ticker      *time.Ticker
-	done        chan struct{}
-	autoPolling bool
-	syncMu      sync.Mutex // prevents concurrent sync runs that can deadlock the DB pool
+	ctx            context.Context
+	db             *Db
+	configDir      string
+	ticker         *time.Ticker
+	done           chan struct{}
+	autoPolling    bool
+	syncMu         sync.Mutex // prevents concurrent sync runs that can deadlock the DB pool
+	syncProgress   BancolombiaProgressState
+	syncProgressMu sync.Mutex // guards syncProgress
 }
 
 // BancolombiaAuthStatus reports authentication state to the frontend.
@@ -240,17 +242,16 @@ type BancolombiaLogEntry struct {
 	Ts      string `json:"ts"`
 }
 
-// BancolombiaProgressEvent is emitted every bancolombiaProgressEvery messages
-// to update the frontend progress indicator without flooding the GTK main loop.
-type BancolombiaProgressEvent struct {
+// BancolombiaProgressState holds the current sync progress.
+// Updated atomically during sync; the frontend polls GetSyncProgress() while
+// the sync is running instead of receiving push events (EventsEmit from a
+// goroutine calls g_idle_add() on Linux/GTK — flooding it with hundreds of
+// events causes the "Force Quit or Wait" dialog).
+type BancolombiaProgressState struct {
 	Revisados int `json:"revisados"`
 	Total     int `json:"total"`
 	Nuevas    int `json:"nuevas"`
 }
-
-// bancolombiaProgressEvery controls how often progress events are emitted.
-// 10 events per 100 messages = at most ~50 events for a full 500-message sync.
-const bancolombiaProgressEvery = 10
 
 // NewBancolombiaService creates the service. Shares configDir with GmailService.
 func NewBancolombiaService(db *Db) *BancolombiaService {
@@ -466,6 +467,16 @@ func (b *BancolombiaService) newGmailSvc() (*gmail.Service, error) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// GetSyncProgress returns the current sync state for frontend polling.
+// The frontend calls this every ~500ms while a sync is running instead of
+// receiving push EventsEmit events, which saturate the GTK g_idle_add() queue
+// on Linux and cause the "Not Responding" dialog with large mailboxes.
+func (b *BancolombiaService) GetSyncProgress() BancolombiaProgressState {
+	b.syncProgressMu.Lock()
+	defer b.syncProgressMu.Unlock()
+	return b.syncProgress
+}
+
 // VerificarAhora triggers an immediate sync in a goroutine.
 func (b *BancolombiaService) VerificarAhora() {
 	go func() {
@@ -557,15 +568,12 @@ type BancolombiaOpcionesPeriodo struct {
 	Hasta string `json:"hasta"` // YYYY-MM-DD, only for "rango"
 }
 
-// SincronizarConPeriodo starts an immediate sync in a background goroutine and
-// returns right away so the Wails call doesn't block the UI thread.
-// Manual syncs (user-triggered) emit progress events every N messages so the
-// console shows live feedback. The auto-polling ticker calls sincronizarRecientes
-// which passes emitProgress=false to stay completely silent — avoids GTK blocking
-// when the ticker fires while the user is interacting (e.g., deleting rows).
+// SincronizarConPeriodo starts a manual sync in a background goroutine.
+// Progress is written to b.syncProgress (polled by the frontend via
+// GetSyncProgress) — no EventsEmit during the loop to avoid GTK blocking.
 func (b *BancolombiaService) SincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) {
 	go func() {
-		result, err := b.sincronizarConPeriodo(opts, true) // manual: emit progress
+		result, err := b.sincronizarConPeriodo(opts)
 		if err != nil {
 			result.Errores = append(result.Errores, err.Error())
 		}
@@ -584,9 +592,7 @@ func (b *BancolombiaService) MarcarTodasLeidas() error {
 // ── Core sync logic ───────────────────────────────────────────────────────────
 
 func (b *BancolombiaService) sincronizarRecientes() (BancolombiaCheckResult, error) {
-	// emitProgress=false: ticker runs completely silent to avoid GTK blocking
-	// when it fires while the user is actively interacting with the UI.
-	return b.sincronizarConPeriodo(BancolombiaOpcionesPeriodo{Modo: "semana"}, false)
+	return b.sincronizarConPeriodo(BancolombiaOpcionesPeriodo{Modo: "semana"})
 }
 
 // appendLog adds an entry to the result log in-memory (no EventsEmit).
@@ -599,7 +605,7 @@ func appendLog(result *BancolombiaCheckResult, nivel, msg string) {
 	})
 }
 
-func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPeriodo, emitProgress bool) (BancolombiaCheckResult, error) {
+func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPeriodo) (BancolombiaCheckResult, error) {
 	result := BancolombiaCheckResult{
 		Ts:      time.Now().Format("15:04:05"),
 		Errores: []string{},
@@ -611,6 +617,11 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		return result, nil
 	}
 	defer b.syncMu.Unlock()
+
+	// Reset progress counter so the frontend sees 0/0 at the start of each run.
+	b.syncProgressMu.Lock()
+	b.syncProgress = BancolombiaProgressState{}
+	b.syncProgressMu.Unlock()
 
 	svc, err := b.newGmailSvc()
 	if err != nil {
@@ -695,20 +706,21 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 	}
 	existingIDs := b.db.ExistingEmailIDsSet(msgIDs)
 
-	for i, m := range allMessages {
+	for _, m := range allMessages {
 		result.Revisados++
 
-		// Progress events only for manual syncs (emitProgress=true).
-		// The background ticker passes false so it stays completely silent —
-		// goroutine-side EventsEmit calls during active user interaction cause
-		// GTK g_idle_add() congestion and the "Force Quit or Wait" dialog.
-		if emitProgress && i > 0 && i%bancolombiaProgressEvery == 0 {
-			wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:progress", BancolombiaProgressEvent{
-				Revisados: result.Revisados,
-				Total:     total,
-				Nuevas:    result.Nuevas,
-			})
+		// Write progress to in-memory state — the frontend polls GetSyncProgress()
+		// every 500ms via a normal JS→Go call instead of receiving EventsEmit push
+		// events. This is critical on Linux/GTK: goroutine EventsEmit calls go
+		// through g_idle_add() and with 2000+ messages the queue saturates,
+		// causing the "Not Responding" dialog.
+		b.syncProgressMu.Lock()
+		b.syncProgress = BancolombiaProgressState{
+			Revisados: result.Revisados,
+			Total:     total,
+			Nuevas:    result.Nuevas,
 		}
+		b.syncProgressMu.Unlock()
 
 		if existingIDs[m.Id] {
 			continue
