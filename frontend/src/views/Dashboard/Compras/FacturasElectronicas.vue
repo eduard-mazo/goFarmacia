@@ -34,13 +34,14 @@ import {
   SincronizarConOpciones, EnriquecerDescripciones,
   ObtenerFacturasCompra, ObtenerDetalleFacturaCompra,
   ActualizarEstadoFacturaCompra,
+  GetGmailSyncProgress,
 } from "@/../wailsjs/go/backend/GmailService";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface AuthStatus { authenticated: boolean; credPresent: boolean; configDir: string; }
 interface SyncLogEntry { nivel: string; mensaje: string; ts: string; }
-interface SyncProgreso { total: number; procesados: number; nuevas: number; duplicadas: number; errores: number; }
+interface SyncProgreso { running: boolean; fase: string; total: number; procesados: number; nuevas: number; duplicadas: number; errores: number; ultimoNro: string; }
 
 type SyncModo = "hoy" | "semana" | "mes" | "rango" | "completo";
 
@@ -66,6 +67,43 @@ const syncHasta = ref("");
 const syncLog = ref<SyncLogEntry[]>([]);
 const syncProgreso = ref<SyncProgreso | null>(null);
 const logRef = ref<HTMLElement | null>(null);
+
+// Progress polling (recursive setTimeout — never accumulates concurrent calls)
+let progressPollTimer: ReturnType<typeof setTimeout> | null = null;
+let progressPollActive = false;
+
+async function progressPollLoop() {
+  if (!progressPollActive) return;
+  try {
+    const p = await GetGmailSyncProgress();
+    if (progressPollActive) {
+      syncProgreso.value = p as SyncProgreso;
+    }
+  } catch { /* ignore */ }
+  if (progressPollActive) {
+    progressPollTimer = setTimeout(progressPollLoop, 1000);
+  }
+}
+
+function startProgressPoll() {
+  progressPollActive = true;
+  progressPollLoop();
+}
+
+function stopProgressPoll() {
+  progressPollActive = false;
+  if (progressPollTimer !== null) {
+    clearTimeout(progressPollTimer);
+    progressPollTimer = null;
+  }
+}
+
+const progressPct = computed(() => {
+  const p = syncProgreso.value;
+  if (!p || p.total === 0) return 0;
+  if (p.fase === "recolectando") return 5; // indeterminate-ish while collecting
+  return Math.round((p.procesados / p.total) * 100);
+});
 
 // Table
 const listaFacturas = ref<backend.FacturaCompra[]>([]);
@@ -126,8 +164,11 @@ const iniciarSync = () => {
   if (syncing.value) return;
   syncPopoverOpen.value = false;
   syncing.value = true;
+  showConsole.value = true;
   syncLog.value = [];
   syncProgreso.value = null;
+  // Start polling in-memory progress before the goroutine begins.
+  startProgressPoll();
   // Fire-and-forget: runs in goroutine on backend, result via "gmail:sync:result" event.
   SincronizarConOpciones({
     modo: syncModo.value,
@@ -323,13 +364,22 @@ onMounted(async () => {
   if (auth.value.authenticated) cargarFacturas();
 
   EventsOn("gmail:sync:result", async (res: { nuevas: number; total: number; duplicadas: number; errores: string[]; log: SyncLogEntry[] }) => {
+    stopProgressPoll();
     syncing.value = false;
-    // Populate console log from result (no per-step IPC — all delivered at end)
     if (res.log?.length) {
       syncLog.value.push(...res.log);
       scrollLog();
     }
-    syncProgreso.value = { total: res.total ?? 0, procesados: res.total ?? 0, nuevas: res.nuevas ?? 0, duplicadas: res.duplicadas ?? 0, errores: res.errores?.length ?? 0 };
+    syncProgreso.value = {
+      running: false,
+      fase: "",
+      total: res.total ?? 0,
+      procesados: res.total ?? 0,
+      nuevas: res.nuevas ?? 0,
+      duplicadas: res.duplicadas ?? 0,
+      errores: res.errores?.length ?? 0,
+      ultimoNro: "",
+    };
     if (res.nuevas > 0) {
       await cargarFacturas();
     }
@@ -337,6 +387,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  stopProgressPoll();
   EventsOff("gmail:sync:result");
 });
 
@@ -588,34 +639,75 @@ watch(busqueda, () => {
       </Alert>
     </div>
 
-    <!-- Real-time sync log -->
-    <div v-if="showConsole"
-      class="shrink-0 border-b bg-slate-950 text-slate-200">
-      <!-- Progress bar + counters -->
-      <div class="flex items-center gap-4 px-3 py-1.5 border-b border-slate-800 text-xs">
+    <!-- Real-time sync console -->
+    <div v-if="showConsole" class="shrink-0 border-b bg-slate-950 text-slate-200">
+
+      <!-- Progress bar -->
+      <div class="h-1 bg-slate-800 relative overflow-hidden">
+        <div
+          v-if="syncing"
+          class="h-full bg-blue-500 transition-all duration-700"
+          :class="syncProgreso?.fase === 'recolectando' ? 'animate-pulse' : ''"
+          :style="{ width: progressPct + '%' }"
+        />
+        <div v-else-if="syncProgreso" class="h-full bg-green-500 w-full" />
+      </div>
+
+      <!-- Status row -->
+      <div class="flex items-center gap-3 px-3 py-1.5 border-b border-slate-800 text-xs">
         <Loader2 v-if="syncing || enriqueciendo" class="h-3 w-3 animate-spin text-blue-400 shrink-0" />
         <CheckCircle2 v-else class="h-3 w-3 text-green-400 shrink-0" />
-        <span class="text-slate-400 font-mono">
-          {{ enriqueciendo ? "Enriqueciendo desde PDF…" : syncing ? "Sincronizando…" : "Completado" }}
-        </span>
-        <template v-if="syncProgreso">
-          <span class="font-mono text-slate-300">↓ {{ syncProgreso.total }} revisados</span>
-          <span class="font-mono text-green-400">✓ {{ syncProgreso.nuevas }} nuevas</span>
-          <span class="font-mono text-slate-500">= {{ syncProgreso.duplicadas }} duplicadas</span>
-          <span v-if="syncProgreso.errores" class="font-mono text-red-400">✗ {{ syncProgreso.errores }} errores</span>
+
+        <template v-if="syncing && syncProgreso">
+          <!-- Phase: collecting IDs -->
+          <template v-if="syncProgreso.fase === 'recolectando'">
+            <span class="text-slate-400 font-mono">Recolectando mensajes…</span>
+            <span class="font-mono text-blue-400">{{ syncProgreso.total }} encontrados</span>
+          </template>
+          <!-- Phase: processing -->
+          <template v-else-if="syncProgreso.fase === 'procesando'">
+            <span class="font-mono text-blue-300">
+              {{ syncProgreso.procesados }}<span class="text-slate-600">/</span>{{ syncProgreso.total }}
+            </span>
+            <span class="font-mono text-green-400">✓ {{ syncProgreso.nuevas }} nuevas</span>
+            <span class="font-mono text-slate-500">= {{ syncProgreso.duplicadas }} dup.</span>
+            <span v-if="syncProgreso.errores" class="font-mono text-red-400">✗ {{ syncProgreso.errores }}</span>
+            <span v-if="syncProgreso.ultimoNro" class="font-mono text-slate-500 truncate max-w-[160px]">
+              {{ syncProgreso.ultimoNro }}
+            </span>
+          </template>
+          <!-- Waiting for first poll result -->
+          <template v-else>
+            <span class="text-slate-400 font-mono">Iniciando sincronización…</span>
+          </template>
         </template>
-        <button v-if="!syncing" class="ml-auto text-slate-500 hover:text-slate-300 text-[10px]"
-          @click="syncLog = []; syncProgreso = null">Cerrar</button>
+
+        <!-- Completed or enriching -->
+        <template v-else-if="!syncing">
+          <span class="text-slate-400 font-mono">
+            {{ enriqueciendo ? "Enriqueciendo desde PDF…" : "Completado" }}
+          </span>
+          <template v-if="syncProgreso && !enriqueciendo">
+            <span class="font-mono text-slate-300">{{ syncProgreso.total }} revisados</span>
+            <span class="font-mono text-green-400">✓ {{ syncProgreso.nuevas }} nuevas</span>
+            <span class="font-mono text-slate-500">= {{ syncProgreso.duplicadas }} dup.</span>
+            <span v-if="syncProgreso.errores" class="font-mono text-red-400">✗ {{ syncProgreso.errores }} errores</span>
+          </template>
+        </template>
+
+        <button v-if="!syncing && !enriqueciendo" class="ml-auto text-slate-500 hover:text-slate-300 text-[10px]"
+          @click="syncLog = []; syncProgreso = null; showConsole = false">Cerrar</button>
       </div>
-      <!-- Log lines -->
+
+      <!-- Log lines (filled at end from gmail:sync:result) -->
       <div ref="logRef" class="overflow-y-auto max-h-36 px-3 py-1.5 font-mono text-[10px] leading-5 space-y-px">
+        <div v-if="syncing && !syncLog.length" class="flex gap-2">
+          <span class="text-slate-600 shrink-0 invisible">00:00:00</span>
+          <span class="text-slate-500 animate-pulse">▋</span>
+        </div>
         <div v-for="(entry, i) in syncLog" :key="i" class="flex gap-2">
           <span class="text-slate-600 shrink-0">{{ entry.ts }}</span>
           <span :class="logClass[entry.nivel] ?? 'text-slate-300'">{{ entry.mensaje }}</span>
-        </div>
-        <div v-if="syncing" class="flex gap-2">
-          <span class="text-slate-600 shrink-0 invisible">00:00:00</span>
-          <span class="text-slate-500 animate-pulse">▋</span>
         </div>
       </div>
     </div>

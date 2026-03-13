@@ -25,14 +25,17 @@ import (
 const (
 	gmailCallbackPort = 8094
 	gmailCallbackPath = "/gmail/oauth2/callback"
+	gmailSyncWorkers  = 5 // concurrent message-processing goroutines
 )
 
 // GmailService handles Gmail OAuth2 auth and DIAN electronic invoice synchronization.
 // It is bound to Wails and exposed to the frontend.
 type GmailService struct {
-	ctx       context.Context
-	db        *Db
-	configDir string
+	ctx            context.Context
+	db             *Db
+	configDir      string
+	syncProgress   GmailSyncProgress
+	syncProgressMu sync.Mutex
 }
 
 // GmailAuthStatus reports the current authentication state to the frontend.
@@ -74,6 +77,30 @@ type SyncResult struct {
 	Log        []SyncLogEntry `json:"log"`
 }
 
+// GmailSyncProgress holds the current state of an in-progress sync.
+// Written from the sync goroutine under syncProgressMu; read via GetGmailSyncProgress
+// (JS→Go call — safe on Linux/WebKit2GTK, does NOT use g_idle_add).
+type GmailSyncProgress struct {
+	Running    bool   `json:"running"`
+	Fase       string `json:"fase"`       // "recolectando" | "procesando" | ""
+	Total      int    `json:"total"`      // total message IDs found so far
+	Procesados int    `json:"procesados"` // messages fully processed
+	Nuevas     int    `json:"nuevas"`
+	Duplicadas int    `json:"duplicadas"`
+	Errores    int    `json:"errores"`
+	UltimoNro  string `json:"ultimoNro"` // last invoice number processed
+}
+
+// msgProcessResult is the per-message output of procesarMensaje.
+// Designed for safe concurrent use in the worker pool.
+type msgProcessResult struct {
+	nuevas     int
+	duplicadas int
+	ultimoNro  string
+	logs       []SyncLogEntry
+	errMsg     string // non-empty on error
+}
+
 // NewGmailService creates the service. Credentials and token are stored in
 // ~/.config/goFarmacia/ so they survive app updates.
 func NewGmailService(db *Db) *GmailService {
@@ -82,6 +109,14 @@ func NewGmailService(db *Db) *GmailService {
 		db:        db,
 		configDir: filepath.Join(home, ".config", "goFarmacia"),
 	}
+}
+
+// GetGmailSyncProgress returns the current in-progress sync state.
+// Safe to call from the frontend at any time (JS→Go message, not g_idle_add).
+func (g *GmailService) GetGmailSyncProgress() GmailSyncProgress {
+	g.syncProgressMu.Lock()
+	defer g.syncProgressMu.Unlock()
+	return g.syncProgress
 }
 
 // Startup is called by Wails when the app starts.
@@ -225,20 +260,36 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) {
 	}()
 }
 
-// ejecutarSync performs the actual Gmail sync. Called from a goroutine.
-// NO EventsEmit calls happen here — all results are collected in memory
-// and delivered in ONE "gmail:sync:result" event at the end.
+// ejecutarSync performs the actual Gmail sync in two phases:
+//  1. Collect all message IDs via paginated list calls (fast).
+//  2. Process messages concurrently with gmailSyncWorkers goroutines.
+//
+// NO EventsEmit calls happen here — all results are collected in memory and
+// delivered in ONE "gmail:sync:result" event at the end. In-flight progress
+// is exposed via GetGmailSyncProgress() for frontend polling.
 func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 	result := SyncResult{Errores: []string{}, Log: []SyncLogEntry{}}
-
-	// log appends to the in-memory result — never calls EventsEmit.
+	var logMu sync.Mutex
 	log := func(nivel, msg string) {
+		logMu.Lock()
 		result.Log = append(result.Log, SyncLogEntry{
 			Nivel:   nivel,
 			Mensaje: msg,
 			Ts:      time.Now().Format("15:04:05"),
 		})
+		logMu.Unlock()
 	}
+
+	// Reset in-memory progress state.
+	g.syncProgressMu.Lock()
+	g.syncProgress = GmailSyncProgress{Running: true, Fase: "recolectando"}
+	g.syncProgressMu.Unlock()
+	defer func() {
+		g.syncProgressMu.Lock()
+		g.syncProgress.Running = false
+		g.syncProgress.Fase = ""
+		g.syncProgressMu.Unlock()
+	}()
 
 	svc, err := g.newGmailSvc()
 	if err != nil {
@@ -247,11 +298,13 @@ func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 	}
 
 	query := g.buildGmailQuery(opts)
-	log("info", fmt.Sprintf("Modo: %s — revisando correos…", opts.Modo))
+	log("info", fmt.Sprintf("Modo: %s — recolectando IDs de mensajes…", opts.Modo))
 
+	// ── Phase 1: collect all message IDs across all pages ─────────────────────
+	var allIDs []string
 	var pageToken string
 	for {
-		call := svc.Users.Messages.List("me").Q(query).MaxResults(100)
+		call := svc.Users.Messages.List("me").Q(query).MaxResults(500)
 		if pageToken != "" {
 			call = call.PageToken(pageToken)
 		}
@@ -261,23 +314,77 @@ func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 			result.Errores = append(result.Errores, err.Error())
 			return result
 		}
-
-		if len(resp.Messages) == 0 && result.Total == 0 {
-			log("warn", "Sin facturas con adjunto ZIP en el rango seleccionado")
-		}
-
 		for _, m := range resp.Messages {
-			result.Total++
-			if err := g.procesarMensajeConLog(svc, m.Id, &result, log); err != nil {
-				result.Errores = append(result.Errores, fmt.Sprintf("msg %s: %v", m.Id, err))
-				log("error", fmt.Sprintf("✗ Error procesando mensaje: %v", err))
-			}
+			allIDs = append(allIDs, m.Id)
 		}
+		// Update live count so frontend can show "encontrados: N" while collecting.
+		g.syncProgressMu.Lock()
+		g.syncProgress.Total = len(allIDs)
+		g.syncProgressMu.Unlock()
 
 		if resp.NextPageToken == "" {
 			break
 		}
 		pageToken = resp.NextPageToken
+	}
+
+	if len(allIDs) == 0 {
+		log("warn", "Sin facturas con adjunto ZIP en el rango seleccionado")
+		return result
+	}
+
+	result.Total = len(allIDs)
+	log("info", fmt.Sprintf("%d mensajes encontrados — procesando con %d workers…", len(allIDs), gmailSyncWorkers))
+
+	g.syncProgressMu.Lock()
+	g.syncProgress.Fase = "procesando"
+	g.syncProgressMu.Unlock()
+
+	// ── Phase 2: parallel worker pool ─────────────────────────────────────────
+	jobs := make(chan string, len(allIDs))
+	resultCh := make(chan msgProcessResult, gmailSyncWorkers*4)
+
+	var wg sync.WaitGroup
+	for i := 0; i < gmailSyncWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for msgID := range jobs {
+				resultCh <- g.procesarMensaje(svc, msgID)
+			}
+		}()
+	}
+
+	// Feed all IDs (non-blocking — channel is pre-sized).
+	for _, id := range allIDs {
+		jobs <- id
+	}
+	close(jobs)
+
+	// Close result channel once all workers finish.
+	go func() { wg.Wait(); close(resultCh) }()
+
+	// Collect results and update in-memory progress as each message finishes.
+	for mr := range resultCh {
+		result.Nuevas += mr.nuevas
+		result.Duplicadas += mr.duplicadas
+		if mr.errMsg != "" {
+			result.Errores = append(result.Errores, mr.errMsg)
+			log("error", fmt.Sprintf("✗ %s", mr.errMsg))
+		}
+		logMu.Lock()
+		result.Log = append(result.Log, mr.logs...)
+		logMu.Unlock()
+
+		g.syncProgressMu.Lock()
+		g.syncProgress.Procesados++
+		g.syncProgress.Nuevas = result.Nuevas
+		g.syncProgress.Duplicadas = result.Duplicadas
+		g.syncProgress.Errores = len(result.Errores)
+		if mr.ultimoNro != "" {
+			g.syncProgress.UltimoNro = mr.ultimoNro
+		}
+		g.syncProgressMu.Unlock()
 	}
 
 	log("ok", fmt.Sprintf(
@@ -326,16 +433,23 @@ func (g *GmailService) buildGmailQuery(opts SyncOptions) string {
 	}
 }
 
-func (g *GmailService) procesarMensajeConLog(
-	svc *gmail.Service, messageID string,
-	result *SyncResult, emit func(nivel, msg string),
-) error {
-	msg, err := svc.Users.Messages.Get("me", messageID).Format("full").Do()
-	if err != nil {
-		return fmt.Errorf("get message: %w", err)
+// procesarMensaje fetches, unzips, parses XML+PDF and saves one Gmail message.
+// Designed to be called concurrently from the worker pool — writes no shared state.
+func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string) (mr msgProcessResult) {
+	emit := func(nivel, msg string) {
+		mr.logs = append(mr.logs, SyncLogEntry{
+			Nivel:   nivel,
+			Mensaje: msg,
+			Ts:      time.Now().Format("15:04:05"),
+		})
 	}
 
-	// Extract email subject for readable log lines
+	msg, err := svc.Users.Messages.Get("me", messageID).Format("full").Do()
+	if err != nil {
+		mr.errMsg = fmt.Sprintf("get message: %v", err)
+		return
+	}
+
 	subject := ""
 	for _, h := range msg.Payload.Headers {
 		if h.Name == "Subject" {
@@ -346,16 +460,16 @@ func (g *GmailService) procesarMensajeConLog(
 
 	zipData, err := g.extractZipAttachment(svc, msg)
 	if err != nil {
-		// Not a DIAN invoice email — silently skip
-		return nil
+		// Not a DIAN invoice email — silently skip.
+		return
 	}
 
-	emit("info", fmt.Sprintf("→ ZIP encontrado: %s", subject))
+	emit("info", fmt.Sprintf("→ ZIP: %s", subject))
 
 	unzipped, err := processor.UnzipInMemoryAll(zipData)
 	if err != nil || len(unzipped.XMLFiles) == 0 {
 		emit("warn", fmt.Sprintf("  ZIP sin XML válido: %s", subject))
-		return nil
+		return
 	}
 
 	// Parse PDF (if present) in parallel with XML processing.
@@ -367,8 +481,6 @@ func (g *GmailService) procesarMensajeConLog(
 		pdfWg.Add(1)
 		go func() {
 			defer pdfWg.Done()
-			// knownCodes will be filled after XML parse; here we parse without codes
-			// to at least get the raw text ready, then re-run mapping after XML.
 			if d, e := processor.ParsePDFBytes(unzipped.PDFFiles[0], nil); e == nil {
 				pdfData = d
 			}
@@ -382,7 +494,6 @@ func (g *GmailService) procesarMensajeConLog(
 			continue
 		}
 
-		// Wait for PDF parse then re-run code mapping with known codes.
 		pdfWg.Wait()
 		if pdfData.RawText != "" {
 			codes := make([]string, 0, len(products))
@@ -399,14 +510,12 @@ func (g *GmailService) procesarMensajeConLog(
 
 		cufe := extractCUFE(xmlData)
 		sample := products[0]
-
-		// Determine document type label for logging
 		tipoLabel := tipoDocumentoLabel(sample.DocumentType)
 
 		exists, _ := g.db.ExisteFacturaCompra(messageID, cufe)
 		if exists {
-			result.Duplicadas++
-			return nil // skip emit for duplicates — avoid IPC overhead on large syncs
+			mr.duplicadas++
+			return
 		}
 
 		fechaEmision, _ := time.ParseInLocation("2006-01-02", sample.IssueDate, time.Local)
@@ -446,17 +555,18 @@ func (g *GmailService) procesarMensajeConLog(
 		factura.IVA = totalIVA
 
 		if err := g.db.GuardarFacturaCompra(factura); err != nil {
-			return fmt.Errorf("guardar factura %s: %w", sample.InvoiceID, err)
+			mr.errMsg = fmt.Sprintf("guardar factura %s: %v", sample.InvoiceID, err)
+			return
 		}
-		// Auto-upsert the supplier so the Proveedores list stays populated.
 		_ = g.db.UpsertProveedorPorNIT(sample.SupplierNIT, sample.SupplierName)
-		result.Nuevas++
+		mr.nuevas++
+		mr.ultimoNro = sample.InvoiceID
 		emit("ok", fmt.Sprintf(
 			"  ✓ %s [%s] — %s — %d líneas",
 			sample.InvoiceID, tipoLabel, sample.SupplierName, len(products),
 		))
 	}
-	return nil
+	return
 }
 
 func (g *GmailService) extractZipAttachment(svc *gmail.Service, msg *gmail.Message) ([]byte, error) {
