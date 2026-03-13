@@ -18,6 +18,7 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq" // PostgreSQL driver
 	"github.com/sirupsen/logrus"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -390,6 +391,14 @@ func (d *Db) initDB() {
 	d.Log.Info("Conexión a PostgreSQL establecida exitosamente.")
 
 	d.runMigrations("postgres", dbURL)
+
+	// Notify the frontend that the DB is fully ready. This resolves a startup
+	// race: the frontend mounts and calls GetDBStatus() before initDB() finishes,
+	// seeing Connected=false. The event triggers an immediate re-fetch so the
+	// UI transitions to "connected" without waiting for the 15-second poll.
+	if d.ctx != nil {
+		wailsruntime.EventsEmit(d.ctx, "db:ready", nil)
+	}
 }
 
 // localTimeZoneName returns the IANA timezone name of the machine (e.g. "America/Bogota").

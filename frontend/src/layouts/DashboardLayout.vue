@@ -7,12 +7,21 @@ import { Toaster } from "vue-sonner";
 import { useDBStore } from "@/stores/dbStore";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Database } from "lucide-vue-next";
+import { EventsOn, EventsOff } from "@/../wailsjs/runtime/runtime";
 
 const dbStore = useDBStore();
 const router = useRouter();
 const route = useRoute();
 
 onMounted(async () => {
+  // Listen for the backend "db:ready" event BEFORE the first fetchStatus call.
+  // This resolves the startup race: if initDB() finishes after the frontend
+  // mounts (common on Linux/WebKit2GTK), the event triggers an immediate
+  // re-fetch so the banner disappears instantly instead of waiting 15 seconds.
+  EventsOn("db:ready", () => {
+    dbStore.fetchStatus();
+  });
+
   await dbStore.fetchStatus();
   dbStore.startPolling(15000);
   if (dbStore.setupMode && route.name !== "Configuracion") {
@@ -21,6 +30,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  EventsOff("db:ready");
   dbStore.stopPolling();
 });
 
