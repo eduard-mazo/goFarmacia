@@ -515,7 +515,8 @@ async function handleVerifyMFA() {
 
 .eye-toggle {
   position: absolute;
-  inset-y: 0;
+  top: 0;
+  bottom: 0;
   right: 0;
   display: flex;
   align-items: center;
