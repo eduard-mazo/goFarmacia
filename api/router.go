@@ -1,6 +1,10 @@
 package api
 
 import (
+	"embed"
+	"io/fs"
+	"net/http"
+
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 	"goFarmacia/api/handlers"
@@ -13,6 +17,7 @@ func NewRouter(
 	gmail *backend.GmailService,
 	bancolombia *backend.BancolombiaService,
 	drive *backend.DriveBackupService,
+	assets embed.FS,
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -161,11 +166,20 @@ func NewRouter(
 	priv.GET("/drive/backups", handlers.DriveListarBackups(drive))
 	priv.DELETE("/drive/backups/:fileID", handlers.DriveEliminarBackup(drive))
 
-	// static frontend (catch-all — must be last)
+	// static frontend — embedded SPA (must be last)
+	distFS, _ := fs.Sub(assets, "frontend/dist")
+	fileServer := http.FileServer(http.FS(distFS))
+	// Real static assets (hashed filenames in /assets/) served directly
+	e.GET("/assets/*", echo.WrapHandler(fileServer))
+	e.GET("/favicon.ico", echo.WrapHandler(fileServer))
+	// All other paths → index.html (Vue Router handles client-side routing)
 	e.GET("/*", func(c echo.Context) error {
-		return c.File("frontend/dist/index.html")
+		idx, err := assets.ReadFile("frontend/dist/index.html")
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "frontend not built")
+		}
+		return c.HTMLBlob(http.StatusOK, idx)
 	})
-	e.Static("/assets", "frontend/dist/assets")
 
 	return e
 }

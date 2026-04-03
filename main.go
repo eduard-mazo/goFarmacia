@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"goFarmacia/api"
 	"goFarmacia/backend"
 )
+
+//go:embed all:frontend/dist
+var assets embed.FS
 
 func main() {
 	db := backend.GetDbInstance()
@@ -25,11 +29,11 @@ func main() {
 	bancolombiasSvc.Startup(ctx)
 	driveSvc.Startup(ctx)
 
-	e := api.NewRouter(db, gmailSvc, bancolombiasSvc, driveSvc)
+	e := api.NewRouter(db, gmailSvc, bancolombiasSvc, driveSvc, assets)
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "6969"
 	}
 
 	srv := &http.Server{

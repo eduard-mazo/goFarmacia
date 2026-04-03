@@ -1,14 +1,13 @@
 # =============================================================================
 #  goFarmacia — Makefile
-#  Wails v2 · Go · Vue 3 · PostgreSQL · Gmail API (DIAN)
+#  Echo HTTP · Go · Vue 3 · PostgreSQL · Gmail API (DIAN)
 #
 #  Uso rápido:
 #    make              → muestra ayuda
-#    make dev          → desarrollo con hot-reload (detecta SO actual)
-#    make build        → binario/app nativo del SO actual
-#    make build-mac    → .app universal macOS  [solo en Mac]
-#    make build-win    → .exe Windows          [requiere mingw-w64 en Linux]
-#    make dist         → ZIPs/DMG para todos los SO compilados
+#    make dev          → desarrollo con hot-reload (Go + Vite en paralelo)
+#    make build        → compila frontend y binario Go con frontend embebido
+#    make run          → build + ejecutar (libera el puerto si está ocupado)
+#    make start        → ejecutar el binario ya compilado (libera puerto si ocupado)
 #    make clean        → limpia artefactos
 # =============================================================================
 
@@ -19,37 +18,31 @@ ARCH  := $(shell uname -m)
 ifeq ($(UNAME), Darwin)
   HOST_OS       := mac
   GO_BUILD_TAGS :=
-  DEV_FLAGS     :=
-  ifeq ($(ARCH), arm64)
-    HOST_PLATFORM := darwin/arm64
-  else
-    HOST_PLATFORM := darwin/amd64
-  endif
 else
   HOST_OS       := linux
-  GO_BUILD_TAGS := webkit2_41              # Requiere webkit2gtk-4.1
-  DEV_FLAGS     := -tags $(GO_BUILD_TAGS)
-  HOST_PLATFORM := linux/amd64
+  GO_BUILD_TAGS := webkit2_41
 endif
 
 # ── Variables generales ───────────────────────────────────────────────────────
 APP_NAME   := goFarmacia
 VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS    := -X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)
+LDFLAGS    := -s -w -X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)
 
-# Directorios
+PORT       := 6969
 BUILD_DIR  := build/bin
 DIST_DIR   := dist
+BINARY     := $(BUILD_DIR)/$(APP_NAME)
 
-# Config de usuario en tiempo de ejecución (credenciales Gmail, token)
-CONFIG_DIR := $(HOME)/.config/goFarmacia
+FRONTEND_DIR := frontend
+FRONTEND_DIST := $(FRONTEND_DIR)/dist
 
-# Archivos de configuración con fallback
-ENV_FILE              := .env
-ENV_EXAMPLE           := .env.example
-CREDS_EXAMPLE         := credentials.example.json
-CREDS_DEST            := $(CONFIG_DIR)/credentials.json
+# Config de usuario en tiempo de ejecución
+CONFIG_DIR    := $(HOME)/.config/goFarmacia
+ENV_FILE      := .env
+ENV_EXAMPLE   := .env.example
+CREDS_EXAMPLE := credentials.example.json
+CREDS_DEST    := $(CONFIG_DIR)/credentials.json
 
 # Cross-compiler Windows
 WIN_CC := x86_64-w64-mingw32-gcc
@@ -72,57 +65,44 @@ RESET  := \033[0m
 help:
 	@echo ""
 	@echo "$(BOLD)$(CYAN)  goFarmacia $(VERSION)$(RESET)  ·  $(HOST_OS)/$(ARCH)"
-	@echo "  Sistema de gestión farmacéutica · Wails v2"
+	@echo "  Sistema de gestión farmacéutica · Echo HTTP"
 	@echo ""
 	@echo "$(BOLD)  Desarrollo$(RESET)"
-	@echo "  $(GREEN)dev$(RESET)                   Hot-reload nativo ($(HOST_OS))"
-	@echo "  $(GREEN)generate$(RESET)              Regenera bindings Wails (wails generate module)"
-	@echo "  $(GREEN)check-deps$(RESET)            Verifica herramientas instaladas"
-	@echo "  $(GREEN)check-env$(RESET)             Verifica que .env y credenciales existen"
+	@echo "  $(GREEN)dev$(RESET)              Go server + Vite hot-reload en paralelo"
+	@echo "  $(GREEN)check-deps$(RESET)       Verifica herramientas instaladas"
+	@echo "  $(GREEN)check-env$(RESET)        Verifica que .env y credenciales existen"
 	@echo ""
-	@echo "$(BOLD)  Build — Nativo$(RESET)"
-	@echo "  $(GREEN)build$(RESET)                  Compila para $(HOST_OS) y copia configs"
-	@echo "  $(GREEN)build-debug$(RESET)            Compila con devtools habilitados"
+	@echo "$(BOLD)  Build$(RESET)"
+	@echo "  $(GREEN)build$(RESET)            Frontend (pnpm build) + binario Go embebido"
+	@echo "  $(GREEN)build-frontend$(RESET)   Solo compila el frontend (pnpm build)"
+	@echo "  $(GREEN)build-go$(RESET)         Solo compila el binario Go (requiere dist/ previo)"
+	@echo "  $(GREEN)build-win$(RESET)        Binario Windows/amd64 (requiere mingw-w64)"
 	@echo ""
-	@echo "$(BOLD)  Build — macOS$(RESET)  $(YELLOW)[ejecutar en Mac]$(RESET)"
-	@echo "  $(GREEN)build-mac$(RESET)              Universal .app (arm64 + amd64)"
-	@echo "  $(GREEN)build-mac-arm64$(RESET)        .app solo Apple Silicon (M1–M4)"
-	@echo "  $(GREEN)build-mac-amd64$(RESET)        .app solo Intel"
-	@echo ""
-	@echo "$(BOLD)  Build — Windows$(RESET)  $(YELLOW)[requiere mingw-w64]$(RESET)"
-	@echo "  $(GREEN)build-win$(RESET)              .exe Windows/amd64"
-	@echo ""
-	@echo "$(BOLD)  Build — Todos$(RESET)"
-	@echo "  $(GREEN)build-all$(RESET)              Nativo + Windows  (+ Mac si es Mac)"
+	@echo "$(BOLD)  Ejecución$(RESET)"
+	@echo "  $(GREEN)run$(RESET)              build + libera puerto $(PORT) + ejecuta"
+	@echo "  $(GREEN)start$(RESET)            Libera puerto $(PORT) y ejecuta binario existente"
+	@echo "  $(GREEN)stop$(RESET)             Mata el proceso en puerto $(PORT)"
 	@echo ""
 	@echo "$(BOLD)  Distribución$(RESET)"
-	@echo "  $(GREEN)dist-linux$(RESET)             ZIP Linux"
-	@echo "  $(GREEN)dist-mac$(RESET)               ZIP .app macOS  $(YELLOW)[Mac]$(RESET) / DMG si create-dmg disponible"
-	@echo "  $(GREEN)dist-win$(RESET)               ZIP Windows"
-	@echo "  $(GREEN)dist$(RESET)                   Todos los paquetes"
+	@echo "  $(GREEN)dist-linux$(RESET)       ZIP Linux autónomo"
+	@echo "  $(GREEN)dist-win$(RESET)         ZIP Windows"
+	@echo "  $(GREEN)dist$(RESET)             Todos los paquetes"
 	@echo ""
 	@echo "$(BOLD)  Base de datos$(RESET)"
-	@echo "  $(GREEN)db-status$(RESET)              Estado de migraciones"
-	@echo "  $(GREEN)db-users$(RESET)               Lista usuarios y roles"
-	@echo "  $(GREEN)db-create-admin$(RESET)        Crear primer administrador (primer uso)"
-	@echo "  $(GREEN)db-make-admin$(RESET)           Promover a admin: EMAIL=x@y.com"
-	@echo "  $(GREEN)db-reset$(RESET)               Restaurar BD (DESTINO=DATABASE_URL en .env)"
-	@echo "                   SOURCE no indicado       → usa backend/db/backup_supabase.sql"
-	@echo "                   SOURCE=archivo.sql       → desde archivo SQL (relativo a proyecto)"
-	@echo "                   SOURCE=postgresql://...  → pg_dump en vivo + restore"
-	@echo ""
-	@echo "$(BOLD)  Gmail / Facturas DIAN$(RESET)"
-	@echo "  $(GREEN)gmail-setup$(RESET)            Instrucciones + verifica credenciales OAuth2"
-	@echo "  $(GREEN)gmail-revoke$(RESET)           Elimina token guardado (fuerza re-autenticación)"
+	@echo "  $(GREEN)db-status$(RESET)        Estado de migraciones"
+	@echo "  $(GREEN)db-users$(RESET)         Lista usuarios y roles"
+	@echo "  $(GREEN)db-create-admin$(RESET)  Crear primer administrador"
+	@echo "  $(GREEN)db-make-admin$(RESET)    Promover a admin: EMAIL=x@y.com"
+	@echo "  $(GREEN)db-reset$(RESET)         Restaurar BD desde SQL"
 	@echo ""
 	@echo "$(BOLD)  Utilidades$(RESET)"
-	@echo "  $(GREEN)shortcut$(RESET)               Crea acceso directo en escritorio (build previo)"
-	@echo "  $(GREEN)install-deps$(RESET)           Instala mingw-w64 + zip (Linux/apt)"
-	@echo "  $(GREEN)install-deps-mac$(RESET)       Instala herramientas vía Homebrew"
-	@echo "  $(GREEN)tidy$(RESET)                   go mod tidy + pnpm install"
-	@echo "  $(GREEN)version$(RESET)                Muestra versión del proyecto"
-	@echo "  $(GREEN)clean$(RESET)                  Limpia binarios y ZIPs"
-	@echo "  $(GREEN)clean-all$(RESET)              + node_modules y dist frontend"
+	@echo "  $(GREEN)tidy$(RESET)             go mod tidy + pnpm install"
+	@echo "  $(GREEN)install-deps$(RESET)     Instala mingw-w64 + zip (Linux/apt)"
+	@echo "  $(GREEN)version$(RESET)          Muestra versión del proyecto"
+	@echo "  $(GREEN)clean$(RESET)            Limpia binarios y ZIPs"
+	@echo "  $(GREEN)clean-all$(RESET)        + node_modules y dist frontend"
+	@echo ""
+	@echo "  Puerto por defecto: $(BOLD)$(PORT)$(RESET)  (override: make run PORT=8080)"
 	@echo ""
 
 # =============================================================================
@@ -131,66 +111,43 @@ help:
 .PHONY: check-deps
 check-deps:
 	@echo "$(BOLD)Verificando dependencias ($(HOST_OS))...$(RESET)"
-	@command -v go    >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) go         $$(go version | awk '{print $$3}')" \
-	  || (echo "  $(RED)✗$(RESET) go         → https://go.dev/dl" && exit 1)
-	@command -v wails >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) wails      $$(wails version 2>/dev/null | head -1 | tr -d '[:space:]')" \
-	  || (echo "  $(RED)✗$(RESET) wails      → go install github.com/wailsapp/wails/v2/cmd/wails@latest" && exit 1)
-	@command -v pnpm  >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) pnpm       $$(pnpm --version)" \
-	  || (echo "  $(RED)✗$(RESET) pnpm       → npm install -g pnpm" && exit 1)
-	@command -v psql  >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) psql       $$(psql --version | head -1)" \
-	  || echo "  $(YELLOW)!$(RESET) psql       — no encontrado (necesario para utilidades de BD)"
-	@pkg-config --exists libusb-1.0 2>/dev/null \
-	  && echo "  $(GREEN)✓$(RESET) libusb-1.0 $$(pkg-config --modversion libusb-1.0)" \
-	  || (echo "  $(RED)✗$(RESET) libusb-1.0 — requerido para impresora USB (POSPrinter)" && \
-	      echo "             Linux: make install-deps  |  macOS: make install-deps-mac" && exit 1)
-ifeq ($(UNAME), Darwin)
-	@command -v create-dmg >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) create-dmg (paquete DMG)" \
-	  || echo "  $(YELLOW)!$(RESET) create-dmg — brew install create-dmg (opcional, para dist-mac)"
-	@command -v codesign >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) codesign   (firma de código)" \
-	  || echo "  $(YELLOW)!$(RESET) codesign   — instalar Xcode Command Line Tools"
-else
+	@command -v go   >/dev/null 2>&1 \
+	  && echo "  $(GREEN)✓$(RESET) go      $$(go version | awk '{print $$3}')" \
+	  || (echo "  $(RED)✗$(RESET) go      → https://go.dev/dl" && exit 1)
+	@command -v pnpm >/dev/null 2>&1 \
+	  && echo "  $(GREEN)✓$(RESET) pnpm    $$(pnpm --version)" \
+	  || (echo "  $(RED)✗$(RESET) pnpm    → npm install -g pnpm" && exit 1)
+	@command -v psql >/dev/null 2>&1 \
+	  && echo "  $(GREEN)✓$(RESET) psql    $$(psql --version | head -1)" \
+	  || echo "  $(YELLOW)!$(RESET) psql    — no encontrado (necesario para utilidades de BD)"
 	@command -v $(WIN_CC) >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) mingw-w64  (cross-compile Windows)" \
-	  || echo "  $(YELLOW)!$(RESET) mingw-w64  — make install-deps (solo para build-win)"
-endif
+	  && echo "  $(GREEN)✓$(RESET) mingw-w64 (cross-compile Windows)" \
+	  || echo "  $(YELLOW)!$(RESET) mingw-w64 — make install-deps (solo para build-win)"
 	@command -v zip >/dev/null 2>&1 \
-	  && echo "  $(GREEN)✓$(RESET) zip        (empaquetado dist)" \
-	  || echo "  $(YELLOW)!$(RESET) zip        — necesario para make dist"
+	  && echo "  $(GREEN)✓$(RESET) zip     (empaquetado dist)" \
+	  || echo "  $(YELLOW)!$(RESET) zip     — necesario para make dist"
 	@echo ""
 	@echo "$(GREEN)Check completado.$(RESET)"
 
-# Verifica que .env y credentials.json existen; muestra qué falta.
 .PHONY: check-env
 check-env:
 	@echo "$(BOLD)Verificando archivos de configuración...$(RESET)"
 	@if [ -f "$(ENV_FILE)" ]; then \
-	  echo "  $(GREEN)✓$(RESET) $(ENV_FILE)                       — variables de entorno"; \
+	  echo "  $(GREEN)✓$(RESET) $(ENV_FILE)"; \
 	  grep -qE "^DATABASE_URL=.+" $(ENV_FILE) \
-	    && echo "  $(GREEN)✓$(RESET)   DATABASE_URL encontrado" \
+	    && echo "  $(GREEN)✓$(RESET)   DATABASE_URL configurado" \
 	    || echo "  $(YELLOW)!$(RESET)   DATABASE_URL no configurado en $(ENV_FILE)"; \
 	  grep -qE "^JWT_SECRET_KEY=.+" $(ENV_FILE) \
-	    && echo "  $(GREEN)✓$(RESET)   JWT_SECRET_KEY encontrado" \
+	    && echo "  $(GREEN)✓$(RESET)   JWT_SECRET_KEY configurado" \
 	    || echo "  $(YELLOW)!$(RESET)   JWT_SECRET_KEY no configurado en $(ENV_FILE)"; \
 	else \
 	  echo "  $(RED)✗$(RESET) $(ENV_FILE) no encontrado"; \
 	  echo "      Copia $(ENV_EXAMPLE) → $(ENV_FILE) y ajusta los valores"; \
 	fi
 	@if [ -f "$(CREDS_DEST)" ]; then \
-	  echo "  $(GREEN)✓$(RESET) credentials.json                 — Gmail OAuth2 ($(CONFIG_DIR))"; \
+	  echo "  $(GREEN)✓$(RESET) credentials.json — Gmail OAuth2 ($(CONFIG_DIR))"; \
 	else \
-	  echo "  $(YELLOW)!$(RESET) credentials.json NO encontrado   — $(CONFIG_DIR)/credentials.json"; \
-	  echo "      Ejecuta 'make gmail-setup' para instrucciones"; \
-	fi
-	@if [ -f "$(CONFIG_DIR)/gmail_token.json" ]; then \
-	  echo "  $(GREEN)✓$(RESET) gmail_token.json                 — token OAuth2 guardado"; \
-	else \
-	  echo "  $(YELLOW)!$(RESET) gmail_token.json no encontrado   — autentica desde la app (Facturas DIAN)"; \
+	  echo "  $(YELLOW)!$(RESET) credentials.json NO encontrado — $(CONFIG_DIR)/credentials.json"; \
 	fi
 	@echo ""
 
@@ -198,46 +155,114 @@ check-env:
 install-deps:
 	@echo "$(BOLD)Instalando dependencias del sistema (Linux/apt)...$(RESET)"
 	sudo apt-get update -qq
-	sudo apt-get install -y gcc-mingw-w64-x86-64 zip libusb-1.0-0-dev pkg-config
+	sudo apt-get install -y gcc-mingw-w64-x86-64 zip pkg-config
 	@echo "$(GREEN)✓ Listo.$(RESET)"
-	@echo "  Instalar Wails: go install github.com/wailsapp/wails/v2/cmd/wails@latest"
 
-.PHONY: install-deps-mac
-install-deps-mac:
-	@echo "$(BOLD)Instalando dependencias del sistema (macOS/Homebrew)...$(RESET)"
-	@command -v brew >/dev/null 2>&1 || \
-	  (echo "$(RED)Homebrew no encontrado.$(RESET) Instalar desde https://brew.sh" && exit 1)
-	brew install create-dmg libusb
-	@echo "$(GREEN)✓ Listo.$(RESET)"
-	@echo "  Instalar Xcode CLI si falta: xcode-select --install"
-	@echo "  Instalar Wails: go install github.com/wailsapp/wails/v2/cmd/wails@latest"
+# =============================================================================
+#  PORT MANAGEMENT
+# =============================================================================
+
+# Libera el puerto si está ocupado; no falla si ya está libre.
+.PHONY: _free-port
+_free-port:
+	@PID=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
+	if [ -n "$$PID" ]; then \
+	  echo "  $(YELLOW)!$(RESET) Puerto $(PORT) ocupado por PID $$PID — terminando proceso..."; \
+	  kill -TERM $$PID 2>/dev/null || true; \
+	  sleep 1; \
+	  kill -9 $$PID 2>/dev/null || true; \
+	  echo "  $(GREEN)✓$(RESET) Puerto $(PORT) liberado."; \
+	else \
+	  echo "  $(GREEN)✓$(RESET) Puerto $(PORT) disponible."; \
+	fi
+
+.PHONY: stop
+stop:
+	@echo "$(BOLD)Deteniendo servidor en puerto $(PORT)...$(RESET)"
+	@$(MAKE) _free-port PORT=$(PORT)
 
 # =============================================================================
 #  DESARROLLO
 # =============================================================================
 .PHONY: dev
 dev:
-	@echo "$(BOLD)$(CYAN)→ Dev server ($(HOST_OS))...$(RESET)"
-ifeq ($(GO_BUILD_TAGS),)
-	wails dev
-else
-	wails dev -tags $(GO_BUILD_TAGS)
-endif
-
-# Regenera los bindings de Wails tras cambiar structs o métodos expuestos.
-.PHONY: generate
-generate:
-	@echo "$(BOLD)$(CYAN)→ Regenerando bindings Wails...$(RESET)"
-	wails generate module
-	@echo "$(GREEN)✓ Bindings actualizados en frontend/wailsjs/$(RESET)"
+	@echo "$(BOLD)$(CYAN)→ Modo desarrollo: Go :$(PORT) + Vite hot-reload$(RESET)"
+	@$(MAKE) _free-port PORT=$(PORT)
+	@trap 'kill 0' INT TERM; \
+	  PORT=$(PORT) go run -tags "$(GO_BUILD_TAGS)" . & \
+	  sleep 1 && cd $(FRONTEND_DIR) && pnpm dev & \
+	  wait
 
 # =============================================================================
-#  HELPERS INTERNOS — CONFIGS EN BUILD
+#  BUILD
 # =============================================================================
 
-# _copy-env: copia .env a un directorio objetivo.
-# Si .env no existe, copia .env.example como .env.example (avisa al usuario).
-# Uso: $(MAKE) _copy-env TARGET_DIR=build/bin
+# Compila el frontend (pnpm build)
+.PHONY: build-frontend
+build-frontend:
+	@echo "$(BOLD)$(CYAN)→ Compilando frontend...$(RESET)"
+	cd $(FRONTEND_DIR) && pnpm install --frozen-lockfile && pnpm build
+	@echo "$(GREEN)✓ Frontend compilado en $(FRONTEND_DIST)/$(RESET)"
+
+# Compila solo el binario Go (el frontend/dist debe existir para el embed)
+.PHONY: build-go
+build-go:
+	@echo "$(BOLD)$(CYAN)→ Compilando binario Go ($(HOST_OS))...$(RESET)"
+	@echo "  Versión: $(VERSION)  Fecha: $(BUILD_DATE)"
+	@mkdir -p $(BUILD_DIR)
+	go build \
+		-tags "$(GO_BUILD_TAGS)" \
+		-ldflags "$(LDFLAGS)" \
+		-o $(BINARY) \
+		.
+	@echo "$(GREEN)✓ Binario:$(RESET) $(BINARY)  ($$(du -sh $(BINARY) | cut -f1))"
+
+# Build completo: frontend embebido en el binario Go
+.PHONY: build
+build: build-frontend build-go
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@echo ""
+	@echo "$(BOLD)$(GREEN)✓ Build completo.$(RESET)"
+	@echo "  Binario : $(BINARY)"
+	@echo "  Ejecutar: make start  (o PORT=XXXX make start)"
+
+# Build Windows desde Linux (requiere mingw-w64)
+.PHONY: build-win
+build-win: build-frontend
+	@command -v $(WIN_CC) >/dev/null 2>&1 || \
+	  (echo "$(RED)Error:$(RESET) mingw-w64 no encontrado — make install-deps" && exit 1)
+	@echo "$(BOLD)$(CYAN)→ Compilando Windows/amd64...$(RESET)"
+	@mkdir -p $(BUILD_DIR)
+	CC=$(WIN_CC) GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
+	  go build \
+	    -ldflags "$(LDFLAGS) -H windowsgui" \
+	    -o $(BUILD_DIR)/$(APP_NAME).exe \
+	    .
+	@echo "$(GREEN)✓ $(BUILD_DIR)/$(APP_NAME).exe$(RESET)  ($$(du -sh $(BUILD_DIR)/$(APP_NAME).exe | cut -f1))"
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+
+# =============================================================================
+#  EJECUCIÓN
+# =============================================================================
+
+# build + free port + run
+.PHONY: run
+run: build
+	@echo "$(BOLD)$(CYAN)→ Iniciando servidor en http://localhost:$(PORT)$(RESET)"
+	@$(MAKE) _free-port PORT=$(PORT)
+	@cd $(BUILD_DIR) && PORT=$(PORT) ./$(APP_NAME)
+
+# free port + run (sin recompilar)
+.PHONY: start
+start:
+	@[ -f "$(BINARY)" ] || (echo "$(RED)Binario no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
+	@echo "$(BOLD)$(CYAN)→ Iniciando servidor en http://localhost:$(PORT)$(RESET)"
+	@$(MAKE) _free-port PORT=$(PORT)
+	@cd $(BUILD_DIR) && PORT=$(PORT) ./$(APP_NAME)
+
+# =============================================================================
+#  HELPERS INTERNOS
+# =============================================================================
 .PHONY: _copy-env
 _copy-env:
 	@if [ -f "$(ENV_FILE)" ]; then \
@@ -245,70 +270,24 @@ _copy-env:
 	  echo "  $(GREEN)✓$(RESET) .env copiado a $(TARGET_DIR)/"; \
 	elif [ -f "$(ENV_EXAMPLE)" ]; then \
 	  cp "$(ENV_EXAMPLE)" "$(TARGET_DIR)/.env.example"; \
-	  echo "  $(YELLOW)!$(RESET) .env no encontrado — copiado .env.example a $(TARGET_DIR)/"; \
-	  echo "      Renombra $(TARGET_DIR)/.env.example → $(TARGET_DIR)/.env y configura DATABASE_URL"; \
+	  echo "  $(YELLOW)!$(RESET) .env no encontrado — copiado .env.example (renómbralo y ajusta DATABASE_URL)"; \
 	else \
-	  printf 'DATABASE_URL=postgresql://luna:tu_password@localhost:5432/farmacia_db?sslmode=disable\nJWT_SECRET_KEY=cambia_esto_por_una_clave_segura_de_32_caracteres_minimo\n' \
+	  printf 'DATABASE_URL=postgresql://usuario:password@localhost:5432/farmacia_db?sslmode=disable\nJWT_SECRET_KEY=cambia_esto_por_una_clave_segura_de_32_caracteres_minimo\nPORT=$(PORT)\n' \
 	    > "$(TARGET_DIR)/.env.example"; \
-	  echo "  $(YELLOW)!$(RESET) .env ni .env.example encontrados — generado .env.example mínimo en $(TARGET_DIR)/"; \
+	  echo "  $(YELLOW)!$(RESET) .env.example mínimo generado en $(TARGET_DIR)/"; \
 	fi
 
-# _copy-creds: copia credentials.json al directorio de build.
-#   Prioridad:
-#     1. credentials.json en la raíz del proyecto (dev local)
-#     2. credentials.json instalado en ~/.config/goFarmacia/
-#     3. credentials.example.json como plantilla (fallback)
-#
-# Para builds de DISTRIBUCIÓN (dist-*) solo se incluye el ejemplo — los
-# secretos reales no deben empaquetarse.
-.PHONY: _copy-creds
-_copy-creds:
-	@if [ -f "credentials.json" ]; then \
-	  cp "credentials.json" "$(TARGET_DIR)/credentials.json"; \
-	  echo "  $(GREEN)✓$(RESET) credentials.json copiado desde raíz del proyecto"; \
-	elif [ -f "$(CREDS_DEST)" ]; then \
-	  cp "$(CREDS_DEST)" "$(TARGET_DIR)/credentials.json"; \
-	  echo "  $(GREEN)✓$(RESET) credentials.json copiado desde $(CONFIG_DIR)/"; \
-	elif [ -f "$(CREDS_EXAMPLE)" ]; then \
-	  cp "$(CREDS_EXAMPLE)" "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
-	  echo "  $(YELLOW)!$(RESET) credentials.json no encontrado — copiado credentials.example.json como plantilla"; \
-	  echo "      Configura las credenciales en Ajustes → Credenciales Gmail de la app."; \
-	else \
-	  printf '{"installed":{"client_id":"","client_secret":"","redirect_uris":["http://localhost:8094/gmail/oauth2/callback"]}}\n' \
-	    > "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
-	  echo "  $(YELLOW)!$(RESET) credentials.example.json generado en $(TARGET_DIR)/"; \
-	fi
-
-# _copy-creds-example: solo el template (para paquetes de distribución).
 .PHONY: _copy-creds-example
 _copy-creds-example:
 	@if [ -f "$(CREDS_EXAMPLE)" ]; then \
 	  cp "$(CREDS_EXAMPLE)" "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
-	  echo "  $(GREEN)✓$(RESET) credentials.example.json copiado a $(TARGET_DIR)/"; \
+	  echo "  $(GREEN)✓$(RESET) credentials.example.json copiado"; \
 	else \
 	  printf '{"installed":{"client_id":"","client_secret":"","redirect_uris":["http://localhost:8094/gmail/oauth2/callback"]}}\n' \
 	    > "$(TARGET_DIR)/$(CREDS_EXAMPLE)"; \
 	  echo "  $(YELLOW)!$(RESET) credentials.example.json generado en $(TARGET_DIR)/"; \
 	fi
 
-# _build-sigfix: compila libsigfix.so (LD_PRELOAD shim para SA_ONSTACK).
-# Solo necesario en Linux. En macOS/Windows no se genera.
-SIGFIX_SRC := sigfix.c
-.PHONY: _build-sigfix
-_build-sigfix:
-ifeq ($(UNAME), Linux)
-	@if [ -f "$(SIGFIX_SRC)" ]; then \
-	  gcc -shared -fPIC -O2 -o "$(TARGET_DIR)/libsigfix.so" "$(SIGFIX_SRC)" -ldl; \
-	  printf '#!/bin/bash\nSCRIPT_DIR="$$(cd "$$(dirname "$${BASH_SOURCE[0]}")" && pwd)"\nexec env LD_PRELOAD="$$SCRIPT_DIR/libsigfix.so" "$$SCRIPT_DIR/$(APP_NAME)" "$$@"\n' \
-	    > "$(TARGET_DIR)/$(APP_NAME).sh"; \
-	  chmod +x "$(TARGET_DIR)/$(APP_NAME).sh"; \
-	  echo "  $(GREEN)✓$(RESET) libsigfix.so + $(APP_NAME).sh generados en $(TARGET_DIR)/"; \
-	else \
-	  echo "  $(YELLOW)!$(RESET) sigfix.c no encontrado — omitiendo shim de señales"; \
-	fi
-endif
-
-# _copy-common: archivos de acompañamiento para todos los paquetes dist.
 .PHONY: _copy-common
 _copy-common:
 	@$(MAKE) _copy-env TARGET_DIR="$(TARGET_DIR)"
@@ -317,172 +296,18 @@ _copy-common:
 	@[ -f CHANGELOG.md ] && cp CHANGELOG.md "$(TARGET_DIR)/" || true
 
 # =============================================================================
-#  BUILD — NATIVO (detecta SO actual)
-# =============================================================================
-.PHONY: build
-build:
-	@echo "$(BOLD)$(CYAN)→ Compilando para $(HOST_OS) ($(HOST_PLATFORM))...$(RESET)"
-	@echo "  Versión: $(VERSION)  Fecha: $(BUILD_DATE)"
-ifeq ($(UNAME), Darwin)
-	$(MAKE) build-mac
-else
-	wails build \
-		-platform linux/amd64 \
-		-tags "$(GO_BUILD_TAGS)" \
-		-ldflags "$(LDFLAGS)" \
-		-clean \
-		-o $(APP_NAME)
-	@echo ""
-	@echo "$(GREEN)✓ Binario:$(RESET) $(BUILD_DIR)/$(APP_NAME)"
-	@ls -lh $(BUILD_DIR)/$(APP_NAME)
-	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _build-sigfix TARGET_DIR=$(BUILD_DIR)
-endif
-
-.PHONY: build-debug
-build-debug:
-	@echo "$(BOLD)$(YELLOW)→ Build debug con devtools ($(HOST_OS))...$(RESET)"
-ifeq ($(UNAME), Darwin)
-	wails build \
-		-platform $(HOST_PLATFORM) \
-		-ldflags "$(LDFLAGS)" \
-		-debug -devtools \
-		-o $(APP_NAME)-debug.app
-else
-	wails build \
-		-platform linux/amd64 \
-		-tags "$(GO_BUILD_TAGS)" \
-		-ldflags "$(LDFLAGS)" \
-		-debug -devtools \
-		-o $(APP_NAME)-debug
-	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
-endif
-
-# =============================================================================
-#  BUILD — macOS  [debe ejecutarse en una Mac]
-# =============================================================================
-.PHONY: _guard-mac
-_guard-mac:
-	@[ "$(UNAME)" = "Darwin" ] || \
-	  (echo "$(RED)Error:$(RESET) Los targets build-mac* deben ejecutarse en macOS." && \
-	   echo "       macOS no permite cross-compilación desde otros sistemas operativos." && exit 1)
-
-.PHONY: build-mac
-build-mac: _guard-mac
-	@echo "$(BOLD)$(CYAN)→ Compilando macOS universal (.app)...$(RESET)"
-	@echo "  Versión: $(VERSION)  Fecha: $(BUILD_DATE)"
-	wails build \
-		-platform darwin/universal \
-		-ldflags "$(LDFLAGS)" \
-		-clean
-	@echo ""
-	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME).app"
-	@du -sh $(BUILD_DIR)/$(APP_NAME).app
-	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
-
-.PHONY: build-mac-arm64
-build-mac-arm64: _guard-mac
-	@echo "$(BOLD)$(CYAN)→ Compilando macOS arm64 (Apple Silicon)...$(RESET)"
-	wails build \
-		-platform darwin/arm64 \
-		-ldflags "$(LDFLAGS)" \
-		-clean \
-		-o $(APP_NAME)-arm64.app
-	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME)-arm64.app"
-	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
-
-.PHONY: build-mac-amd64
-build-mac-amd64: _guard-mac
-	@echo "$(BOLD)$(CYAN)→ Compilando macOS amd64 (Intel)...$(RESET)"
-	wails build \
-		-platform darwin/amd64 \
-		-ldflags "$(LDFLAGS)" \
-		-clean \
-		-o $(APP_NAME)-amd64.app
-	@echo "$(GREEN)✓ Bundle:$(RESET) $(BUILD_DIR)/$(APP_NAME)-amd64.app"
-	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
-
-# =============================================================================
-#  BUILD — Windows  [desde Linux/Mac requiere mingw-w64]
-# =============================================================================
-.PHONY: build-win
-build-win:
-	@command -v $(WIN_CC) >/dev/null 2>&1 || \
-	  (echo "$(RED)Error:$(RESET) mingw-w64 no encontrado." && \
-	   echo "  Linux: make install-deps" && \
-	   echo "  Mac:   brew install mingw-w64" && exit 1)
-	@echo "$(BOLD)$(CYAN)→ Compilando Windows/amd64...$(RESET)"
-	@echo "  Versión: $(VERSION)  Fecha: $(BUILD_DATE)"
-	CC=$(WIN_CC) wails build \
-		-platform windows/amd64 \
-		-ldflags "$(LDFLAGS) -H windowsgui" \
-		-clean \
-		-o $(APP_NAME).exe
-	@echo ""
-	@echo "$(GREEN)✓ Binario:$(RESET) $(BUILD_DIR)/$(APP_NAME).exe"
-	@ls -lh $(BUILD_DIR)/$(APP_NAME).exe
-	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
-	@$(MAKE) _copy-creds TARGET_DIR=$(BUILD_DIR)
-
-# =============================================================================
-#  BUILD — TODOS
-# =============================================================================
-.PHONY: build-all
-build-all:
-ifeq ($(UNAME), Darwin)
-	$(MAKE) build-mac build-win
-else
-	$(MAKE) build build-win
-endif
-
-# =============================================================================
 #  DISTRIBUCIÓN
 # =============================================================================
-
-# ── Linux ─────────────────────────────────────────────────────────────────────
 .PHONY: dist-linux
 dist-linux: build
 	@echo "$(BOLD)$(CYAN)→ Empaquetando Linux...$(RESET)"
 	@mkdir -p $(DIST_DIR)/linux
-	@cp $(BUILD_DIR)/$(APP_NAME) $(DIST_DIR)/linux/
+	@cp $(BINARY) $(DIST_DIR)/linux/
 	@$(MAKE) _copy-common TARGET_DIR=$(DIST_DIR)/linux
 	@cd $(DIST_DIR) && zip -r $(APP_NAME)-$(VERSION)-linux-amd64.zip linux/
 	@echo "$(GREEN)✓$(RESET) $(DIST_DIR)/$(APP_NAME)-$(VERSION)-linux-amd64.zip"
 	@ls -lh $(DIST_DIR)/$(APP_NAME)-$(VERSION)-linux-amd64.zip
 
-# ── macOS ─────────────────────────────────────────────────────────────────────
-.PHONY: dist-mac
-dist-mac: build-mac
-	@echo "$(BOLD)$(CYAN)→ Empaquetando macOS...$(RESET)"
-	@mkdir -p $(DIST_DIR)/mac
-	@cp -r $(BUILD_DIR)/$(APP_NAME).app $(DIST_DIR)/mac/
-	@$(MAKE) _copy-common TARGET_DIR=$(DIST_DIR)/mac
-	@if command -v create-dmg >/dev/null 2>&1; then \
-	  echo "  Creando DMG con create-dmg..."; \
-	  create-dmg \
-	    --volname "$(APP_NAME) $(VERSION)" \
-	    --window-size 540 380 \
-	    --icon-size 96 \
-	    --icon "$(APP_NAME).app" 130 190 \
-	    --app-drop-link 410 190 \
-	    --no-internet-enable \
-	    "$(DIST_DIR)/$(APP_NAME)-$(VERSION)-macos-universal.dmg" \
-	    "$(DIST_DIR)/mac/" ; \
-	  echo "$(GREEN)✓$(RESET) $(DIST_DIR)/$(APP_NAME)-$(VERSION)-macos-universal.dmg" ; \
-	  ls -lh "$(DIST_DIR)/$(APP_NAME)-$(VERSION)-macos-universal.dmg" ; \
-	else \
-	  echo "  create-dmg no disponible — generando ZIP..."; \
-	  cd $(DIST_DIR) && zip -r $(APP_NAME)-$(VERSION)-macos-universal.zip mac/ ; \
-	  echo "$(GREEN)✓$(RESET) $(DIST_DIR)/$(APP_NAME)-$(VERSION)-macos-universal.zip" ; \
-	  ls -lh "$(DIST_DIR)/$(APP_NAME)-$(VERSION)-macos-universal.zip" ; \
-	fi
-
-# ── Windows ───────────────────────────────────────────────────────────────────
 .PHONY: dist-win
 dist-win: build-win
 	@echo "$(BOLD)$(CYAN)→ Empaquetando Windows...$(RESET)"
@@ -493,17 +318,12 @@ dist-win: build-win
 	@echo "$(GREEN)✓$(RESET) $(DIST_DIR)/$(APP_NAME)-$(VERSION)-windows-amd64.zip"
 	@ls -lh $(DIST_DIR)/$(APP_NAME)-$(VERSION)-windows-amd64.zip
 
-# ── Todos ─────────────────────────────────────────────────────────────────────
 .PHONY: dist
 dist:
-ifeq ($(UNAME), Darwin)
-	$(MAKE) dist-mac dist-win
-else
 	$(MAKE) dist-linux dist-win
-endif
 	@echo ""
 	@echo "$(BOLD)$(GREEN)✓ Distribuciones en $(DIST_DIR)/$(RESET)"
-	@ls -lh $(DIST_DIR)/*.zip $(DIST_DIR)/*.dmg 2>/dev/null || true
+	@ls -lh $(DIST_DIR)/*.zip 2>/dev/null || true
 
 # =============================================================================
 #  BASE DE DATOS
@@ -511,10 +331,9 @@ endif
 .PHONY: db-create-admin
 db-create-admin:
 	@([ -n "$(NOMBRE)" ] && [ -n "$(APELLIDO)" ] && [ -n "$(EMAIL)" ] && [ -n "$(CEDULA)" ] && [ -n "$(PASSWORD)" ]) || \
-	  (echo "$(RED)Uso: make db-create-admin NOMBRE=Juan APELLIDO=Pérez EMAIL=admin@ejemplo.com CEDULA=12345678 PASSWORD=miClave123$(RESET)" && exit 1)
-	@[ -f .env ] || (echo "$(RED)Error: .env no encontrado. Copia .env.example a .env y configura DATABASE_URL.$(RESET)" && exit 1)
-	@echo "$(BOLD)$(CYAN)→ Creando administrador inicial...$(RESET)"
-	@cd cmd/initadmin && go run . \
+	  (echo "$(RED)Uso: make db-create-admin NOMBRE=Juan APELLIDO=Pérez EMAIL=admin@ejemplo.com CEDULA=12345678 PASSWORD=miClave$(RESET)" && exit 1)
+	@[ -f .env ] || (echo "$(RED)Error: .env no encontrado.$(RESET)" && exit 1)
+	cd cmd/initadmin && go run . \
 		-nombre   "$(NOMBRE)" \
 		-apellido "$(APELLIDO)" \
 		-email    "$(EMAIL)" \
@@ -528,9 +347,9 @@ db-reset:
 ifdef SOURCE
 	@echo "  Origen  : $(SOURCE)"
 else
-	@echo "  Origen  : backend/db/backup_supabase.sql  (por defecto)"
+	@echo "  Origen  : backend/db/backup_supabase.sql (por defecto)"
 endif
-	@echo "  $(YELLOW)ADVERTENCIA: borrará todos los datos actuales del destino.$(RESET)"
+	@echo "  $(YELLOW)ADVERTENCIA: borrará todos los datos actuales.$(RESET)"
 	@read -p "  ¿Continuar? [s/N] " confirm && [ "$$confirm" = "s" ] || exit 0
 	@bash backend/python/reset_and_import.sh "$(SOURCE)"
 
@@ -559,136 +378,58 @@ db-make-admin:
 	@[ -f .env ] || (echo "$(RED).env no encontrado.$(RESET)" && exit 1)
 	@export $$(grep -v '^#' .env | xargs) && \
 	  psql "$$DATABASE_URL" -c \
-	    "UPDATE vendedors SET role='admin' \
-	     WHERE email='$(EMAIL)' AND deleted_at IS NULL \
-	     RETURNING nombre, email, role;" \
-	  2>/dev/null || echo "$(RED)Error o usuario no encontrado.$(RESET)"
+	    "UPDATE vendedors SET role='admin' WHERE email='$(EMAIL)' AND deleted_at IS NULL RETURNING nombre, email, role;" \
+	  2>/dev/null || echo "$(RED)Error de conexión.$(RESET)"
 
 # =============================================================================
-#  GMAIL / FACTURAS DIAN
+#  GMAIL
 # =============================================================================
-
-# Muestra instrucciones de configuración y verifica el estado actual.
 .PHONY: gmail-setup
 gmail-setup:
+	@echo "$(BOLD)Configuración Gmail OAuth2:$(RESET)"
 	@echo ""
-	@echo "$(BOLD)$(CYAN)  Configuración Gmail API — Facturas Electrónicas DIAN$(RESET)"
+	@echo "  1. Ve a https://console.cloud.google.com/apis/credentials"
+	@echo "  2. Crea credenciales OAuth 2.0 → Aplicación de escritorio"
+	@echo "  3. Descarga el JSON y guárdalo como credentials.json en la raíz del proyecto"
+	@echo "     O en: $(CONFIG_DIR)/credentials.json"
 	@echo ""
-	@echo "$(BOLD)Pasos para habilitar Gmail OAuth2:$(RESET)"
-	@echo "  1. Ir a https://console.cloud.google.com"
-	@echo "  2. Crear proyecto o seleccionar uno existente"
-	@echo "  3. Habilitar: APIs y servicios → Biblioteca → Gmail API"
-	@echo "  4. Crear credenciales: APIs y servicios → Credenciales"
-	@echo "     Tipo: OAuth 2.0 → Aplicación de escritorio"
-	@echo "  5. En 'URIs de redirección autorizados' agregar:"
-	@echo "     $(CYAN)http://localhost:8094/gmail/oauth2/callback$(RESET)"
-	@echo "  6. Descargar JSON → renombrar a $(BOLD)credentials.json$(RESET)"
-	@echo "  7. Colocar el archivo en: $(BOLD)$(CONFIG_DIR)/credentials.json$(RESET)"
-	@echo "  8. Abrir la app → sección Compras → Facturas Electrónicas → Conectar Gmail"
-	@echo ""
-	@echo "$(BOLD)Archivo ejemplo disponible:$(RESET) credentials.example.json"
-	@echo ""
-	@echo "$(BOLD)Estado actual:$(RESET)"
-	@mkdir -p "$(CONFIG_DIR)"
 	@if [ -f "$(CREDS_DEST)" ]; then \
-	  echo "  $(GREEN)✓$(RESET) credentials.json  — PRESENTE en $(CONFIG_DIR)"; \
+	  echo "  $(GREEN)✓$(RESET) credentials.json encontrado en $(CONFIG_DIR)/"; \
 	else \
-	  echo "  $(RED)✗$(RESET) credentials.json  — NO encontrado"; \
-	  echo "      Destino esperado: $(CREDS_DEST)"; \
+	  echo "  $(YELLOW)!$(RESET) credentials.json NO encontrado"; \
 	fi
-	@if [ -f "$(CONFIG_DIR)/gmail_token.json" ]; then \
-	  echo "  $(GREEN)✓$(RESET) gmail_token.json  — autenticación guardada"; \
-	else \
-	  echo "  $(YELLOW)!$(RESET) gmail_token.json  — pendiente (autentica desde la app)"; \
-	fi
-	@echo ""
 
-# Revoca el token OAuth2 guardado (el usuario deberá re-autenticar).
 .PHONY: gmail-revoke
 gmail-revoke:
-	@if [ -f "$(CONFIG_DIR)/gmail_token.json" ]; then \
-	  rm "$(CONFIG_DIR)/gmail_token.json"; \
-	  echo "$(GREEN)✓$(RESET) gmail_token.json eliminado — re-autentica desde la app."; \
-	else \
-	  echo "$(YELLOW)!$(RESET) gmail_token.json no existía en $(CONFIG_DIR)/"; \
-	fi
+	@[ -f "$(CONFIG_DIR)/gmail_token.json" ] && \
+	  rm "$(CONFIG_DIR)/gmail_token.json" && \
+	  echo "$(GREEN)✓$(RESET) Token Gmail eliminado — se pedirá re-autenticación." || \
+	  echo "$(YELLOW)!$(RESET) gmail_token.json no encontrado."
 
 # =============================================================================
 #  UTILIDADES
 # =============================================================================
-
-# ── Acceso directo de escritorio ──────────────────────────────────────────────
-ICON_SRC  := $(CURDIR)/icono_luna.png
-ICON_NAME := $(APP_NAME)
-ICON_DEST := $(HOME)/.local/share/icons/hicolor/256x256/apps/$(ICON_NAME).png
-
-.PHONY: shortcut
-shortcut:
-ifeq ($(UNAME), Darwin)
-	@echo "$(BOLD)$(CYAN)→ Creando acceso directo macOS...$(RESET)"
-	@test -d "$(BUILD_DIR)/$(APP_NAME).app" || \
-	  (echo "$(RED)Error: .app no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
-	@rm -f ~/Desktop/$(APP_NAME).app
-	@ln -s "$(abspath $(BUILD_DIR)/$(APP_NAME).app)" ~/Desktop/$(APP_NAME).app
-	@echo "$(GREEN)✓ Alias creado:$(RESET) ~/Desktop/$(APP_NAME).app"
-else
-	@echo "$(BOLD)$(CYAN)→ Creando acceso directo en escritorio (Linux)...$(RESET)"
-	@test -f "$(BUILD_DIR)/$(APP_NAME)" || \
-	  (echo "$(RED)Error: Binario no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
-	@$(MAKE) _build-sigfix TARGET_DIR=$(BUILD_DIR)
-	@mkdir -p ~/.local/share/icons/hicolor/256x256/apps
-	@install -m644 "$(ICON_SRC)" "$(ICON_DEST)"
-	@gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor 2>/dev/null || true
-	@mkdir -p ~/.local/share/applications
-	@printf '[Desktop Entry]\nVersion=1.0\nName=Droguería Luna\nGenericName=Gestión Farmacéutica\nComment=Sistema de gestión farmacéutica\nExec=%s\nPath=%s\nIcon=goFarmacia\nTerminal=false\nType=Application\nCategories=Office;\nStartupWMClass=$(APP_NAME)\nKeywords=farmacia;drogueria;pos;ventas;inventario;\n' \
-	  "$(abspath $(BUILD_DIR)/$(APP_NAME).sh)" \
-	  "$(abspath $(BUILD_DIR))" \
-	  > ~/.local/share/applications/$(APP_NAME).desktop
-	@chmod +x ~/.local/share/applications/$(APP_NAME).desktop
-	@update-desktop-database ~/.local/share/applications 2>/dev/null || true
-	@xdg-desktop-menu forceupdate 2>/dev/null || true
-	@mkdir -p ~/Desktop
-	@install -m755 ~/.local/share/applications/$(APP_NAME).desktop ~/Desktop/$(APP_NAME).desktop
-	@gio set ~/Desktop/$(APP_NAME).desktop metadata::trusted true 2>/dev/null || true
-	@echo "$(GREEN)✓ Acceso directo creado$(RESET)"
-	@echo "  Launcher: $(BUILD_DIR)/$(APP_NAME).sh (usa LD_PRELOAD para fix de señales)"
-	@echo "  Ícono   : $(ICON_DEST)"
-	@echo "  Menú    : ~/.local/share/applications/$(APP_NAME).desktop"
-	@echo "  Desktop : ~/Desktop/$(APP_NAME).desktop"
-	@echo "  $(YELLOW)Si no aparece en Aplicaciones, cierra sesión y vuelve a entrar.$(RESET)"
-endif
+.PHONY: tidy
+tidy:
+	@echo "$(BOLD)Actualizando dependencias...$(RESET)"
+	go mod tidy
+	cd $(FRONTEND_DIR) && pnpm install
+	@echo "$(GREEN)✓ Listo.$(RESET)"
 
 .PHONY: version
 version:
-	@echo "$(APP_NAME) $(VERSION)  ($(HOST_OS)/$(ARCH) · $(BUILD_DATE))"
-
-.PHONY: tidy
-tidy:
-	@echo "$(BOLD)→ go mod tidy$(RESET)"
-	go mod tidy
-	@echo "$(BOLD)→ pnpm install$(RESET)"
-	cd frontend && pnpm install
+	@echo "$(APP_NAME) $(VERSION) — $(BUILD_DATE)"
+	@echo "Go: $$(go version)"
+	@echo "OS: $(HOST_OS)/$(ARCH)"
 
 .PHONY: clean
 clean:
-	@echo "$(BOLD)$(YELLOW)→ Limpiando artefactos...$(RESET)"
-	@rm -f  $(BUILD_DIR)/$(APP_NAME)
-	@rm -f  $(BUILD_DIR)/$(APP_NAME).exe
-	@rm -f  $(BUILD_DIR)/$(APP_NAME)-debug
-	@rm -f  $(BUILD_DIR)/.env
-	@rm -f  $(BUILD_DIR)/.env.example
-	@rm -f  $(BUILD_DIR)/$(CREDS_EXAMPLE)
-	@rm -rf $(BUILD_DIR)/$(APP_NAME).app
-	@rm -rf $(BUILD_DIR)/$(APP_NAME)-arm64.app
-	@rm -rf $(BUILD_DIR)/$(APP_NAME)-amd64.app
-	@rm -rf $(BUILD_DIR)/$(APP_NAME)-debug.app
-	@rm -rf $(DIST_DIR)/linux $(DIST_DIR)/windows $(DIST_DIR)/mac
-	@rm -f  $(DIST_DIR)/$(APP_NAME)-*.zip
-	@rm -f  $(DIST_DIR)/$(APP_NAME)-*.dmg
-	@echo "$(GREEN)✓ Limpio.$(RESET)"
+	@echo "$(BOLD)Limpiando artefactos...$(RESET)"
+	rm -rf $(BUILD_DIR) $(DIST_DIR)
+	@echo "$(GREEN)✓ Limpiado.$(RESET)"
 
 .PHONY: clean-all
 clean-all: clean
-	@echo "$(BOLD)$(YELLOW)→ Limpiando frontend...$(RESET)"
-	@rm -rf frontend/node_modules frontend/dist
-	@echo "$(GREEN)✓ Frontend limpio.$(RESET)"
+	@echo "$(BOLD)Limpiando node_modules y dist frontend...$(RESET)"
+	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/dist
+	@echo "$(GREEN)✓ Limpiado todo.$(RESET)"
