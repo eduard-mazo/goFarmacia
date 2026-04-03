@@ -9,7 +9,6 @@ import { h, ref, onMounted, watch, computed } from "vue";
 import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -18,14 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   Pagination,
   PaginationContent,
   PaginationEllipsis,
@@ -33,7 +24,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, Eye, Loader2, Search, Receipt } from "lucide-vue-next";
+import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Loader2, Search, Receipt } from "lucide-vue-next";
 import { backend } from "@/../wailsjs/go/models";
 import {
   ObtenerFacturasPaginado,
@@ -97,40 +88,50 @@ const formatDate = (dateString: string) => {
   });
 };
 
+function sortHeader(label: string) {
+  return ({ column }: { column: any }) =>
+    h("button", {
+      class: "flex items-center gap-1 group/sort text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors select-none",
+      onClick: () => column.toggleSorting(),
+    }, [
+      label,
+      h(column.getIsSorted() === "asc" ? ArrowUp
+        : column.getIsSorted() === "desc" ? ArrowDown
+        : ArrowUpDown, {
+        class: `h-3 w-3 ${column.getIsSorted() ? "text-primary" : "opacity-30 group-hover/sort:opacity-60"}`,
+      }),
+    ]);
+}
+
 const columns: ColumnDef<backend.Factura>[] = [
-  { accessorKey: "NumeroFactura", header: "N° Factura" },
+  {
+    accessorKey: "NumeroFactura",
+    header: sortHeader("N° Factura"),
+    cell: ({ row }) => h("div", { class: "font-mono text-muted-foreground" }, row.getValue("NumeroFactura")),
+  },
   {
     accessorKey: "FechaEmision",
-    header: ({ column }) =>
-      h("button", {
-        class: "flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors select-none",
-        onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-      }, ["Fecha", h(ArrowUpDown, { class: "h-3 w-3 opacity-50" })]),
-    cell: ({ row }) => formatDate(row.getValue("FechaEmision")),
+    header: sortHeader("Fecha"),
+    cell: ({ row }) => h("div", { class: "text-muted-foreground" }, formatDate(row.getValue("FechaEmision"))),
   },
   {
     accessorFn: (row) => `${row.Cliente.Nombre} ${row.Cliente.Apellido}`,
     id: "Cliente",
     header: "Cliente",
+    cell: ({ row }) => h("div", { class: "uppercase font-medium truncate max-w-[200px]" },
+      `${row.original.Cliente.Nombre} ${row.original.Cliente.Apellido}`),
   },
   {
     accessorFn: (row) => row.Vendedor.Nombre,
     id: "Vendedor",
     header: "Vendedor",
+    cell: ({ row }) => h("div", { class: "text-muted-foreground" }, row.original.Vendedor.Nombre),
   },
   {
     accessorKey: "Total",
-    header: ({ column }) =>
-      h("button", {
-        class: "flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors select-none",
-        onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-      }, ["Total", h(ArrowUpDown, { class: "h-3 w-3 opacity-50" })]),
+    header: sortHeader("Total"),
     cell: ({ row }) =>
-      h(
-        "div",
-        { class: "text-right font-medium" },
-        formatCurrency(row.getValue("Total"))
-      ),
+      h("div", { class: "font-medium tabular-nums" }, formatCurrency(row.getValue("Total"))),
   },
   {
     id: "actions",
@@ -232,6 +233,18 @@ watch(busqueda, () => {
         <Search class="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50 pointer-events-none" />
         <Input v-model="busqueda" class="pl-7 h-7 text-xs w-56" placeholder="Buscar por N° Factura, cliente..." />
       </div>
+      <template v-if="busqueda">
+        <span class="text-[10px] text-muted-foreground border border-dashed rounded px-2 py-0.5 flex items-center gap-1">
+          <Search class="h-2.5 w-2.5" />
+          {{ totalFacturas }} resultado{{ totalFacturas !== 1 ? 's' : '' }} en todo el historial
+        </span>
+      </template>
+      <template v-if="sorting.length">
+        <span class="text-[10px] text-muted-foreground border border-dashed rounded px-2 py-0.5 flex items-center gap-1">
+          <component :is="sorting[0]?.desc ? ArrowDown : ArrowUp" class="h-2.5 w-2.5" />
+          Ordenado por {{ sorting[0]?.id }} (todo el historial)
+        </span>
+      </template>
     </div>
 
     <!-- Table area -->
@@ -267,8 +280,11 @@ watch(busqueda, () => {
             </tr>
           </template>
           <tr v-else>
-            <td :colspan="columns.length + 1" class="h-32 text-center text-sm text-muted-foreground">
-              No se encontraron facturas.
+            <td :colspan="columns.length + 1" class="h-40 text-center">
+              <div class="flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Receipt class="h-8 w-8 opacity-20" />
+                <span class="text-xs">No se encontraron facturas</span>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -288,7 +304,7 @@ watch(busqueda, () => {
               <SelectValue />
             </SelectTrigger>
             <SelectContent side="top">
-              <SelectItem v-for="size in [10, 20, 50]" :key="size" :value="`${size}`" class="text-xs">{{ size }}</SelectItem>
+              <SelectItem v-for="size in [10, 25, 50]" :key="size" :value="`${size}`" class="text-xs">{{ size }}</SelectItem>
             </SelectContent>
           </Select>
         </div>

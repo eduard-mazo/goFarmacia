@@ -22,14 +22,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   Pagination,
   PaginationContent,
   PaginationEllipsis,
@@ -37,7 +29,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, SlidersHorizontal, Search } from "lucide-vue-next";
+import { ArrowUpDown, ArrowUp, ArrowDown, SlidersHorizontal, Search, Package } from "lucide-vue-next";
 import { backend } from "@/../wailsjs/go/models";
 import { ObtenerProductosPaginado } from "@/../wailsjs/go/backend/Db";
 import { toast } from "vue-sonner";
@@ -80,49 +72,54 @@ const cargarProductos = async () => {
   }
 };
 
+function sortHeader(label: string) {
+  return ({ column }: { column: any }) =>
+    h("button", {
+      class: "flex items-center gap-1 group/sort text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors select-none",
+      onClick: () => column.toggleSorting(),
+    }, [
+      label,
+      h(column.getIsSorted() === "asc" ? ArrowUp
+        : column.getIsSorted() === "desc" ? ArrowDown
+        : ArrowUpDown, {
+        class: `h-3 w-3 ${column.getIsSorted() ? "text-primary" : "opacity-30 group-hover/sort:opacity-60"}`,
+      }),
+    ]);
+}
+
 const columns: ColumnDef<backend.Producto>[] = [
-  { accessorKey: "Codigo", header: "Código" },
+  {
+    accessorKey: "Codigo",
+    header: sortHeader("Código"),
+    cell: ({ row }) => h("div", { class: "font-mono text-muted-foreground" }, row.getValue("Codigo")),
+  },
   {
     accessorKey: "Nombre",
-    header: "Nombre",
-    // Se agrega el renderizado de celda para aplicar estilos
+    header: sortHeader("Nombre"),
     cell: ({ row }) =>
-      h(
-        "div",
-        { class: "uppercase max-w-[600px] truncate" },
-        row.getValue("Nombre")
-      ),
+      h("div", { class: "uppercase max-w-[600px] truncate font-medium" }, row.getValue("Nombre")),
   },
   {
     accessorKey: "PrecioVenta",
-    header: "Precio Venta",
+    header: sortHeader("Precio Venta"),
     cell: ({ row }) =>
-      h(
-        "div",
-        { class: "text-right font-medium" },
-        new Intl.NumberFormat("es-CO", {
-          style: "currency",
-          currency: "COP",
-        }).format(parseFloat(row.getValue("PrecioVenta")))
+      h("div", { class: "font-medium tabular-nums" },
+        new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })
+          .format(parseFloat(row.getValue("PrecioVenta")))
       ),
   },
   {
     accessorKey: "Stock",
-    header: ({ column }) =>
-      h(
-        Button,
-        {
-          variant: "ghost",
-          onClick: () => column.toggleSorting(column.getIsSorted() === "asc"),
-        },
-        () => ["Stock", h(ArrowUpDown, { class: "ml-2 h-4 w-4" })]
-      ),
+    header: sortHeader("Stock"),
     cell: ({ row }) => {
       const stock = row.getValue("Stock") as number;
-      let stockClass = "";
-      if (stock <= 5) stockClass = "text-red-500 font-bold";
-      else if (stock <= 10) stockClass = "text-yellow-500 font-bold";
-      return h("div", { class: `text-center ${stockClass}` }, stock);
+      return h("div", {
+        class: `inline-flex items-center justify-center min-w-[2rem] px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums ${
+          stock === 0 ? "bg-red-100 text-red-700"
+          : stock <= 10 ? "bg-amber-100 text-amber-700"
+          : "bg-emerald-50 text-emerald-700"
+        }`,
+      }, String(stock));
     },
   },
   {
@@ -220,6 +217,18 @@ watch(busqueda, () => {
         <Search class="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50 pointer-events-none" />
         <Input v-model="busqueda" class="pl-7 h-7 text-xs w-56" placeholder="Buscar por nombre o código..." />
       </div>
+      <template v-if="busqueda">
+        <span class="text-[10px] text-muted-foreground border border-dashed rounded px-2 py-0.5 flex items-center gap-1">
+          <Search class="h-2.5 w-2.5" />
+          {{ totalProductos }} resultado{{ totalProductos !== 1 ? 's' : '' }} en todo el inventario
+        </span>
+      </template>
+      <template v-if="sorting.length">
+        <span class="text-[10px] text-muted-foreground border border-dashed rounded px-2 py-0.5 flex items-center gap-1">
+          <component :is="sorting[0]?.desc ? ArrowDown : ArrowUp" class="h-2.5 w-2.5" />
+          Ordenado por {{ sorting[0]?.id }} (todo el inventario)
+        </span>
+      </template>
     </div>
 
     <!-- Table area -->
@@ -255,8 +264,11 @@ watch(busqueda, () => {
             </tr>
           </template>
           <tr v-else>
-            <td :colspan="columns.length + 1" class="h-32 text-center text-sm text-muted-foreground">
-              No se encontraron productos.
+            <td :colspan="columns.length + 1" class="h-40 text-center">
+              <div class="flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Package class="h-8 w-8 opacity-20" />
+                <span class="text-xs">No se encontraron productos</span>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -276,7 +288,7 @@ watch(busqueda, () => {
               <SelectValue />
             </SelectTrigger>
             <SelectContent side="top">
-              <SelectItem v-for="size in [10, 20, 50]" :key="size" :value="`${size}`" class="text-xs">{{ size }}</SelectItem>
+              <SelectItem v-for="size in [10, 25, 50]" :key="size" :value="`${size}`" class="text-xs">{{ size }}</SelectItem>
             </SelectContent>
           </Select>
         </div>

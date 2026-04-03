@@ -297,6 +297,12 @@ watch(busqueda, () => {
         <Search class="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50 pointer-events-none" />
         <Input v-model="busqueda" class="pl-7 h-7 text-xs w-64" placeholder="Buscar por nombre, NIT o email..." />
       </div>
+      <template v-if="busqueda">
+        <span class="text-[10px] text-muted-foreground border border-dashed rounded px-2 py-0.5 flex items-center gap-1">
+          <Search class="h-2.5 w-2.5" />
+          {{ totalProveedores }} resultado{{ totalProveedores !== 1 ? 's' : '' }} en todos los proveedores
+        </span>
+      </template>
     </div>
 
     <!-- Table -->
@@ -326,8 +332,11 @@ watch(busqueda, () => {
             </tr>
           </template>
           <tr v-else>
-            <td :colspan="columns.length + 1" class="h-32 text-center text-sm text-muted-foreground">
-              No se encontraron proveedores.
+            <td :colspan="columns.length + 1" class="h-40 text-center">
+              <div class="flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Building2 class="h-8 w-8 opacity-20" />
+                <span class="text-xs">No se encontraron proveedores</span>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -344,7 +353,7 @@ watch(busqueda, () => {
             @update:model-value="(v) => table.setPageSize(Number(v))">
             <SelectTrigger class="h-7 w-16 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent side="top">
-              <SelectItem v-for="s in [10, 20, 50]" :key="s" :value="`${s}`" class="text-xs">{{ s }}</SelectItem>
+              <SelectItem v-for="s in [10, 25, 50]" :key="s" :value="`${s}`" class="text-xs">{{ s }}</SelectItem>
             </SelectContent>
           </Select>
         </div>

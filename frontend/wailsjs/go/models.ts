@@ -74,32 +74,6 @@ export namespace backend {
 	        this.nuevas = source["nuevas"];
 	    }
 	}
-	export class GmailSyncProgress {
-	    running: boolean;
-	    fase: string;
-	    total: number;
-	    procesados: number;
-	    nuevas: number;
-	    duplicadas: number;
-	    errores: number;
-	    ultimoNro: string;
-
-	    static createFrom(source: any = {}) {
-	        return new GmailSyncProgress(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.running = source["running"];
-	        this.fase = source["fase"];
-	        this.total = source["total"];
-	        this.procesados = source["procesados"];
-	        this.nuevas = source["nuevas"];
-	        this.duplicadas = source["duplicadas"];
-	        this.errores = source["errores"];
-	        this.ultimoNro = source["ultimoNro"];
-	    }
-	}
 	export class Cliente {
 	    CreatedAt: string;
 	    UpdatedAt: string;
@@ -838,6 +812,32 @@ export namespace backend {
 	        this.authenticated = source["authenticated"];
 	        this.credPresent = source["credPresent"];
 	        this.configDir = source["configDir"];
+	    }
+	}
+	export class GmailSyncProgress {
+	    running: boolean;
+	    fase: string;
+	    total: number;
+	    procesados: number;
+	    nuevas: number;
+	    duplicadas: number;
+	    errores: number;
+	    ultimoNro: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GmailSyncProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.fase = source["fase"];
+	        this.total = source["total"];
+	        this.procesados = source["procesados"];
+	        this.nuevas = source["nuevas"];
+	        this.duplicadas = source["duplicadas"];
+	        this.errores = source["errores"];
+	        this.ultimoNro = source["ultimoNro"];
 	    }
 	}
 	export class IndexInfo {
