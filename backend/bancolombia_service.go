@@ -148,7 +148,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
@@ -205,9 +204,7 @@ var (
 // ── Service ───────────────────────────────────────────────────────────────────
 
 // BancolombiaService handles Gmail polling for Bancolombia transfer notifications.
-// It is bound to Wails and exposed to the frontend.
 type BancolombiaService struct {
-	ctx            context.Context
 	db             *Db
 	configDir      string
 	ticker         *time.Ticker
@@ -264,9 +261,8 @@ func NewBancolombiaService(db *Db) *BancolombiaService {
 	}
 }
 
-// Startup is called by Wails when the app starts.
-func (b *BancolombiaService) Startup(ctx context.Context) {
-	b.ctx = ctx
+// Startup initialises the service.
+func (b *BancolombiaService) Startup(_ context.Context) {
 	_ = os.MkdirAll(b.configDir, 0o700)
 
 	// Restore persisted auto-polling preference (default true if not set)
@@ -307,7 +303,7 @@ func (b *BancolombiaService) startTicker() {
 					result.Errores = append(result.Errores, err.Error())
 				}
 				result.Badge = b.db.ContarTransferenciasNoLeidas()
-				wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
+				EventBus.Emit("bancolombia:sync:result", result)
 			}
 		}
 	}()
@@ -480,7 +476,7 @@ func (b *BancolombiaService) VerificarAhora() {
 			result.Errores = append(result.Errores, err.Error())
 		}
 		result.Badge = b.db.ContarTransferenciasNoLeidas()
-		wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
+		EventBus.Emit("bancolombia:sync:result", result)
 	}()
 }
 
@@ -573,7 +569,7 @@ func (b *BancolombiaService) SincronizarConPeriodo(opts BancolombiaOpcionesPerio
 			result.Errores = append(result.Errores, err.Error())
 		}
 		result.Badge = b.db.ContarTransferenciasNoLeidas()
-		wailsruntime.EventsEmit(b.ctx, "bancolombia:sync:result", result)
+		EventBus.Emit("bancolombia:sync:result", result)
 	}()
 }
 
@@ -1014,5 +1010,5 @@ func bancolombiaDetectTipo(text string) string {
 // but must NOT be called from custom background goroutines.
 func (b *BancolombiaService) emitBadge() {
 	n := b.db.ContarTransferenciasNoLeidas()
-	wailsruntime.EventsEmit(b.ctx, "bancolombia:badge", n)
+	EventBus.Emit("bancolombia:badge", n)
 }

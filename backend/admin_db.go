@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ==================== STRUCTS ====================
@@ -71,8 +70,9 @@ type TablePreview struct {
 
 // OperationResult is a generic success/message response.
 type OperationResult struct {
-	Success bool   `json:"Success"`
-	Message string `json:"Message"`
+	Success  bool   `json:"Success"`
+	Message  string `json:"Message"`
+	FilePath string `json:"FilePath,omitempty"` // populated for export operations
 }
 
 // ==================== VALIDATION ====================
@@ -371,14 +371,12 @@ func (d *Db) ExportarTablaCSV(tableName string) (OperationResult, error) {
 		return OperationResult{}, fmt.Errorf("no hay conexión a la base de datos")
 	}
 
-	path, err := runtime.SaveFileDialog(d.ctx, runtime.SaveDialogOptions{
-		Title:           "Exportar " + tableName + " como CSV",
-		DefaultFilename: tableName + "_" + time.Now().Format("2006-01-02") + ".csv",
-		Filters:         []runtime.FileFilter{{DisplayName: "CSV Files (*.csv)", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return OperationResult{Success: false, Message: "Exportación cancelada"}, nil
+	tmp, err := os.CreateTemp("", tableName+"-*.csv")
+	if err != nil {
+		return OperationResult{}, fmt.Errorf("error al crear archivo temporal: %w", err)
 	}
+	path := tmp.Name()
+	tmp.Close()
 
 	ctx, cancel := context.WithTimeout(d.ctx, 60*time.Second)
 	defer cancel()
@@ -429,8 +427,9 @@ func (d *Db) ExportarTablaCSV(tableName string) (OperationResult, error) {
 		return OperationResult{}, err
 	}
 	return OperationResult{
-		Success: true,
-		Message: fmt.Sprintf("%d filas exportadas a %s", count, path),
+		Success:  true,
+		Message:  fmt.Sprintf("%d filas exportadas", count),
+		FilePath: path,
 	}, nil
 }
 
@@ -443,14 +442,12 @@ func (d *Db) ExportarTablaSQL(tableName string) (OperationResult, error) {
 		return OperationResult{}, fmt.Errorf("no hay conexión a la base de datos")
 	}
 
-	path, err := runtime.SaveFileDialog(d.ctx, runtime.SaveDialogOptions{
-		Title:           "Exportar " + tableName + " como SQL",
-		DefaultFilename: tableName + "_" + time.Now().Format("2006-01-02") + ".sql",
-		Filters:         []runtime.FileFilter{{DisplayName: "SQL Files (*.sql)", Pattern: "*.sql"}},
-	})
-	if err != nil || path == "" {
-		return OperationResult{Success: false, Message: "Exportación cancelada"}, nil
+	tmp, err := os.CreateTemp("", "export-*.sql")
+	if err != nil {
+		return OperationResult{}, fmt.Errorf("error al crear archivo temporal: %w", err)
 	}
+	path := tmp.Name()
+	tmp.Close()
 
 	ctx, cancel := context.WithTimeout(d.ctx, 60*time.Second)
 	defer cancel()
@@ -508,8 +505,9 @@ func (d *Db) ExportarTablaSQL(tableName string) (OperationResult, error) {
 		return OperationResult{}, fmt.Errorf("error al escribir: %w", err)
 	}
 	return OperationResult{
-		Success: true,
-		Message: fmt.Sprintf("%d filas exportadas a %s", count, path),
+		Success:  true,
+		Message:  fmt.Sprintf("%d filas exportadas", count),
+		FilePath: path,
 	}, nil
 }
 
@@ -520,14 +518,12 @@ func (d *Db) ExportarBDSQL() (OperationResult, error) {
 		return OperationResult{}, fmt.Errorf("no hay conexión a la base de datos")
 	}
 
-	path, err := runtime.SaveFileDialog(d.ctx, runtime.SaveDialogOptions{
-		Title:           "Backup de base de datos",
-		DefaultFilename: "backup_" + time.Now().Format("2006-01-02_15-04-05") + ".sql",
-		Filters:         []runtime.FileFilter{{DisplayName: "SQL Files (*.sql)", Pattern: "*.sql"}},
-	})
-	if err != nil || path == "" {
-		return OperationResult{Success: false, Message: "Backup cancelado"}, nil
+	tmp, err := os.CreateTemp("", "export-*.sql")
+	if err != nil {
+		return OperationResult{}, fmt.Errorf("error al crear archivo temporal: %w", err)
 	}
+	path := tmp.Name()
+	tmp.Close()
 
 	// Try pg_dump first
 	dbURL := os.Getenv("DATABASE_URL")
@@ -541,8 +537,9 @@ func (d *Db) ExportarBDSQL() (OperationResult, error) {
 			cmd := exec.Command(pgDumpPath, "--no-password", "--file", path, dbURL)
 			if _, cmdErr := cmd.CombinedOutput(); cmdErr == nil {
 				return OperationResult{
-					Success: true,
-					Message: fmt.Sprintf("Backup generado con pg_dump en: %s", path),
+					Success:  true,
+					Message:  "Backup generado con pg_dump",
+					FilePath: path,
 				}, nil
 			}
 			d.Log.Warn("[Backup] pg_dump falló — usando exportación manual")
@@ -616,8 +613,9 @@ func (d *Db) ExportarBDSQL() (OperationResult, error) {
 		return OperationResult{}, fmt.Errorf("error al escribir backup: %w", err)
 	}
 	return OperationResult{
-		Success: true,
-		Message: fmt.Sprintf("Backup completado: %d filas en %s", totalRows, path),
+		Success:  true,
+		Message:  fmt.Sprintf("Backup completado: %d filas", totalRows),
+		FilePath: path,
 	}, nil
 }
 
@@ -632,77 +630,7 @@ func (d *Db) ImportarTablaCSV(tableName string) (OperationResult, error) {
 		return OperationResult{}, fmt.Errorf("no hay conexión a la base de datos")
 	}
 
-	path, err := runtime.OpenFileDialog(d.ctx, runtime.OpenDialogOptions{
-		Title:   "Importar CSV → " + tableName,
-		Filters: []runtime.FileFilter{{DisplayName: "CSV Files (*.csv)", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return OperationResult{Success: false, Message: "Importación cancelada"}, nil
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return OperationResult{}, fmt.Errorf("error al abrir archivo: %w", err)
-	}
-	defer f.Close()
-
-	reader := csv.NewReader(f)
-	headers, err := reader.Read()
-	if err != nil {
-		return OperationResult{}, fmt.Errorf("error al leer cabeceras CSV: %w", err)
-	}
-
-	colsQuoted := make([]string, len(headers))
-	placeholders := make([]string, len(headers))
-	for i, h := range headers {
-		colsQuoted[i] = fmt.Sprintf("%q", h)
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-	}
-	query := fmt.Sprintf(`INSERT INTO public.%q (%s) VALUES (%s)`,
-		tableName, strings.Join(colsQuoted, ", "), strings.Join(placeholders, ", "))
-
-	ctx, cancel := context.WithTimeout(d.ctx, 60*time.Second)
-	defer cancel()
-
-	tx, err := d.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return OperationResult{}, err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, query)
-	if err != nil {
-		return OperationResult{}, fmt.Errorf("error al preparar INSERT: %w", err)
-	}
-	defer stmt.Close()
-
-	count := 0
-	for {
-		record, err := reader.Read()
-		if err != nil {
-			break
-		}
-		vals := make([]interface{}, len(headers))
-		for i, v := range record {
-			if v == "" {
-				vals[i] = nil
-			} else {
-				vals[i] = v
-			}
-		}
-		if _, err := stmt.ExecContext(ctx, vals...); err != nil {
-			return OperationResult{}, fmt.Errorf("error en fila %d: %w", count+2, err)
-		}
-		count++
-	}
-
-	if err := tx.Commit(); err != nil {
-		return OperationResult{}, fmt.Errorf("error al confirmar: %w", err)
-	}
-	return OperationResult{
-		Success: true,
-		Message: fmt.Sprintf("%d filas importadas en '%s'", count, tableName),
-	}, nil
+	return OperationResult{Success: false, Message: "Usa el endpoint HTTP /api/admin/tablas/" + tableName + "/import para importar vía HTTP"}, nil
 }
 
 // ImportarSQL executes SQL from a user-selected file (backup restore, etc.).
@@ -711,32 +639,7 @@ func (d *Db) ImportarSQL() (OperationResult, error) {
 		return OperationResult{}, fmt.Errorf("no hay conexión a la base de datos")
 	}
 
-	path, err := runtime.OpenFileDialog(d.ctx, runtime.OpenDialogOptions{
-		Title: "Importar SQL",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "SQL Files (*.sql)", Pattern: "*.sql"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
-	})
-	if err != nil || path == "" {
-		return OperationResult{Success: false, Message: "Importación cancelada"}, nil
-	}
-
-	sqlBytes, err := os.ReadFile(path)
-	if err != nil {
-		return OperationResult{}, fmt.Errorf("error al leer archivo: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(d.ctx, 120*time.Second)
-	defer cancel()
-
-	if _, err := d.DB.ExecContext(ctx, string(sqlBytes)); err != nil {
-		return OperationResult{}, fmt.Errorf("error al ejecutar SQL: %w", err)
-	}
-	return OperationResult{
-		Success: true,
-		Message: fmt.Sprintf("SQL ejecutado: %d bytes procesados", len(sqlBytes)),
-	}, nil
+	return OperationResult{Success: false, Message: "Usa el endpoint HTTP /api/admin/tablas/.../import para importar vía HTTP"}, nil
 }
 
 // ==================== ROW EDIT / DELETE ====================

@@ -51,7 +51,6 @@ import (
 	"sync"
 	"time"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
@@ -101,9 +100,7 @@ type DriveAutoBackupState struct {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 // DriveBackupService handles automated Google Drive backups.
-// It is bound to Wails and exposed to the frontend.
 type DriveBackupService struct {
-	ctx        context.Context
 	db         *Db
 	configDir  string
 	mu         sync.Mutex
@@ -125,9 +122,8 @@ func NewDriveBackupService(db *Db) *DriveBackupService {
 	}
 }
 
-// Startup is called by Wails when the app starts.
-func (s *DriveBackupService) Startup(ctx context.Context) {
-	s.ctx = ctx
+// Startup initialises the service.
+func (s *DriveBackupService) Startup(_ context.Context) {
 	_ = os.MkdirAll(s.configDir, 0o700)
 	if s.EstadoAuthDrive().Authenticated {
 		s.startTicker()
@@ -165,7 +161,6 @@ func (s *DriveBackupService) IniciarOAuth2Drive() (string, error) {
 		return "", err
 	}
 	authURL := cfg.AuthCodeURL("state-drive", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
-	wailsruntime.BrowserOpenURL(s.ctx, authURL)
 	go s.startCallbackServer(cfg)
 	return authURL, nil
 }
@@ -298,9 +293,7 @@ func (s *DriveBackupService) startTicker() {
 					s.db.Log.Errorf("[DriveBackup] Error en backup automático: %v", err)
 				} else {
 					s.db.Log.Infof("[DriveBackup] Backup OK: %s (%d bytes)", result.FileName, result.SizeBytes)
-					if s.ctx != nil {
-						wailsruntime.EventsEmit(s.ctx, "drive:backup:done", result)
-					}
+					EventBus.Emit("drive:backup:done", result)
 				}
 				s.mu.Lock()
 				s.nextBackup = time.Now().Add(driveBackupInterval)
@@ -485,9 +478,7 @@ func (s *DriveBackupService) startCallbackServer(cfg *oauth2.Config) {
 			_ = srv.Shutdown(context.Background())
 			if s.EstadoAuthDrive().Authenticated {
 				s.startTicker()
-				if s.ctx != nil {
-					wailsruntime.EventsEmit(s.ctx, "drive:auth:ok", nil)
-				}
+				EventBus.Emit("drive:auth:ok", nil)
 			}
 		}()
 	})

@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -82,9 +81,7 @@ func (l *ImportLog) String() string {
 }
 
 func (d *Db) SelectFile() (string, error) {
-	return runtime.OpenFileDialog(d.ctx, runtime.OpenDialogOptions{
-		Title: "Seleccione un archivo CSV",
-	})
+	return "", fmt.Errorf("SelectFile no disponible en modo HTTP — usa multipart upload")
 }
 
 func (d *Db) CargarDesdeCSV(filePath string, modelName string) (<-chan string, <-chan error) {

@@ -15,7 +15,6 @@ import (
 	"goFarmacia/internal/processor"
 
 	"github.com/google/uuid"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
@@ -29,9 +28,7 @@ const (
 )
 
 // GmailService handles Gmail OAuth2 auth and DIAN electronic invoice synchronization.
-// It is bound to Wails and exposed to the frontend.
 type GmailService struct {
-	ctx            context.Context
 	db             *Db
 	configDir      string
 	syncProgress   GmailSyncProgress
@@ -119,9 +116,8 @@ func (g *GmailService) GetGmailSyncProgress() GmailSyncProgress {
 	return g.syncProgress
 }
 
-// Startup is called by Wails when the app starts.
-func (g *GmailService) Startup(ctx context.Context) {
-	g.ctx = ctx
+// Startup initialises the service.
+func (g *GmailService) Startup(_ context.Context) {
 	_ = os.MkdirAll(g.configDir, 0o700)
 	// Retroactively populate the proveedors table from any existing invoices.
 	// This is idempotent and runs in the background so it does not block startup.
@@ -167,7 +163,6 @@ func (g *GmailService) IniciarOAuth2() (string, error) {
 		return "", err
 	}
 	authURL := cfg.AuthCodeURL("state-token", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
-	wailsruntime.BrowserOpenURL(g.ctx, authURL)
 	go g.startCallbackServer(cfg)
 	return authURL, nil
 }
@@ -256,7 +251,7 @@ func (g *GmailService) SincronizarFacturas() {
 func (g *GmailService) SincronizarConOpciones(opts SyncOptions) {
 	go func() {
 		result := g.ejecutarSync(opts)
-		wailsruntime.EventsEmit(g.ctx, "gmail:sync:result", result)
+		EventBus.Emit("gmail:sync:result", result)
 	}()
 }
 
@@ -611,7 +606,7 @@ func (g *GmailService) emitSyncLog(nivel, msg string) {
 		Mensaje: msg,
 		Ts:      time.Now().Format("15:04:05"),
 	}
-	wailsruntime.EventsEmit(g.ctx, "gmail:sync:log", entry)
+	EventBus.Emit("gmail:sync:log", entry)
 }
 
 // extractCUFE scans raw XML bytes for the CUFE/UUID value used for deduplication.

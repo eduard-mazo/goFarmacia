@@ -2,56 +2,61 @@ package main
 
 import (
 	"context"
-	"embed"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"goFarmacia/api"
 	"goFarmacia/backend"
-
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
-
-//go:embed all:frontend/dist
-var assets embed.FS
 
 func main() {
 	db := backend.GetDbInstance()
-	app := NewApp(db)
 	gmailSvc := backend.NewGmailService(db)
 	bancolombiasSvc := backend.NewBancolombiaService(db)
 	driveSvc := backend.NewDriveBackupService(db)
 
-	err := wails.Run(&options.App{
-		Title:            "goFarmacia",
-		WindowStartState: options.Maximised,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 1},
-		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
-			gmailSvc.Startup(ctx)
-			bancolombiasSvc.Startup(ctx)
-			driveSvc.Startup(ctx)
-		},
-		OnShutdown: func(ctx context.Context) {
-			bancolombiasSvc.Shutdown()
-			driveSvc.Shutdown()
-			app.shutdown(ctx)
-		},
-		Bind: []any{
-			app,
-			db,
-			gmailSvc,
-			bancolombiasSvc,
-			driveSvc,
-		},
-		Windows: &windows.Options{
-			Theme: windows.SystemDefault,
-		},
-	})
+	ctx := context.Background()
+	db.Startup(ctx)
+	gmailSvc.Startup(ctx)
+	bancolombiasSvc.Startup(ctx)
+	driveSvc.Startup(ctx)
 
-	if err != nil {
-		println("Error:", err.Error())
+	e := api.NewRouter(db, gmailSvc, bancolombiasSvc, driveSvc)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: e,
+	}
+
+	go func() {
+		log.Printf("goFarmacia HTTP server en http://localhost:%s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("servidor: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Apagando servidor...")
+	bancolombiasSvc.Shutdown()
+	driveSvc.Shutdown()
+	db.Close()
+
+	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutCtx); err != nil {
+		log.Printf("error al apagar: %v", err)
+	}
+	log.Println("Servidor apagado correctamente.")
 }
