@@ -374,6 +374,20 @@ func (d *Db) initDB() {
 
 	db, err := d.NewPostgresDB(dbURL)
 	if err != nil {
+		// ── Localhost fallback ───────────────────────────────────────────────
+		// If the configured host is unreachable (e.g. Tailscale peer offline),
+		// transparently retry with localhost before giving up.
+		fallback := localFallbackURL(dbURL)
+		if fallback != "" && fallback != dbURL {
+			d.Log.Warnf("No se pudo conectar a %s — reintentando con localhost…", dbURL)
+			db, err = d.NewPostgresDB(fallback)
+			if err == nil {
+				dbURL = fallback
+				d.Log.Info("Fallback a localhost exitoso.")
+			}
+		}
+	}
+	if err != nil {
 		d.Log.Warnf("No se pudo conectar a PostgreSQL: %v — activando modo configuración.", err)
 		d.mu.Lock()
 		d.setupMode = true
@@ -731,15 +745,60 @@ func (d *Db) BeginTx(ctx context.Context) (*sql.Tx, error) {
 }
 
 func (d *Db) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	if d.DB == nil {
+		return (&sql.DB{}).QueryRowContext(ctx, query, args...)
+	}
 	return d.DB.QueryRowContext(ctx, query, args...)
 }
 
 func (d *Db) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	if d.DB == nil {
+		return nil, sql.ErrConnDone
+	}
 	return d.DB.QueryContext(ctx, query, args...)
 }
 
 func (d *Db) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	if d.DB == nil {
+		return nil, sql.ErrConnDone
+	}
 	return d.DB.ExecContext(ctx, query, args...)
+}
+
+// localFallbackURL replaces the host in a postgres DSN with localhost.
+// Returns "" if the DSN is already localhost or cannot be parsed.
+func localFallbackURL(dsn string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return ""
+		}
+		host := u.Hostname()
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			return ""
+		}
+		port := u.Port()
+		if port == "" {
+			port = "5432"
+		}
+		u.Host = "localhost:" + port
+		return u.String()
+	}
+	// key=value format
+	if strings.Contains(dsn, "host=") {
+		parts := strings.Fields(dsn)
+		for i, p := range parts {
+			if strings.HasPrefix(p, "host=") {
+				v := strings.TrimPrefix(p, "host=")
+				if v == "localhost" || v == "127.0.0.1" {
+					return ""
+				}
+				parts[i] = "host=localhost"
+				return strings.Join(parts, " ")
+			}
+		}
+	}
+	return ""
 }
 
 // NewTestDb creates a Db instance for testing with an existing *sql.DB connection.

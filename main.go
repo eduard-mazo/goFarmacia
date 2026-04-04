@@ -25,9 +25,11 @@ func main() {
 
 	ctx := context.Background()
 	db.Startup(ctx)
-	gmailSvc.Startup(ctx)
-	bancolombiasSvc.Startup(ctx)
-	driveSvc.Startup(ctx)
+	if !db.IsSetupMode() {
+		gmailSvc.Startup(ctx)
+		bancolombiasSvc.Startup(ctx)
+		driveSvc.Startup(ctx)
+	}
 
 	e := api.NewRouter(db, gmailSvc, bancolombiasSvc, driveSvc, assets)
 
