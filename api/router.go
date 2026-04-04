@@ -156,6 +156,10 @@ func NewRouter(
 	priv.GET("/bancolombia/auto-polling", handlers.BancolombiaGetAutoPolling(bancolombia))
 	priv.PUT("/bancolombia/auto-polling", handlers.BancolombiaSetAutoPolling(bancolombia))
 
+	// pos (thermal printer — server-side USB access)
+	priv.GET("/pos/verificar", handlers.VerificarImpresora(db))
+	priv.POST("/pos/imprimir", handlers.ImprimirRecibo(db))
+
 	// drive
 	priv.GET("/drive/auth", handlers.DriveEstadoAuth(drive))
 	priv.POST("/drive/auth/iniciar", handlers.DriveIniciarOAuth2(drive))

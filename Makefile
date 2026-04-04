@@ -95,6 +95,12 @@ help:
 	@echo "  $(GREEN)db-make-admin$(RESET)    Promover a admin: EMAIL=x@y.com"
 	@echo "  $(GREEN)db-reset$(RESET)         Restaurar BD desde SQL"
 	@echo ""
+	@echo "$(BOLD)  Systemd$(RESET)"
+	@echo "  $(GREEN)install-service$(RESET)  Instala y activa servicio systemd (autoarranque)"
+	@echo "  $(GREEN)uninstall-service$(RESET) Detiene, deshabilita y elimina el servicio"
+	@echo "  $(GREEN)service-status$(RESET)   Estado del servicio"
+	@echo "  $(GREEN)service-logs$(RESET)     Últimos 50 logs en vivo"
+	@echo ""
 	@echo "$(BOLD)  Utilidades$(RESET)"
 	@echo "  $(GREEN)tidy$(RESET)             go mod tidy + pnpm install"
 	@echo "  $(GREEN)install-deps$(RESET)     Instala mingw-w64 + zip (Linux/apt)"
@@ -380,6 +386,53 @@ db-make-admin:
 	  psql "$$DATABASE_URL" -c \
 	    "UPDATE vendedors SET role='admin' WHERE email='$(EMAIL)' AND deleted_at IS NULL RETURNING nombre, email, role;" \
 	  2>/dev/null || echo "$(RED)Error de conexión.$(RESET)"
+
+# =============================================================================
+#  SYSTEMD (autoarranque)
+# =============================================================================
+
+SERVICE_NAME  := goFarmacia
+SERVICE_FILE  := /etc/systemd/system/$(SERVICE_NAME).service
+SERVICE_USER  := $(shell whoami)
+SERVICE_GROUP := $(shell id -gn)
+ABS_BINARY    := $(abspath $(BINARY))
+ABS_WORK_DIR  := $(abspath $(BUILD_DIR))
+ABS_ENV_FILE  := $(abspath $(BUILD_DIR)/.env)
+
+# Genera e instala el servicio systemd (requiere sudo)
+.PHONY: install-service
+install-service: build
+	@echo "$(BOLD)$(CYAN)→ Instalando servicio systemd '$(SERVICE_NAME)'...$(RESET)"
+	@printf '[Unit]\nDescription=goFarmacia — Sistema de gestión farmacéutica\nAfter=network.target\n\n[Service]\nType=simple\nUser=$(SERVICE_USER)\nGroup=$(SERVICE_GROUP)\nWorkingDirectory=$(ABS_WORK_DIR)\nEnvironmentFile=$(ABS_ENV_FILE)\nExecStart=$(ABS_BINARY)\nRestart=on-failure\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=$(SERVICE_NAME)\n\n[Install]\nWantedBy=multi-user.target\n' \
+	  | sudo tee $(SERVICE_FILE) > /dev/null
+	@sudo systemctl daemon-reload
+	@sudo systemctl enable $(SERVICE_NAME)
+	@sudo systemctl restart $(SERVICE_NAME)
+	@echo ""
+	@echo "$(GREEN)✓ Servicio instalado y activo.$(RESET)"
+	@echo "  Estado  : sudo systemctl status $(SERVICE_NAME)"
+	@echo "  Logs    : sudo journalctl -fu $(SERVICE_NAME)"
+	@echo "  Parar   : sudo systemctl stop $(SERVICE_NAME)"
+	@echo "  Remover : make uninstall-service"
+	@echo ""
+
+# Detiene, deshabilita y elimina el servicio
+.PHONY: uninstall-service
+uninstall-service:
+	@echo "$(BOLD)$(YELLOW)→ Desinstalando servicio '$(SERVICE_NAME)'...$(RESET)"
+	@sudo systemctl stop    $(SERVICE_NAME) 2>/dev/null || true
+	@sudo systemctl disable $(SERVICE_NAME) 2>/dev/null || true
+	@sudo rm -f $(SERVICE_FILE)
+	@sudo systemctl daemon-reload
+	@echo "$(GREEN)✓ Servicio eliminado.$(RESET)"
+
+.PHONY: service-status
+service-status:
+	@sudo systemctl status $(SERVICE_NAME) --no-pager || true
+
+.PHONY: service-logs
+service-logs:
+	@sudo journalctl -fu $(SERVICE_NAME) --no-pager -n 50
 
 # =============================================================================
 #  GMAIL

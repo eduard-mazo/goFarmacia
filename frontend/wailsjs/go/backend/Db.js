@@ -214,8 +214,18 @@ export function SelectFile() {
 
 // ─── Impresora / Recibo ──────────────────────────────────────────────────────
 
-export function ImprimirRecibo(data) { return Promise.resolve({ Success: true }); }
-export function VerificarImpresora() { return Promise.resolve(false); }
+export async function ImprimirRecibo(data) {
+  const r = await api("POST", "/api/pos/imprimir", data);
+  return r;
+}
+export async function VerificarImpresora() {
+  try {
+    const r = await api("GET", "/api/pos/verificar");
+    return r.available === true;
+  } catch {
+    return false;
+  }
+}
 
 // ─── Stub: internal Go methods not for frontend ──────────────────────────────
 
