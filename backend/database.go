@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -372,15 +373,18 @@ func (d *Db) initDB() {
 		return
 	}
 
-	db, err := d.NewPostgresDB(dbURL)
+	// Use a short connect_timeout so an unreachable host fails in ~5 s instead
+	// of waiting for the OS TCP timeout (~2.5 min). The full URL (without the
+	// timeout hint) is kept in dbURL for migrations and logs.
+	db, err := d.NewPostgresDB(withConnectTimeout(dbURL, 5))
 	if err != nil {
 		// ── Localhost fallback ───────────────────────────────────────────────
 		// If the configured host is unreachable (e.g. Tailscale peer offline),
 		// transparently retry with localhost before giving up.
 		fallback := localFallbackURL(dbURL)
 		if fallback != "" && fallback != dbURL {
-			d.Log.Warnf("No se pudo conectar a %s — reintentando con localhost…", dbURL)
-			db, err = d.NewPostgresDB(fallback)
+			d.Log.Warnf("No se pudo conectar a %s — reintentando con localhost…", sanitizeDSN(dbURL))
+			db, err = d.NewPostgresDB(withConnectTimeout(fallback, 5))
 			if err == nil {
 				dbURL = fallback
 				d.Log.Info("Fallback a localhost exitoso.")
@@ -763,6 +767,22 @@ func (d *Db) Exec(ctx context.Context, query string, args ...interface{}) (sql.R
 		return nil, sql.ErrConnDone
 	}
 	return d.DB.ExecContext(ctx, query, args...)
+}
+
+// withConnectTimeout appends connect_timeout=N (seconds) to a DSN so the
+// postgres driver aborts a TCP dial after N seconds instead of waiting for the
+// OS kernel timeout (~2.5 min). Safe to call even if the DSN already has a
+// connect_timeout — the last value wins in both URL and key=value formats.
+func withConnectTimeout(dsn string, seconds int) string {
+	t := strconv.Itoa(seconds)
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		return dsn + sep + "connect_timeout=" + t
+	}
+	return dsn + " connect_timeout=" + t
 }
 
 // localFallbackURL replaces the host in a postgres DSN with localhost.
