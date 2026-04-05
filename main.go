@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,10 +26,28 @@ func main() {
 
 	ctx := context.Background()
 	db.Startup(ctx)
+
+	// startServices is guarded by Once so it is safe to call from both
+	// the main goroutine (connected at startup) and the reconnect watcher
+	// (connected later after a race or a runtime disconnection).
+	var startOnce sync.Once
+	startServices := func() {
+		startOnce.Do(func() {
+			gmailSvc.Startup(ctx)
+			bancolombiasSvc.Startup(ctx)
+			driveSvc.Startup(ctx)
+		})
+	}
+
+	// Start the background reconnect watcher before launching the HTTP server.
+	// It handles two cases:
+	//   1. Startup race: PostgreSQL still initialising → quick retries every 5 s
+	//      for 60 s, then steady 30 s checks.
+	//   2. Runtime disconnection: detects a lost ping and reconnects automatically.
+	db.StartReconnectWatcher(ctx, startServices)
+
 	if !db.IsSetupMode() {
-		gmailSvc.Startup(ctx)
-		bancolombiasSvc.Startup(ctx)
-		driveSvc.Startup(ctx)
+		startServices()
 	}
 
 	e := api.NewRouter(db, gmailSvc, bancolombiasSvc, driveSvc, assets)

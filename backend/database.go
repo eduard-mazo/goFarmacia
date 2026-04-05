@@ -248,6 +248,7 @@ type Db struct {
 	jwtKey    []byte
 	setupMode bool   // true when DB is not configured/reachable
 	dbError   string // last connection error message
+	rawDSN    string // configured DSN (set once from env/config); used by reconnect watcher
 	mu        sync.RWMutex
 }
 
@@ -373,24 +374,12 @@ func (d *Db) initDB() {
 		return
 	}
 
-	// Use a short connect_timeout so an unreachable host fails in ~5 s instead
-	// of waiting for the OS TCP timeout (~2.5 min). The full URL (without the
-	// timeout hint) is kept in dbURL for migrations and logs.
-	db, err := d.NewPostgresDB(withConnectTimeout(dbURL, 5))
-	if err != nil {
-		// ── Localhost fallback ───────────────────────────────────────────────
-		// If the configured host is unreachable (e.g. Tailscale peer offline),
-		// transparently retry with localhost before giving up.
-		fallback := localFallbackURL(dbURL)
-		if fallback != "" && fallback != dbURL {
-			d.Log.Warnf("No se pudo conectar a %s — reintentando con localhost…", sanitizeDSN(dbURL))
-			db, err = d.NewPostgresDB(withConnectTimeout(fallback, 5))
-			if err == nil {
-				dbURL = fallback
-				d.Log.Info("Fallback a localhost exitoso.")
-			}
-		}
-	}
+	// Persist the DSN so the reconnect watcher can retry even if this attempt fails.
+	d.mu.Lock()
+	d.rawDSN = dbURL
+	d.mu.Unlock()
+
+	db, usedDSN, err := d.connectWithFallback(dbURL)
 	if err != nil {
 		d.Log.Warnf("No se pudo conectar a PostgreSQL: %v — activando modo configuración.", err)
 		d.mu.Lock()
@@ -407,7 +396,7 @@ func (d *Db) initDB() {
 	d.mu.Unlock()
 	d.Log.Info("Conexión a PostgreSQL establecida exitosamente.")
 
-	d.runMigrations("postgres", dbURL)
+	d.runMigrations("postgres", usedDSN)
 
 	// Notify connected SSE clients that the DB is fully ready.
 	EventBus.Emit("db:ready", nil)
@@ -627,6 +616,7 @@ func (d *Db) ConfigurarDB(dsn string) error {
 	d.DB = db
 	d.setupMode = false
 	d.dbError = ""
+	d.rawDSN = dsn // update so the reconnect watcher uses the new DSN
 	d.mu.Unlock()
 
 	d.Log.Infof("[ConfigurarDB] Base de datos configurada y conectada exitosamente.")
@@ -819,6 +809,116 @@ func localFallbackURL(dsn string) string {
 		}
 	}
 	return ""
+}
+
+// ==================== RECONNECT WATCHER ====================
+
+// connectWithFallback tries rawDSN with a 5 s driver-level timeout.
+// If that fails and a localhost fallback is possible it retries there.
+// Returns the open *sql.DB and the DSN that worked.
+func (d *Db) connectWithFallback(rawDSN string) (*sql.DB, string, error) {
+	db, err := d.NewPostgresDB(withConnectTimeout(rawDSN, 5))
+	if err == nil {
+		return db, rawDSN, nil
+	}
+	if fb := localFallbackURL(rawDSN); fb != "" {
+		d.Log.Warnf("No se pudo conectar a %s — reintentando con localhost…", sanitizeDSN(rawDSN))
+		if db2, err2 := d.NewPostgresDB(withConnectTimeout(fb, 5)); err2 == nil {
+			d.Log.Info("Fallback a localhost exitoso.")
+			return db2, fb, nil
+		}
+	}
+	return nil, "", err
+}
+
+// StartReconnectWatcher launches a background goroutine that:
+//   - Retries every 5 s for the first 60 s (handles the systemd startup race
+//     where PostgreSQL is still initialising when the app starts).
+//   - Then switches to a 30 s ping-and-reconnect loop for the rest of the
+//     process lifetime.
+//
+// onReconnect is invoked (in its own goroutine) after each successful
+// (re)connection so callers can start dependent services.
+func (d *Db) StartReconnectWatcher(ctx context.Context, onReconnect func()) {
+	go d.reconnectLoop(ctx, onReconnect)
+}
+
+func (d *Db) reconnectLoop(ctx context.Context, onReconnect func()) {
+	const (
+		quickInterval  = 5 * time.Second
+		steadyInterval = 30 * time.Second
+		quickBudget    = 60 * time.Second // stay in quick phase for this long
+	)
+
+	interval := quickInterval
+	quickDeadline := time.Now().Add(quickBudget)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+
+		// Promote to steady interval once startup quick-phase has expired.
+		if !quickDeadline.IsZero() && time.Now().After(quickDeadline) {
+			interval = steadyInterval
+			quickDeadline = time.Time{}
+		}
+
+		d.mu.RLock()
+		inSetup := d.setupMode
+		currentDB := d.DB
+		rawDSN := d.rawDSN
+		d.mu.RUnlock()
+
+		if rawDSN == "" {
+			continue // DB not configured yet — nothing to reconnect to
+		}
+
+		if !inSetup && currentDB != nil {
+			// Healthy path: verify the connection is still alive.
+			pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			pingErr := currentDB.PingContext(pingCtx)
+			cancel()
+			if pingErr == nil {
+				continue // all good
+			}
+			d.Log.Warnf("[DB Watcher] Ping fallido: %v — marcando como desconectado", pingErr)
+			d.mu.Lock()
+			d.setupMode = true
+			d.dbError = "Conexión perdida: " + pingErr.Error()
+			d.mu.Unlock()
+			EventBus.Emit("db:disconnected", nil)
+			// Reset to quick phase for fast recovery after a runtime disconnection.
+			interval = quickInterval
+			quickDeadline = time.Now().Add(quickBudget)
+		}
+
+		// Reconnect attempt.
+		d.Log.Info("[DB Watcher] Intentando reconectar a la base de datos...")
+		newDB, usedDSN, err := d.connectWithFallback(rawDSN)
+		if err != nil {
+			d.Log.Warnf("[DB Watcher] Reconexión fallida: %v", err)
+			continue
+		}
+
+		d.mu.Lock()
+		if d.DB != nil {
+			d.DB.Close()
+		}
+		d.DB = newDB
+		d.setupMode = false
+		d.dbError = ""
+		d.mu.Unlock()
+
+		d.Log.Info("[DB Watcher] Reconexión exitosa.")
+		d.runMigrations("postgres", usedDSN)
+		EventBus.Emit("db:ready", nil)
+		if onReconnect != nil {
+			go onReconnect()
+		}
+	}
 }
 
 // NewTestDb creates a Db instance for testing with an existing *sql.DB connection.
