@@ -169,19 +169,6 @@ const handleRegister = async () => {
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
-/* ── Mobile (≤ 640 px): hide brand panel, show only the form ── */
-@media (max-width: 640px) {
-  .brand-panel { display: none; }
-  .form-panel  { padding: 3rem 1.5rem 3.5rem; }
-  .auth-form   { max-width: 100%; }
-}
-
-/* ── Small tablet (641 px – 900 px) ── */
-@media (min-width: 641px) and (max-width: 900px) {
-  .brand-panel { width: 34%; padding: 2.5rem 2rem; }
-  .form-panel  { padding: 2rem 2.5rem; }
-}
-
 /* ── Brand panel (identical to Login) ── */
 .brand-panel {
   position: relative;
@@ -472,4 +459,17 @@ const handleRegister = async () => {
   transition: color 0.15s;
 }
 .form-link:hover { color: #3b82f6; }
+
+/* ── Mobile (≤ 640 px): hide brand panel, show only the form ── */
+@media (max-width: 640px) {
+  .brand-panel { display: none; }
+  .form-panel  { padding: 3rem 1.5rem 3.5rem; }
+  .auth-form   { max-width: 100%; }
+}
+
+/* ── Small tablet (641–900 px): narrow the brand panel ── */
+@media (min-width: 641px) and (max-width: 900px) {
+  .brand-panel { width: 34%; padding: 2.5rem 2rem; }
+  .form-panel  { padding: 2rem 2.5rem; }
+}
 </style>

@@ -265,28 +265,6 @@ async function handleVerifyMFA() {
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
-/* ── Mobile (≤ 640 px): hide brand panel, show only the form ── */
-@media (max-width: 640px) {
-  .brand-panel { display: none; }
-  .form-panel  { padding: 3rem 1.5rem 3.5rem; }
-  .auth-form   { max-width: 100%; }
-
-  /* Banner becomes inline (not floating) when brand panel is hidden */
-  .setup-banner {
-    position: relative;
-    top: auto; left: auto; right: auto;
-    border-radius: 8px;
-    border: 1px solid #fde68a;
-    margin-bottom: 1.5rem;
-  }
-}
-
-/* ── Small tablet (641 px – 900 px): narrow the brand panel ── */
-@media (min-width: 641px) and (max-width: 900px) {
-  .brand-panel { width: 34%; padding: 2.5rem 2rem; }
-  .form-panel  { padding: 2rem 2.5rem; }
-}
-
 /* ── Brand panel ── */
 .brand-panel {
   position: relative;
@@ -622,5 +600,25 @@ async function handleVerifyMFA() {
   justify-content: center;
   box-shadow: 0 4px 16px rgba(30, 58, 95, 0.35);
   margin-bottom: 0.25rem;
+}
+
+/* ── Mobile (≤ 640 px): hide brand panel, show only the form ── */
+@media (max-width: 640px) {
+  .brand-panel { display: none; }
+  .form-panel  { padding: 3rem 1.5rem 3.5rem; }
+  .auth-form   { max-width: 100%; }
+  .setup-banner {
+    position: relative;
+    top: auto; left: auto; right: auto;
+    border-radius: 8px;
+    border: 1px solid #fde68a;
+    margin-bottom: 1.5rem;
+  }
+}
+
+/* ── Small tablet (641–900 px): narrow the brand panel ── */
+@media (min-width: 641px) and (max-width: 900px) {
+  .brand-panel { width: 34%; padding: 2.5rem 2rem; }
+  .form-panel  { padding: 2rem 2.5rem; }
 }
 </style>

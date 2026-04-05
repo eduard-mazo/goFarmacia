@@ -613,14 +613,14 @@ watch(busqueda, () => {
         <!-- Terminal / console toggle -->
         <Button
           v-if="auth.authenticated"
+          variant="ghost"
           size="sm"
-          variant="outline"
-          class="h-7 text-xs gap-1.5"
-          :class="showConsole ? 'border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800' : ''"
+          class="h-7 w-7 p-0"
+          :class="showConsole ? 'text-primary' : ''"
           @click="showConsole = !showConsole"
+          title="Consola de sincronización"
         >
           <Terminal class="h-3.5 w-3.5" />
-          Consola
         </Button>
       </div>
     </div>
