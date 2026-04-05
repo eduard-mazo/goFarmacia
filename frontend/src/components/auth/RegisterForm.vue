@@ -169,48 +169,16 @@ const handleRegister = async () => {
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
-/* ── Mobile (≤ 640 px) ── */
+/* ── Mobile (≤ 640 px): hide brand panel, show only the form ── */
 @media (max-width: 640px) {
-  .auth-root {
-    flex-direction: column;
-    height: auto;
-    min-height: 100dvh;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-
-  .brand-panel {
-    width: 100%;
-    min-height: auto;
-    flex-direction: row;
-    align-items: center;
-    padding: 1.1rem 1.25rem;
-    animation: none;
-  }
-
-  .brand-content { flex-direction: row; align-items: center; gap: 0; }
-  .brand-logo-row { animation: none; }
-  .brand-divider,
-  .brand-features,
-  .brand-copy,
-  .brand-cross-bg { display: none; }
-
-  .form-panel {
-    flex: 1;
-    padding: 2rem 1.25rem 3rem;
-    justify-content: flex-start;
-    animation: none;
-  }
-
-  .auth-form {
-    max-width: 100%;
-    animation: none;
-  }
+  .brand-panel { display: none; }
+  .form-panel  { padding: 3rem 1.5rem 3.5rem; }
+  .auth-form   { max-width: 100%; }
 }
 
 /* ── Small tablet (641 px – 900 px) ── */
 @media (min-width: 641px) and (max-width: 900px) {
-  .brand-panel { width: 36%; padding: 2.5rem 2rem; }
+  .brand-panel { width: 34%; padding: 2.5rem 2rem; }
   .form-panel  { padding: 2rem 2.5rem; }
 }
 

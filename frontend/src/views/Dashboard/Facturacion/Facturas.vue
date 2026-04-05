@@ -24,7 +24,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Loader2, Search, Receipt } from "lucide-vue-next";
+import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Loader2, Search, Receipt, TrendingUp } from "lucide-vue-next";
 import { backend } from "@/../wailsjs/go/models";
 import {
   ObtenerFacturasPaginado,
@@ -70,6 +70,10 @@ const cargarFacturas = async () => {
     toast.error("Error al cargar facturas", { description: `${error}` });
   }
 };
+
+const totalRevenue = computed(() =>
+  listaFacturas.value.reduce((acc, f) => acc + (f.Total ?? 0), 0)
+);
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("es-CO", {
@@ -222,8 +226,27 @@ watch(busqueda, () => {
     <!-- Header bar -->
     <div class="shrink-0 border-b px-4 py-3 flex items-center justify-between bg-background">
       <div>
-        <p class="text-sm font-semibold">Historial de Facturas</p>
+        <p class="text-sm font-semibold flex items-center gap-2">
+          <Receipt class="h-4 w-4" />
+          Historial de Facturas
+        </p>
         <p class="text-xs text-muted-foreground mt-0.5">Consulta y revisa todas las ventas registradas</p>
+      </div>
+    </div>
+
+    <!-- KPI strip (mirrors Bancolombia's stats bar) -->
+    <div class="shrink-0 border-b px-4 py-2 grid grid-cols-3 gap-4 bg-muted/10">
+      <div>
+        <p class="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Total facturas</p>
+        <p class="text-xl font-bold mt-0.5">{{ totalFacturas }}</p>
+      </div>
+      <div>
+        <p class="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">En esta página</p>
+        <p class="text-xl font-bold mt-0.5">{{ listaFacturas.length }}</p>
+      </div>
+      <div>
+        <p class="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Subtotal visible</p>
+        <p class="text-lg font-bold mt-0.5 text-emerald-600">{{ formatCurrency(totalRevenue) }}</p>
       </div>
     </div>
 
