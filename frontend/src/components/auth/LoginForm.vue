@@ -265,6 +265,60 @@ async function handleVerifyMFA() {
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
+/* ── Mobile (≤ 640 px) ── */
+@media (max-width: 640px) {
+  .auth-root {
+    flex-direction: column;
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .brand-panel {
+    width: 100%;
+    min-height: auto;
+    flex-direction: row;
+    align-items: center;
+    padding: 1.1rem 1.25rem;
+    animation: none;
+  }
+
+  .brand-content { flex-direction: row; align-items: center; gap: 0; }
+  .brand-logo-row { animation: none; }
+  .brand-divider,
+  .brand-features,
+  .brand-copy,
+  .brand-cross-bg { display: none; }
+
+  .form-panel {
+    flex: 1;
+    padding: 2rem 1.25rem 3rem;
+    justify-content: flex-start;
+    animation: none;
+  }
+
+  /* On mobile the banner stacks inline instead of floating at the top */
+  .setup-banner {
+    position: relative;
+    top: auto; left: auto; right: auto;
+    border-radius: 8px;
+    border: 1px solid #fde68a;
+    margin-bottom: 1.25rem;
+  }
+
+  .auth-form {
+    max-width: 100%;
+    animation: none;
+  }
+}
+
+/* ── Small tablet (641 px – 900 px): narrow the brand panel ── */
+@media (min-width: 641px) and (max-width: 900px) {
+  .brand-panel { width: 36%; padding: 2.5rem 2rem; }
+  .form-panel  { padding: 2rem 2.5rem; }
+}
+
 /* ── Brand panel ── */
 .brand-panel {
   position: relative;

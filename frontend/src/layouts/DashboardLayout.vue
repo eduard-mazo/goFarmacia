@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import AppSidebar from "@/components/layout/AppSidebar.vue";
 import { Toaster } from "vue-sonner";
 import { useDBStore } from "@/stores/dbStore";
@@ -49,6 +49,25 @@ watch(
   <SidebarProvider class="h-full min-h-0">
     <AppSidebar />
     <SidebarInset class="min-h-0 flex flex-col">
+
+      <!-- Mobile top bar — only visible below md breakpoint -->
+      <header class="md:hidden shrink-0 sticky top-0 z-40 flex items-center gap-3 px-3 h-12 border-b border-border bg-background/95 backdrop-blur-sm">
+        <SidebarTrigger class="h-8 w-8 shrink-0" />
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <div class="flex items-center justify-center w-5 h-5 rounded bg-[#1e3a5f] shrink-0">
+            <svg viewBox="0 0 16 16" fill="none" class="w-3 h-3">
+              <rect x="6" y="1" width="4" height="14" rx="1" fill="white"/>
+              <rect x="1" y="6" width="14" height="4" rx="1" fill="white"/>
+            </svg>
+          </div>
+          <span class="text-sm font-semibold text-foreground truncate">Droguería Luna</span>
+        </div>
+        <div
+          class="h-2 w-2 rounded-full shrink-0"
+          :class="dbStore.connected ? 'bg-emerald-500' : dbStore.setupMode ? 'bg-amber-500' : 'bg-red-500'"
+          :title="dbStore.connected ? 'Conectado' : dbStore.setupMode ? 'Sin configurar' : 'Sin conexión'"
+        />
+      </header>
 
       <!-- Setup mode banner -->
       <div

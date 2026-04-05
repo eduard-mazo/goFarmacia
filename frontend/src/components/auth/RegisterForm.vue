@@ -82,7 +82,7 @@ const handleRegister = async () => {
         <div class="fields-stack">
 
           <!-- Nombre + Apellido -->
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="field-group">
               <Label for="nombre" class="field-label">Nombres</Label>
               <Input id="nombre" v-model="registerPayload.Nombre" type="text"
@@ -96,7 +96,7 @@ const handleRegister = async () => {
           </div>
 
           <!-- Email + Cédula -->
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="field-group">
               <Label for="email" class="field-label">Correo</Label>
               <Input id="email" v-model="registerPayload.Email" type="email"
@@ -167,6 +167,51 @@ const handleRegister = async () => {
   width: 100vw;
   overflow: hidden;
   font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* ── Mobile (≤ 640 px) ── */
+@media (max-width: 640px) {
+  .auth-root {
+    flex-direction: column;
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .brand-panel {
+    width: 100%;
+    min-height: auto;
+    flex-direction: row;
+    align-items: center;
+    padding: 1.1rem 1.25rem;
+    animation: none;
+  }
+
+  .brand-content { flex-direction: row; align-items: center; gap: 0; }
+  .brand-logo-row { animation: none; }
+  .brand-divider,
+  .brand-features,
+  .brand-copy,
+  .brand-cross-bg { display: none; }
+
+  .form-panel {
+    flex: 1;
+    padding: 2rem 1.25rem 3rem;
+    justify-content: flex-start;
+    animation: none;
+  }
+
+  .auth-form {
+    max-width: 100%;
+    animation: none;
+  }
+}
+
+/* ── Small tablet (641 px – 900 px) ── */
+@media (min-width: 641px) and (max-width: 900px) {
+  .brand-panel { width: 36%; padding: 2.5rem 2rem; }
+  .form-panel  { padding: 2rem 2.5rem; }
 }
 
 /* ── Brand panel (identical to Login) ── */
