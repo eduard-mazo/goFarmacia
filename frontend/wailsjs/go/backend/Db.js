@@ -33,7 +33,7 @@ async function apiBlob(path, filename) {
 // ─── Auth / Setup (public) ───────────────────────────────────────────────────
 
 export function GetDBStatus() { return api("GET", "/api/config/db-status"); }
-export function IsSetupMode() { return api("GET", "/api/config/setup-mode"); }
+export async function IsSetupMode() { const r = await api("GET", "/api/config/setup-mode"); return r.setupMode === true; }
 export function ConfigurarDB(cfg) { return api("POST", "/api/config/configurar-db", cfg); }
 export function TestDBConnection(cfg) { return api("POST", "/api/config/test-connection", cfg); }
 export function LoginVendedor(creds) { return api("POST", "/api/auth/login", creds); }
