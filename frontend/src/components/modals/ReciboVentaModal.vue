@@ -61,10 +61,12 @@ async function handleThermalPrint() {
 
 <template>
   <Dialog v-model:open="isOpen">
-    <DialogContent class="max-w-xs md:max-w-md p-4">
-      <ReciboPOS v-if="props.factura" :factura="props.factura" />
+    <DialogContent class="max-w-xs md:max-w-md p-0 flex flex-col max-h-[90vh]">
+      <div class="flex-1 overflow-y-auto p-4">
+        <ReciboPOS v-if="props.factura" :factura="props.factura" />
+      </div>
 
-      <DialogFooter>
+      <DialogFooter class="shrink-0 border-t px-4 py-3">
         <Button variant="outline" @click="isOpen = false">Cerrar</Button>
         <Button
           @click="handleThermalPrint"
