@@ -12,13 +12,18 @@ import { toast } from "vue-sonner";
 import {
   Settings, Save, Database, CheckCircle2, XCircle, Loader2,
   Eye, EyeOff, AlertTriangle, Mail, KeyRound, FileJson, FolderKey,
-  ShieldCheck,
+  ShieldCheck, Trash2, ReceiptText, Landmark,
 } from "lucide-vue-next";
 import { useDBStore } from "@/stores/dbStore";
 import { useAuthStore } from "@/stores/auth";
 import {
   EstadoAuth, ObtenerCredenciales, GuardarCredenciales,
 } from "@/../wailsjs/go/backend/GmailService";
+import { GetTablas, TruncarTabla } from "@/../wailsjs/go/backend/Db";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 // ── Stores ─────────────────────────────────────────────────────────────────
 const dbStore = useDBStore();
@@ -124,10 +129,55 @@ function saveSettings() {
   toast.success("Configuración guardada", { description: "Los cambios se han aplicado correctamente." });
 }
 
+// ── Limpieza de datos de importación ────────────────────────────────────────
+const conteoFacturas     = ref<number | null>(null);
+const conteoTransfer     = ref<number | null>(null);
+const limpiandoFacturas  = ref(false);
+const limpiandoTransfer  = ref(false);
+
+async function cargarConteos() {
+  try {
+    const tablas = await GetTablas();
+    conteoFacturas.value = tablas.find((t: any) => t.Name === "facturas_compra")?.RowCount ?? 0;
+    conteoTransfer.value = tablas.find((t: any) => t.Name === "transferencias_bancolombia")?.RowCount ?? 0;
+  } catch { /* silencioso — no bloquear la página */ }
+}
+
+async function limpiarFacturas() {
+  limpiandoFacturas.value = true;
+  try {
+    await TruncarTabla("facturas_compra");
+    toast.success("Facturas electrónicas eliminadas", {
+      description: "Las tablas facturas_compra y sus detalles han sido vaciadas.",
+    });
+    await cargarConteos();
+  } catch (e) {
+    toast.error("Error al limpiar facturas", { description: `${e}` });
+  } finally {
+    limpiandoFacturas.value = false;
+  }
+}
+
+async function limpiarTransferencias() {
+  limpiandoTransfer.value = true;
+  try {
+    await TruncarTabla("transferencias_bancolombia");
+    toast.success("Transferencias eliminadas", {
+      description: "La tabla transferencias_bancolombia ha sido vaciada.",
+    });
+    await cargarConteos();
+  } catch (e) {
+    toast.error("Error al limpiar transferencias", { description: `${e}` });
+  } finally {
+    limpiandoTransfer.value = false;
+  }
+}
+
 onMounted(async () => {
   loadSettings();
   if (!dsn.value && dbStore.dsnHint) dsn.value = dbStore.dsnHint;
   await loadCreds();
+  await cargarConteos();
 });
 </script>
 
@@ -381,6 +431,139 @@ onMounted(async () => {
           <Save class="w-4 h-4" />Guardar Configuración
         </Button>
       </div>
+
+      <!-- ═══ Zona de riesgo ══════════════════════════════════════════════════ -->
+      <div>
+        <div class="flex items-center gap-2 mb-3">
+          <Trash2 class="h-4 w-4 text-destructive" />
+          <h2 class="text-sm font-semibold text-destructive">Zona de riesgo</h2>
+        </div>
+        <p class="text-xs text-muted-foreground mb-4">
+          Estas acciones eliminan datos de importación permanentemente y no se pueden deshacer.
+          Úsalas para corregir inconsistencias antes de una re-sincronización completa.
+        </p>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+
+          <!-- Facturas electrónicas -->
+          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4 flex flex-col gap-3">
+            <div class="flex items-start gap-3">
+              <div class="rounded-md bg-destructive/10 p-2 shrink-0">
+                <ReceiptText class="h-4 w-4 text-destructive" />
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium">Facturas Electrónicas</p>
+                <p class="text-xs text-muted-foreground mt-0.5">
+                  Vacía <code class="bg-muted px-1 rounded text-[11px]">facturas_compra</code>
+                  y <code class="bg-muted px-1 rounded text-[11px]">facturas_compra_detalles</code>.
+                </p>
+                <p class="text-xs text-muted-foreground mt-1">
+                  Registros actuales:
+                  <span class="font-semibold text-foreground">
+                    {{ conteoFacturas === null ? "—" : conteoFacturas.toLocaleString() }}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <AlertDialog>
+              <template #trigger>
+                <Button
+                  variant="destructive" size="sm" class="h-8 text-xs w-full gap-1.5"
+                  :disabled="limpiandoFacturas || conteoFacturas === 0"
+                >
+                  <Loader2 v-if="limpiandoFacturas" class="h-3.5 w-3.5 animate-spin" />
+                  <Trash2 v-else class="h-3.5 w-3.5" />
+                  {{ limpiandoFacturas ? "Eliminando..." : "Limpiar facturas electrónicas" }}
+                </Button>
+              </template>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle class="flex items-center gap-2 text-destructive">
+                    <AlertTriangle class="h-4 w-4" />
+                    ¿Eliminar todas las facturas electrónicas?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se eliminarán <strong>{{ conteoFacturas?.toLocaleString() }} registros</strong>
+                    de facturas_compra y todos sus detalles asociados. Esta acción
+                    <strong>no se puede deshacer</strong>. Necesitarás re-sincronizar Gmail
+                    para volver a importarlas.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    @click="limpiarFacturas"
+                  >
+                    Sí, eliminar todo
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+
+          <!-- Transferencias Bancolombia -->
+          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4 flex flex-col gap-3">
+            <div class="flex items-start gap-3">
+              <div class="rounded-md bg-destructive/10 p-2 shrink-0">
+                <Landmark class="h-4 w-4 text-destructive" />
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium">Transferencias Bancolombia</p>
+                <p class="text-xs text-muted-foreground mt-0.5">
+                  Vacía <code class="bg-muted px-1 rounded text-[11px]">transferencias_bancolombia</code>
+                  por completo.
+                </p>
+                <p class="text-xs text-muted-foreground mt-1">
+                  Registros actuales:
+                  <span class="font-semibold text-foreground">
+                    {{ conteoTransfer === null ? "—" : conteoTransfer.toLocaleString() }}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <AlertDialog>
+              <template #trigger>
+                <Button
+                  variant="destructive" size="sm" class="h-8 text-xs w-full gap-1.5"
+                  :disabled="limpiandoTransfer || conteoTransfer === 0"
+                >
+                  <Loader2 v-if="limpiandoTransfer" class="h-3.5 w-3.5 animate-spin" />
+                  <Trash2 v-else class="h-3.5 w-3.5" />
+                  {{ limpiandoTransfer ? "Eliminando..." : "Limpiar transferencias" }}
+                </Button>
+              </template>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle class="flex items-center gap-2 text-destructive">
+                    <AlertTriangle class="h-4 w-4" />
+                    ¿Eliminar todas las transferencias Bancolombia?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se eliminarán <strong>{{ conteoTransfer?.toLocaleString() }} registros</strong>
+                    de transferencias_bancolombia. Esta acción
+                    <strong>no se puede deshacer</strong>. Necesitarás re-sincronizar el correo
+                    de Bancolombia para volver a importarlas.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    @click="limpiarTransferencias"
+                  >
+                    Sí, eliminar todo
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+
+        </div>
+      </div>
+
     </template>
   </div>
 </template>
