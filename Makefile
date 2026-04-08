@@ -2,13 +2,16 @@
 #  goFarmacia — Makefile
 #  Echo HTTP · Go · Vue 3 · PostgreSQL · Gmail API (DIAN)
 #
-#  Uso rápido:
-#    make              → muestra ayuda
-#    make dev          → desarrollo con hot-reload (Go + Vite en paralelo)
-#    make build        → compila frontend y binario Go con frontend embebido
-#    make run          → build + ejecutar (libera el puerto si está ocupado)
-#    make start        → ejecutar el binario ya compilado (libera puerto si ocupado)
-#    make clean        → limpia artefactos
+#  Flujo de producción (con systemd):
+#    make deploy          → git pull + build completo + reiniciar servicio
+#    make deploy-go       → git pull + solo recompila Go + reiniciar servicio
+#
+#  Flujo de desarrollo:
+#    make dev             → Go server + Vite hot-reload en paralelo
+#    make build           → compila frontend y binario Go con frontend embebido
+#    make start           → ejecuta el binario ya compilado (primer plano)
+#    make start-bg        → ejecuta en segundo plano (sin systemd)
+#    make stop            → detiene el proceso (puerto o systemd)
 # =============================================================================
 
 # ── Detección de SO ───────────────────────────────────────────────────────────
@@ -33,8 +36,9 @@ PORT       := 6969
 BUILD_DIR  := build/bin
 DIST_DIR   := dist
 BINARY     := $(BUILD_DIR)/$(APP_NAME)
+PID_FILE   := /tmp/$(APP_NAME).pid
 
-FRONTEND_DIR := frontend
+FRONTEND_DIR  := frontend
 FRONTEND_DIST := $(FRONTEND_DIR)/dist
 
 # Config de usuario en tiempo de ejecución
@@ -46,6 +50,15 @@ CREDS_DEST    := $(CONFIG_DIR)/credentials.json
 
 # Cross-compiler Windows
 WIN_CC := x86_64-w64-mingw32-gcc
+
+# Systemd
+SERVICE_NAME  := goFarmacia
+SERVICE_FILE  := /etc/systemd/system/$(SERVICE_NAME).service
+SERVICE_USER  := $(shell whoami)
+SERVICE_GROUP := $(shell id -gn)
+ABS_BINARY    := $(abspath $(BINARY))
+ABS_WORK_DIR  := $(abspath $(BUILD_DIR))
+ABS_ENV_FILE  := $(abspath $(BUILD_DIR)/.env)
 
 # ── Colores ───────────────────────────────────────────────────────────────────
 BOLD   := \033[1m
@@ -67,21 +80,39 @@ help:
 	@echo "$(BOLD)$(CYAN)  goFarmacia $(VERSION)$(RESET)  ·  $(HOST_OS)/$(ARCH)"
 	@echo "  Sistema de gestión farmacéutica · Echo HTTP"
 	@echo ""
-	@echo "$(BOLD)  Desarrollo$(RESET)"
-	@echo "  $(GREEN)dev$(RESET)              Go server + Vite hot-reload en paralelo"
-	@echo "  $(GREEN)check-deps$(RESET)       Verifica herramientas instaladas"
-	@echo "  $(GREEN)check-env$(RESET)        Verifica que .env y credenciales existen"
+	@echo "$(BOLD)  Producción (con systemd instalado)$(RESET)"
+	@echo "  $(GREEN)deploy$(RESET)           git pull + build completo + reiniciar servicio"
+	@echo "  $(GREEN)deploy-go$(RESET)        git pull + solo Go + reiniciar servicio (cambios en backend)"
+	@echo "  $(GREEN)deploy-frontend$(RESET)  git pull + solo frontend + reiniciar servicio (cambios en UI)"
+	@echo ""
+	@echo "$(BOLD)  Control del servicio systemd$(RESET)"
+	@echo "  $(GREEN)service-start$(RESET)    Inicia el servicio systemd"
+	@echo "  $(GREEN)service-stop$(RESET)     Detiene el servicio systemd"
+	@echo "  $(GREEN)service-restart$(RESET)  Reinicia el servicio systemd"
+	@echo "  $(GREEN)service-status$(RESET)   Estado detallado del servicio"
+	@echo "  $(GREEN)service-logs$(RESET)     Logs en vivo (journalctl -f)"
+	@echo "  $(GREEN)install-service$(RESET)  Instala y activa servicio systemd (autoarranque)"
+	@echo "  $(GREEN)uninstall-service$(RESET) Detiene, deshabilita y elimina el servicio"
+	@echo ""
+	@echo "$(BOLD)  Ejecución directa (sin systemd)$(RESET)"
+	@echo "  $(GREEN)start$(RESET)            Ejecuta el binario en primer plano"
+	@echo "  $(GREEN)start-bg$(RESET)         Ejecuta el binario en segundo plano (PID → $(PID_FILE))"
+	@echo "  $(GREEN)stop$(RESET)             Detiene el proceso (systemd si activo, o por puerto)"
+	@echo "  $(GREEN)run$(RESET)              build + ejecutar en primer plano"
 	@echo ""
 	@echo "$(BOLD)  Build$(RESET)"
 	@echo "  $(GREEN)build$(RESET)            Frontend (pnpm build) + binario Go embebido"
-	@echo "  $(GREEN)build-frontend$(RESET)   Solo compila el frontend (pnpm build)"
-	@echo "  $(GREEN)build-go$(RESET)         Solo compila el binario Go (requiere dist/ previo)"
+	@echo "  $(GREEN)build-frontend$(RESET)   Solo compila el frontend"
+	@echo "  $(GREEN)build-go$(RESET)         Solo recompila Go (requiere dist/ previo)"
 	@echo "  $(GREEN)build-win$(RESET)        Binario Windows/amd64 (requiere mingw-w64)"
 	@echo ""
-	@echo "$(BOLD)  Ejecución$(RESET)"
-	@echo "  $(GREEN)run$(RESET)              build + libera puerto $(PORT) + ejecuta"
-	@echo "  $(GREEN)start$(RESET)            Libera puerto $(PORT) y ejecuta binario existente"
-	@echo "  $(GREEN)stop$(RESET)             Mata el proceso en puerto $(PORT)"
+	@echo "$(BOLD)  Desarrollo$(RESET)"
+	@echo "  $(GREEN)dev$(RESET)              Go server + Vite hot-reload en paralelo"
+	@echo "  $(GREEN)check-deps$(RESET)       Verifica herramientas instaladas"
+	@echo "  $(GREEN)check-env$(RESET)        Verifica .env y credenciales"
+	@echo ""
+	@echo "$(BOLD)  Estado$(RESET)"
+	@echo "  $(GREEN)status$(RESET)           Muestra estado del proceso, servicio y puerto"
 	@echo ""
 	@echo "$(BOLD)  Distribución$(RESET)"
 	@echo "  $(GREEN)dist-linux$(RESET)       ZIP Linux autónomo"
@@ -95,12 +126,6 @@ help:
 	@echo "  $(GREEN)db-make-admin$(RESET)    Promover a admin: EMAIL=x@y.com"
 	@echo "  $(GREEN)db-reset$(RESET)         Restaurar BD desde SQL"
 	@echo ""
-	@echo "$(BOLD)  Systemd$(RESET)"
-	@echo "  $(GREEN)install-service$(RESET)  Instala y activa servicio systemd (autoarranque)"
-	@echo "  $(GREEN)uninstall-service$(RESET) Detiene, deshabilita y elimina el servicio"
-	@echo "  $(GREEN)service-status$(RESET)   Estado del servicio"
-	@echo "  $(GREEN)service-logs$(RESET)     Últimos 50 logs en vivo"
-	@echo ""
 	@echo "$(BOLD)  Utilidades$(RESET)"
 	@echo "  $(GREEN)tidy$(RESET)             go mod tidy + pnpm install"
 	@echo "  $(GREEN)install-deps$(RESET)     Instala mingw-w64 + zip (Linux/apt)"
@@ -108,7 +133,7 @@ help:
 	@echo "  $(GREEN)clean$(RESET)            Limpia binarios y ZIPs"
 	@echo "  $(GREEN)clean-all$(RESET)        + node_modules y dist frontend"
 	@echo ""
-	@echo "  Puerto por defecto: $(BOLD)$(PORT)$(RESET)  (override: make run PORT=8080)"
+	@echo "  Puerto: $(BOLD)$(PORT)$(RESET)  (override: make run PORT=8080)"
 	@echo ""
 
 # =============================================================================
@@ -165,27 +190,83 @@ install-deps:
 	@echo "$(GREEN)✓ Listo.$(RESET)"
 
 # =============================================================================
-#  PORT MANAGEMENT
+#  ESTADO
+# =============================================================================
+.PHONY: status
+status:
+	@echo ""
+	@echo "$(BOLD)$(CYAN)  Estado — goFarmacia$(RESET)"
+	@echo ""
+	@# --- Servicio systemd ---
+	@if [ -f "$(SERVICE_FILE)" ]; then \
+	  ACTIVE=$$(systemctl is-active $(SERVICE_NAME) 2>/dev/null); \
+	  ENABLED=$$(systemctl is-enabled $(SERVICE_NAME) 2>/dev/null); \
+	  if [ "$$ACTIVE" = "active" ]; then \
+	    echo "  $(GREEN)●$(RESET) Servicio systemd : activo ($$ENABLED)"; \
+	    systemctl show $(SERVICE_NAME) --no-pager --property=MainPID,ExecMainStartTimestamp \
+	      | sed 's/^/    /'; \
+	  else \
+	    echo "  $(RED)●$(RESET) Servicio systemd : $$ACTIVE ($$ENABLED)"; \
+	  fi; \
+	else \
+	  echo "  $(YELLOW)○$(RESET) Servicio systemd : no instalado (make install-service)"; \
+	fi
+	@echo ""
+	@# --- Proceso por puerto ---
+	@PID=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
+	if [ -n "$$PID" ]; then \
+	  echo "  $(GREEN)✓$(RESET) Puerto $(PORT)       : en uso (PID $$PID)"; \
+	  ps -p $$PID -o pid,user,etime,cmd --no-headers 2>/dev/null | sed 's/^/    /'; \
+	else \
+	  echo "  $(RED)✗$(RESET) Puerto $(PORT)       : libre"; \
+	fi
+	@echo ""
+	@# --- Binario ---
+	@if [ -f "$(BINARY)" ]; then \
+	  echo "  $(GREEN)✓$(RESET) Binario          : $(BINARY)  ($$(du -sh $(BINARY) | cut -f1))"; \
+	  echo "    Compilado el   : $$(stat -c '%y' $(BINARY) | cut -d. -f1)"; \
+	else \
+	  echo "  $(YELLOW)!$(RESET) Binario          : no encontrado (make build)"; \
+	fi
+	@echo ""
+	@# --- Git ---
+	@echo "  $(CYAN)↗$(RESET) Rama             : $$(git branch --show-current 2>/dev/null)"
+	@echo "  $(CYAN)↗$(RESET) Último commit    : $$(git log -1 --format='%h %s (%ar)' 2>/dev/null)"
+	@echo ""
+
+# =============================================================================
+#  CONTROL DE PROCESO
 # =============================================================================
 
-# Libera el puerto si está ocupado; no falla si ya está libre.
+# Libera el puerto — solo para ejecución directa (no systemd).
+# Si systemd está activo, usa service-stop en su lugar.
 .PHONY: _free-port
 _free-port:
 	@PID=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
 	if [ -n "$$PID" ]; then \
-	  echo "  $(YELLOW)!$(RESET) Puerto $(PORT) ocupado por PID $$PID — terminando proceso..."; \
+	  echo "  $(YELLOW)!$(RESET) Puerto $(PORT) ocupado (PID $$PID) — terminando..."; \
 	  kill -TERM $$PID 2>/dev/null || true; \
 	  sleep 1; \
 	  kill -9 $$PID 2>/dev/null || true; \
 	  echo "  $(GREEN)✓$(RESET) Puerto $(PORT) liberado."; \
-	else \
-	  echo "  $(GREEN)✓$(RESET) Puerto $(PORT) disponible."; \
 	fi
 
+# stop: usa systemd si está instalado; de lo contrario mata por puerto.
 .PHONY: stop
 stop:
-	@echo "$(BOLD)Deteniendo servidor en puerto $(PORT)...$(RESET)"
-	@$(MAKE) _free-port PORT=$(PORT)
+	@if [ -f "$(SERVICE_FILE)" ] && systemctl is-active --quiet $(SERVICE_NAME) 2>/dev/null; then \
+	  echo "$(BOLD)Deteniendo servicio systemd '$(SERVICE_NAME)'...$(RESET)"; \
+	  sudo systemctl stop $(SERVICE_NAME); \
+	  echo "$(GREEN)✓ Servicio detenido.$(RESET)"; \
+	else \
+	  echo "$(BOLD)Deteniendo proceso en puerto $(PORT)...$(RESET)"; \
+	  $(MAKE) _free-port PORT=$(PORT); \
+	  if [ -f "$(PID_FILE)" ]; then \
+	    PID=$$(cat $(PID_FILE) 2>/dev/null); \
+	    kill -TERM $$PID 2>/dev/null || true; \
+	    rm -f $(PID_FILE); \
+	  fi; \
+	fi
 
 # =============================================================================
 #  DESARROLLO
@@ -203,16 +284,16 @@ dev:
 #  BUILD
 # =============================================================================
 
-# Compila el frontend (pnpm build)
 .PHONY: build-frontend
 build-frontend:
 	@echo "$(BOLD)$(CYAN)→ Compilando frontend...$(RESET)"
 	cd $(FRONTEND_DIR) && pnpm install --frozen-lockfile && pnpm build
 	@echo "$(GREEN)✓ Frontend compilado en $(FRONTEND_DIST)/$(RESET)"
 
-# Compila solo el binario Go (el frontend/dist debe existir para el embed)
 .PHONY: build-go
 build-go:
+	@[ -d "$(FRONTEND_DIST)" ] || \
+	  (echo "$(RED)Error: $(FRONTEND_DIST) no existe — ejecuta 'make build-frontend' primero.$(RESET)" && exit 1)
 	@echo "$(BOLD)$(CYAN)→ Compilando binario Go ($(HOST_OS))...$(RESET)"
 	@echo "  Versión: $(VERSION)  Fecha: $(BUILD_DATE)"
 	@mkdir -p $(BUILD_DIR)
@@ -223,14 +304,14 @@ build-go:
 		.
 	@echo "$(GREEN)✓ Binario:$(RESET) $(BINARY)  ($$(du -sh $(BINARY) | cut -f1))"
 
-# Build completo: frontend embebido en el binario Go
+# Build completo: frontend + binario Go embebido
 .PHONY: build
 build: build-frontend build-go
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
 	@echo ""
 	@echo "$(BOLD)$(GREEN)✓ Build completo.$(RESET)"
 	@echo "  Binario : $(BINARY)"
-	@echo "  Ejecutar: make start  (o PORT=XXXX make start)"
+	@echo "  Ejecutar: make start  (o make service-start si hay systemd)"
 
 # Build Windows desde Linux (requiere mingw-w64)
 .PHONY: build-win
@@ -248,23 +329,186 @@ build-win: build-frontend
 	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
 
 # =============================================================================
-#  EJECUCIÓN
+#  EJECUCIÓN DIRECTA (sin systemd)
 # =============================================================================
 
-# build + free port + run
+# build + run en primer plano
 .PHONY: run
 run: build
 	@echo "$(BOLD)$(CYAN)→ Iniciando servidor en http://localhost:$(PORT)$(RESET)"
 	@$(MAKE) _free-port PORT=$(PORT)
 	@cd $(BUILD_DIR) && PORT=$(PORT) ./$(APP_NAME)
 
-# free port + run (sin recompilar)
+# run sin recompilar — primer plano
 .PHONY: start
 start:
-	@[ -f "$(BINARY)" ] || (echo "$(RED)Binario no encontrado. Ejecuta 'make build' primero.$(RESET)" && exit 1)
-	@echo "$(BOLD)$(CYAN)→ Iniciando servidor en http://localhost:$(PORT)$(RESET)"
+	@[ -f "$(BINARY)" ] || \
+	  (echo "$(RED)Binario no encontrado — ejecuta 'make build' primero.$(RESET)" && exit 1)
+	@echo "$(BOLD)$(CYAN)→ Iniciando en http://localhost:$(PORT)$(RESET)"
 	@$(MAKE) _free-port PORT=$(PORT)
 	@cd $(BUILD_DIR) && PORT=$(PORT) ./$(APP_NAME)
+
+# run sin recompilar — segundo plano (útil cuando no hay systemd)
+.PHONY: start-bg
+start-bg:
+	@[ -f "$(BINARY)" ] || \
+	  (echo "$(RED)Binario no encontrado — ejecuta 'make build' primero.$(RESET)" && exit 1)
+	@$(MAKE) _free-port PORT=$(PORT)
+	@echo "$(BOLD)$(CYAN)→ Iniciando en segundo plano (http://localhost:$(PORT))$(RESET)"
+	@cd $(BUILD_DIR) && PORT=$(PORT) ./$(APP_NAME) >> /tmp/$(APP_NAME).log 2>&1 & \
+	  echo $$! > $(PID_FILE) && \
+	  echo "  $(GREEN)✓$(RESET) PID: $$(cat $(PID_FILE))" && \
+	  echo "  $(CYAN)Logs:$(RESET) tail -f /tmp/$(APP_NAME).log"
+
+# =============================================================================
+#  SYSTEMD
+# =============================================================================
+
+# Genera e instala el servicio systemd (requiere sudo)
+.PHONY: install-service
+install-service: build
+	@echo "$(BOLD)$(CYAN)→ Instalando servicio systemd '$(SERVICE_NAME)'...$(RESET)"
+	@printf '[Unit]\nDescription=goFarmacia — Sistema de gestión farmacéutica\nAfter=network.target postgresql.service\nWants=postgresql.service\n\n[Service]\nType=simple\nUser=$(SERVICE_USER)\nGroup=$(SERVICE_GROUP)\nWorkingDirectory=$(ABS_WORK_DIR)\nEnvironmentFile=$(ABS_ENV_FILE)\nExecStart=$(ABS_BINARY)\nRestart=on-failure\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=$(SERVICE_NAME)\n\n[Install]\nWantedBy=multi-user.target\n' \
+	  | sudo tee $(SERVICE_FILE) > /dev/null
+	@sudo systemctl daemon-reload
+	@sudo systemctl enable $(SERVICE_NAME)
+	@sudo systemctl restart $(SERVICE_NAME)
+	@echo ""
+	@echo "$(GREEN)✓ Servicio instalado y activo.$(RESET)"
+	@echo "  make service-status   → estado"
+	@echo "  make service-logs     → logs en vivo"
+	@echo "  make deploy           → actualizar en producción"
+	@echo ""
+
+# Detiene, deshabilita y elimina el servicio
+.PHONY: uninstall-service
+uninstall-service:
+	@echo "$(BOLD)$(YELLOW)→ Desinstalando servicio '$(SERVICE_NAME)'...$(RESET)"
+	@sudo systemctl stop    $(SERVICE_NAME) 2>/dev/null || true
+	@sudo systemctl disable $(SERVICE_NAME) 2>/dev/null || true
+	@sudo rm -f $(SERVICE_FILE)
+	@sudo systemctl daemon-reload
+	@echo "$(GREEN)✓ Servicio eliminado.$(RESET)"
+
+.PHONY: service-start
+service-start:
+	@echo "$(BOLD)$(CYAN)→ Iniciando servicio '$(SERVICE_NAME)'...$(RESET)"
+	@sudo systemctl start $(SERVICE_NAME)
+	@sleep 1 && systemctl is-active --quiet $(SERVICE_NAME) \
+	  && echo "$(GREEN)✓ Activo.$(RESET)" \
+	  || echo "$(RED)✗ Fallo al iniciar — revisa: make service-logs$(RESET)"
+
+.PHONY: service-stop
+service-stop:
+	@echo "$(BOLD)$(YELLOW)→ Deteniendo servicio '$(SERVICE_NAME)'...$(RESET)"
+	@sudo systemctl stop $(SERVICE_NAME)
+	@echo "$(GREEN)✓ Detenido.$(RESET)"
+
+.PHONY: service-restart
+service-restart:
+	@echo "$(BOLD)$(CYAN)→ Reiniciando servicio '$(SERVICE_NAME)'...$(RESET)"
+	@sudo systemctl restart $(SERVICE_NAME)
+	@sleep 1 && systemctl is-active --quiet $(SERVICE_NAME) \
+	  && echo "$(GREEN)✓ Activo.$(RESET)" \
+	  || echo "$(RED)✗ Fallo al reiniciar — revisa: make service-logs$(RESET)"
+
+.PHONY: service-status
+service-status:
+	@sudo systemctl status $(SERVICE_NAME) --no-pager || true
+
+.PHONY: service-logs
+service-logs:
+	@sudo journalctl -fu $(SERVICE_NAME) --no-pager -n 50
+
+# =============================================================================
+#  PRODUCCIÓN — FLUJOS DE DEPLOY
+# =============================================================================
+
+# deploy: pull + build completo (frontend + go) + reiniciar
+# Usar cuando cambiaron archivos Vue/TypeScript O Go.
+.PHONY: deploy
+deploy:
+	@echo ""
+	@echo "$(BOLD)$(CYAN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
+	@echo "$(BOLD)$(CYAN)  Deploy — goFarmacia                    $(RESET)"
+	@echo "$(BOLD)$(CYAN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
+	@echo ""
+	@echo "$(BOLD)[1/4] Pull de cambios$(RESET)"
+	@git pull --ff-only
+	@echo ""
+	@echo "$(BOLD)[2/4] Build frontend$(RESET)"
+	@$(MAKE) build-frontend
+	@echo ""
+	@echo "$(BOLD)[3/4] Build Go$(RESET)"
+	@$(MAKE) build-go
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@echo ""
+	@echo "$(BOLD)[4/4] Reiniciando servicio$(RESET)"
+	@$(MAKE) _restart-or-start
+	@echo ""
+	@echo "$(GREEN)✓ Deploy completado — $(VERSION)$(RESET)"
+	@echo ""
+
+# deploy-go: pull + solo recompila Go + reiniciar
+# Usar cuando solo cambiaron archivos .go (más rápido, no toca el frontend).
+.PHONY: deploy-go
+deploy-go:
+	@echo ""
+	@echo "$(BOLD)$(CYAN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
+	@echo "$(BOLD)$(CYAN)  Deploy Go (backend only)               $(RESET)"
+	@echo "$(BOLD)$(CYAN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
+	@echo ""
+	@echo "$(BOLD)[1/3] Pull de cambios$(RESET)"
+	@git pull --ff-only
+	@echo ""
+	@echo "$(BOLD)[2/3] Build Go$(RESET)"
+	@$(MAKE) build-go
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@echo ""
+	@echo "$(BOLD)[3/3] Reiniciando servicio$(RESET)"
+	@$(MAKE) _restart-or-start
+	@echo ""
+	@echo "$(GREEN)✓ Deploy Go completado — $(VERSION)$(RESET)"
+	@echo ""
+
+# deploy-frontend: pull + solo recompila frontend + reiniciar
+# Usar cuando solo cambiaron archivos Vue/TypeScript/CSS.
+.PHONY: deploy-frontend
+deploy-frontend:
+	@echo ""
+	@echo "$(BOLD)$(CYAN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
+	@echo "$(BOLD)$(CYAN)  Deploy Frontend (UI only)              $(RESET)"
+	@echo "$(BOLD)$(CYAN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(RESET)"
+	@echo ""
+	@echo "$(BOLD)[1/3] Pull de cambios$(RESET)"
+	@git pull --ff-only
+	@echo ""
+	@echo "$(BOLD)[2/3] Build frontend$(RESET)"
+	@$(MAKE) build-frontend
+	@echo ""
+	@echo "$(BOLD)[3/3] Recompilando Go (re-embed frontend) y reiniciando$(RESET)"
+	@$(MAKE) build-go
+	@$(MAKE) _copy-env TARGET_DIR=$(BUILD_DIR)
+	@$(MAKE) _restart-or-start
+	@echo ""
+	@echo "$(GREEN)✓ Deploy frontend completado — $(VERSION)$(RESET)"
+	@echo ""
+
+# _restart-or-start: reinicia via systemd si está instalado; de lo contrario
+# muestra instrucción para start-bg.
+.PHONY: _restart-or-start
+_restart-or-start:
+	@if [ -f "$(SERVICE_FILE)" ]; then \
+	  sudo systemctl restart $(SERVICE_NAME); \
+	  sleep 1; \
+	  systemctl is-active --quiet $(SERVICE_NAME) \
+	    && echo "  $(GREEN)✓$(RESET) Servicio reiniciado." \
+	    || (echo "  $(RED)✗$(RESET) Fallo — revisa: make service-logs" && exit 1); \
+	else \
+	  echo "  $(YELLOW)!$(RESET) Systemd no instalado. Ejecuta manualmente:"; \
+	  echo "     make start-bg    → segundo plano"; \
+	  echo "     make start       → primer plano"; \
+	fi
 
 # =============================================================================
 #  HELPERS INTERNOS
@@ -276,7 +520,7 @@ _copy-env:
 	  echo "  $(GREEN)✓$(RESET) .env copiado a $(TARGET_DIR)/"; \
 	elif [ -f "$(ENV_EXAMPLE)" ]; then \
 	  cp "$(ENV_EXAMPLE)" "$(TARGET_DIR)/.env.example"; \
-	  echo "  $(YELLOW)!$(RESET) .env no encontrado — copiado .env.example (renómbralo y ajusta DATABASE_URL)"; \
+	  echo "  $(YELLOW)!$(RESET) .env no encontrado — copiado .env.example"; \
 	else \
 	  printf 'DATABASE_URL=postgresql://usuario:password@localhost:5432/farmacia_db?sslmode=disable\nJWT_SECRET_KEY=cambia_esto_por_una_clave_segura_de_32_caracteres_minimo\nPORT=$(PORT)\n' \
 	    > "$(TARGET_DIR)/.env.example"; \
@@ -349,7 +593,6 @@ db-create-admin:
 .PHONY: db-reset
 db-reset:
 	@echo "$(BOLD)$(YELLOW)→ Restaurando base de datos...$(RESET)"
-	@echo "  Destino : DATABASE_URL del .env"
 ifdef SOURCE
 	@echo "  Origen  : $(SOURCE)"
 else
@@ -388,53 +631,6 @@ db-make-admin:
 	  2>/dev/null || echo "$(RED)Error de conexión.$(RESET)"
 
 # =============================================================================
-#  SYSTEMD (autoarranque)
-# =============================================================================
-
-SERVICE_NAME  := goFarmacia
-SERVICE_FILE  := /etc/systemd/system/$(SERVICE_NAME).service
-SERVICE_USER  := $(shell whoami)
-SERVICE_GROUP := $(shell id -gn)
-ABS_BINARY    := $(abspath $(BINARY))
-ABS_WORK_DIR  := $(abspath $(BUILD_DIR))
-ABS_ENV_FILE  := $(abspath $(BUILD_DIR)/.env)
-
-# Genera e instala el servicio systemd (requiere sudo)
-.PHONY: install-service
-install-service: build
-	@echo "$(BOLD)$(CYAN)→ Instalando servicio systemd '$(SERVICE_NAME)'...$(RESET)"
-	@printf '[Unit]\nDescription=goFarmacia — Sistema de gestión farmacéutica\nAfter=network.target\n\n[Service]\nType=simple\nUser=$(SERVICE_USER)\nGroup=$(SERVICE_GROUP)\nWorkingDirectory=$(ABS_WORK_DIR)\nEnvironmentFile=$(ABS_ENV_FILE)\nExecStart=$(ABS_BINARY)\nRestart=on-failure\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=$(SERVICE_NAME)\n\n[Install]\nWantedBy=multi-user.target\n' \
-	  | sudo tee $(SERVICE_FILE) > /dev/null
-	@sudo systemctl daemon-reload
-	@sudo systemctl enable $(SERVICE_NAME)
-	@sudo systemctl restart $(SERVICE_NAME)
-	@echo ""
-	@echo "$(GREEN)✓ Servicio instalado y activo.$(RESET)"
-	@echo "  Estado  : sudo systemctl status $(SERVICE_NAME)"
-	@echo "  Logs    : sudo journalctl -fu $(SERVICE_NAME)"
-	@echo "  Parar   : sudo systemctl stop $(SERVICE_NAME)"
-	@echo "  Remover : make uninstall-service"
-	@echo ""
-
-# Detiene, deshabilita y elimina el servicio
-.PHONY: uninstall-service
-uninstall-service:
-	@echo "$(BOLD)$(YELLOW)→ Desinstalando servicio '$(SERVICE_NAME)'...$(RESET)"
-	@sudo systemctl stop    $(SERVICE_NAME) 2>/dev/null || true
-	@sudo systemctl disable $(SERVICE_NAME) 2>/dev/null || true
-	@sudo rm -f $(SERVICE_FILE)
-	@sudo systemctl daemon-reload
-	@echo "$(GREEN)✓ Servicio eliminado.$(RESET)"
-
-.PHONY: service-status
-service-status:
-	@sudo systemctl status $(SERVICE_NAME) --no-pager || true
-
-.PHONY: service-logs
-service-logs:
-	@sudo journalctl -fu $(SERVICE_NAME) --no-pager -n 50
-
-# =============================================================================
 #  GMAIL
 # =============================================================================
 .PHONY: gmail-setup
@@ -443,8 +639,7 @@ gmail-setup:
 	@echo ""
 	@echo "  1. Ve a https://console.cloud.google.com/apis/credentials"
 	@echo "  2. Crea credenciales OAuth 2.0 → Aplicación de escritorio"
-	@echo "  3. Descarga el JSON y guárdalo como credentials.json en la raíz del proyecto"
-	@echo "     O en: $(CONFIG_DIR)/credentials.json"
+	@echo "  3. Guarda el JSON en: $(CONFIG_DIR)/credentials.json"
 	@echo ""
 	@if [ -f "$(CREDS_DEST)" ]; then \
 	  echo "  $(GREEN)✓$(RESET) credentials.json encontrado en $(CONFIG_DIR)/"; \
