@@ -95,6 +95,7 @@ type DiscrepancyResponse struct {
 type Invoice struct {
 	XMLName          xml.Name           `xml:"Invoice"`
 	ID               string             `xml:"ID"`
+	UUID             string             `xml:"UUID"`
 	IssueDate        string             `xml:"IssueDate"`
 	IssueTime        string             `xml:"IssueTime"`
 	DocumentCurrency string             `xml:"DocumentCurrencyCode"`
@@ -120,6 +121,7 @@ type InvoiceLine struct {
 type CreditNote struct {
 	XMLName             xml.Name             `xml:"CreditNote"`
 	ID                  string               `xml:"ID"`
+	UUID                string               `xml:"UUID"`
 	IssueDate           string               `xml:"IssueDate"`
 	IssueTime           string               `xml:"IssueTime"`
 	DocumentCurrency    string               `xml:"DocumentCurrencyCode"`
@@ -146,6 +148,7 @@ type CreditNoteLine struct {
 type DebitNote struct {
 	XMLName                xml.Name             `xml:"DebitNote"`
 	ID                     string               `xml:"ID"`
+	UUID                   string               `xml:"UUID"`
 	IssueDate              string               `xml:"IssueDate"`
 	IssueTime              string               `xml:"IssueTime"`
 	DocumentCurrency       string               `xml:"DocumentCurrencyCode"`
@@ -216,6 +219,9 @@ type ParsedProduct struct {
 	//               "91"=NotaCrédito, "92"=NotaDébito
 	DocumentType  string
 	ReferenciaDoc string // For credit/debit notes: original invoice number
+	// DocumentUUID is the CUFE (invoices) or CUDE (credit/debit notes) of THIS document.
+	// Populated from the XML UUID element — reliable, avoids BillingReference confusion.
+	DocumentUUID  string
 }
 
 // ─── Parsing ──────────────────────────────────────────────────────────────────
@@ -311,7 +317,7 @@ func buildInvoiceProducts(inv Invoice) []ParsedProduct {
 			supplierName, inv.Supplier.Party.PartyTaxScheme.CompanyID,
 			customerName, inv.Customer.Party.PartyTaxScheme.CompanyID,
 			inv.DocumentCurrency, inv.MonetaryTotal.PayableAmount,
-			"01", "",
+			"01", "", inv.UUID,
 		))
 	}
 	return products
@@ -325,7 +331,7 @@ func buildLineProduct(
 	invoiceID, issueDate, issueTime string,
 	supplierName, supplierNIT, customerName, customerNIT string,
 	currency string, totalInvoice float64,
-	docType, refDoc string,
+	docType, refDoc, docUUID string,
 ) ParsedProduct {
 	props := make(map[string]string)
 	for _, prop := range item.AdditionalItemProperties {
@@ -379,6 +385,7 @@ func buildLineProduct(
 		TotalInvoice:  totalInvoice,
 		DocumentType:  docType,
 		ReferenciaDoc: refDoc,
+		DocumentUUID:  docUUID,
 	}
 }
 
@@ -395,7 +402,7 @@ func buildCreditNoteProducts(cn CreditNote) []ParsedProduct {
 			supplierName, cn.Supplier.Party.PartyTaxScheme.CompanyID,
 			customerName, cn.Customer.Party.PartyTaxScheme.CompanyID,
 			cn.DocumentCurrency, cn.MonetaryTotal.PayableAmount,
-			"91", refDoc,
+			"91", refDoc, cn.UUID,
 		))
 	}
 	return products
@@ -418,7 +425,7 @@ func buildDebitNoteProducts(dn DebitNote) []ParsedProduct {
 			supplierName, dn.Supplier.Party.PartyTaxScheme.CompanyID,
 			customerName, dn.Customer.Party.PartyTaxScheme.CompanyID,
 			dn.DocumentCurrency, total,
-			"92", refDoc,
+			"92", refDoc, dn.UUID,
 		))
 	}
 	return products

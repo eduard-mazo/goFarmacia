@@ -49,6 +49,31 @@ type FacturasCompraResponse struct {
 	TotalRecords int             `json:"TotalRecords"`
 }
 
+// ExisteFacturaCompraConDetalle is the debug version of ExisteFacturaCompra.
+// Returns (exists, reason, error) where reason describes which DB record caused the match.
+func (d *Db) ExisteFacturaCompraConDetalle(emailMessageID, cufe string) (bool, string, error) {
+	ctx := context.Background()
+	var numero, matchedCUFE, matchedMsgID, tipodoc string
+	err := d.QueryRow(ctx,
+		`SELECT numero_factura,
+		        COALESCE(cufe,''),
+		        COALESCE(email_message_id,''),
+		        COALESCE(tipo_documento,'01')
+		 FROM facturas_compra
+		 WHERE (cufe IS NOT NULL AND cufe != '' AND cufe = $2)
+		    OR (email_message_id = $1 AND (cufe IS NULL OR cufe = ''))
+		 LIMIT 1`,
+		emailMessageID, cufe,
+	).Scan(&numero, &matchedCUFE, &matchedMsgID, &tipodoc)
+	if err != nil {
+		// no rows = not a duplicate
+		return false, "", nil
+	}
+	reason := fmt.Sprintf("ya existe %s[%s] cufe=%.16s… msg=%.16s…",
+		numero, tipodoc, matchedCUFE, matchedMsgID)
+	return true, reason, nil
+}
+
 // ExisteFacturaCompra returns true if an invoice already exists.
 // Deduplication priority:
 //  1. CUFE (DIAN cryptographic hash — unique per document) when present.

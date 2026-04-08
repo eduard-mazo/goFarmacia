@@ -1,4 +1,10 @@
 // internal/processor/invoice.go
+// NOTE: DIAN UBL 2.1 document UUIDs use different scheme names per document type:
+//   Invoices (01/02) → schemeName="CUFE-SHA384"
+//   Credit notes (91) → schemeName="CUDE-SHA384"
+//   Debit notes (92)  → schemeName="CUDE-SHA384"
+// Credit/debit notes also embed the ORIGINAL invoice's CUFE inside BillingReference.
+// String-search extraction would pick that up first — use the struct UUID field instead.
 package processor
 
 import (

@@ -503,13 +503,17 @@ func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string) (mr
 			products = processor.EnrichProductsFromPDF(products, pdfData)
 		}
 
-		cufe := extractCUFE(xmlData)
 		sample := products[0]
+		cufe := sample.DocumentUUID
 		tipoLabel := tipoDocumentoLabel(sample.DocumentType)
 
-		exists, _ := g.db.ExisteFacturaCompra(messageID, cufe)
+		emit("info", fmt.Sprintf("  ↳ %s [%s] cufe=%.16s… msg=%.16s…",
+			sample.InvoiceID, tipoLabel, cufe, messageID))
+
+		exists, dupInfo, _ := g.db.ExisteFacturaCompraConDetalle(messageID, cufe)
 		if exists {
 			mr.duplicadas++
+			emit("warn", fmt.Sprintf("  ⚑ duplicado %s — %s", sample.InvoiceID, dupInfo))
 			continue // do NOT return — the ZIP may contain more XMLs (e.g. credit note + original invoice)
 		}
 
@@ -609,7 +613,6 @@ func (g *GmailService) emitSyncLog(nivel, msg string) {
 	EventBus.Emit("gmail:sync:log", entry)
 }
 
-// extractCUFE scans raw XML bytes for the CUFE/UUID value used for deduplication.
 // tipoDocumentoLabel returns a human-readable short label for DIAN document types.
 func tipoDocumentoLabel(tipo string) string {
 	switch tipo {
@@ -627,23 +630,6 @@ func tipoDocumentoLabel(tipo string) string {
 	}
 }
 
-func extractCUFE(xmlData []byte) string {
-	s := string(xmlData)
-	// Look for the CUFE attribute pattern in UBL 2.1 DIAN invoices
-	markers := []string{`schemeName="CUFE-SHA384">`, `schemeName="CUFE-SHA256">`}
-	for _, marker := range markers {
-		start := strings.Index(s, marker)
-		if start == -1 {
-			continue
-		}
-		rest := s[start+len(marker):]
-		end := strings.Index(rest, "<")
-		if end > 0 {
-			return strings.TrimSpace(rest[:end])
-		}
-	}
-	return ""
-}
 
 // ObtenerFacturasCompra returns a paginated list of purchase invoices for the frontend.
 func (g *GmailService) ObtenerFacturasCompra(page, pageSize int, busqueda, sortField, sortDir string) (FacturasCompraResponse, error) {
