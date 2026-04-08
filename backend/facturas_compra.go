@@ -49,13 +49,21 @@ type FacturasCompraResponse struct {
 	TotalRecords int             `json:"TotalRecords"`
 }
 
-// ExisteFacturaCompra returns true if an invoice already exists by email_message_id or CUFE.
+// ExisteFacturaCompra returns true if an invoice already exists.
+// Deduplication priority:
+//  1. CUFE (DIAN cryptographic hash — unique per document) when present.
+//  2. email_message_id when CUFE is absent (prevents double-import of undocumented mails).
+//
+// Using email_message_id alone would cause false-positives when a single ZIP
+// contains multiple XML documents (e.g. a credit note + the original invoice):
+// the first document saves with that messageID, making the second appear as a duplicate.
 func (d *Db) ExisteFacturaCompra(emailMessageID, cufe string) (bool, error) {
 	ctx := context.Background()
 	var count int
 	err := d.QueryRow(ctx,
 		`SELECT COUNT(*) FROM facturas_compra
-		 WHERE email_message_id = $1 OR (cufe IS NOT NULL AND cufe != '' AND cufe = $2)`,
+		 WHERE (cufe IS NOT NULL AND cufe != '' AND cufe = $2)
+		    OR (email_message_id = $1 AND (cufe IS NULL OR cufe = ''))`,
 		emailMessageID, cufe,
 	).Scan(&count)
 	return count > 0, err

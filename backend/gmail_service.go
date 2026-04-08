@@ -510,7 +510,7 @@ func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string) (mr
 		exists, _ := g.db.ExisteFacturaCompra(messageID, cufe)
 		if exists {
 			mr.duplicadas++
-			return
+			continue // do NOT return — the ZIP may contain more XMLs (e.g. credit note + original invoice)
 		}
 
 		fechaEmision, _ := time.ParseInLocation("2006-01-02", sample.IssueDate, time.Local)
