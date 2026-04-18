@@ -432,7 +432,10 @@ onMounted(async () => {
         </Button>
       </div>
 
-      <!-- ═══ Zona de riesgo ══════════════════════════════════════════════════ -->
+    </template>
+
+    <!-- ═══ Zona de riesgo (visible siempre que haya conexión activa) ══════════ -->
+    <template v-if="dbStore.connected">
       <div>
         <div class="flex items-center gap-2 mb-3">
           <Trash2 class="h-4 w-4 text-destructive" />
@@ -563,7 +566,6 @@ onMounted(async () => {
 
         </div>
       </div>
-
     </template>
   </div>
 </template>
