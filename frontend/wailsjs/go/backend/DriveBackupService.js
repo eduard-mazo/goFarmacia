@@ -24,5 +24,6 @@ export function SetAutoBackup(enabled) { return api("PUT", "/api/drive/auto-back
 export function EjecutarBackupAhora() { return api("POST", "/api/drive/backup"); }
 export function ListarBackups() { return api("GET", "/api/drive/backups"); }
 export function EliminarBackup(fileID) { return api("DELETE", `/api/drive/backups/${fileID}`); }
+export function RestaurarBackup(fileID) { return api("POST", `/api/drive/backups/${fileID}/restore`); }
 export function Startup() { return Promise.resolve(); }
 export function Shutdown() { return Promise.resolve(); }

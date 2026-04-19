@@ -4,16 +4,20 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "vue-sonner";
 import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
 import {
   HardDrive, CloudUpload, Trash2, RefreshCw, Loader2,
-  ShieldCheck, ShieldOff, FolderOpen, Clock, CheckCircle2,
+  ShieldCheck, ShieldOff, FolderOpen, Clock, CheckCircle2, RotateCcw,
 } from "lucide-vue-next";
 import {
   EstadoAuthDrive, IniciarOAuth2Drive, RevocarAuthDrive,
-  EjecutarBackupAhora, ListarBackups, EliminarBackup,
+  EjecutarBackupAhora, ListarBackups, EliminarBackup, RestaurarBackup,
   GetAutoBackup, SetAutoBackup,
 } from "@/../wailsjs/go/backend/DriveBackupService";
 import type { backend } from "@/../wailsjs/go/models";
@@ -33,6 +37,9 @@ const connecting = ref(false);
 const backingUp = ref(false);
 const loadingList = ref(false);
 const deletingId = ref<string | null>(null);
+const restoringId = ref<string | null>(null);
+const restoreTarget = ref<DriveBackupFile | null>(null);
+const restoreOpen = ref(false);
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 
@@ -47,6 +54,7 @@ const lastBackupLabel = computed(() => {
 const nextBackupLabel = computed(() => {
   if (!autoState.value.nextBackup || !autoState.value.enabled) return "—";
   return new Date(autoState.value.nextBackup).toLocaleString("es-CO", {
+    day: "2-digit", month: "short",
     hour: "2-digit", minute: "2-digit",
   });
 });
@@ -127,6 +135,29 @@ async function toggleAuto(enabled: boolean) {
   autoState.value = await GetAutoBackup();
 }
 
+function pedirRestaurar(backup: DriveBackupFile) {
+  restoreTarget.value = backup;
+  restoreOpen.value = true;
+}
+
+async function confirmarRestaurar() {
+  const target = restoreTarget.value;
+  if (!target) return;
+  restoreOpen.value = false;
+  restoringId.value = target.id;
+  try {
+    await RestaurarBackup(target.id);
+    toast.success("Restauración completada", {
+      description: `Base de datos restaurada desde ${target.name}`,
+    });
+  } catch (e: any) {
+    toast.error("Error al restaurar backup", { description: `${e}` });
+  } finally {
+    restoringId.value = null;
+    restoreTarget.value = null;
+  }
+}
+
 async function eliminar(fileID: string) {
   deletingId.value = fileID;
   try {
@@ -192,7 +223,7 @@ onUnmounted(() => {
         Backups Google Drive
       </h1>
       <p class="text-sm text-muted-foreground mt-0.5">
-        Respaldo automático de la base de datos cada 30 minutos en tu Google Drive personal.
+        Respaldo automático diario a las 7:00 PM en tu Google Drive personal (se conservan los últimos 5).
       </p>
     </div>
 
@@ -264,7 +295,7 @@ onUnmounted(() => {
         <div v-if="auth.authenticated" class="flex items-center justify-between">
           <div>
             <p class="text-sm font-medium">Backup automático</p>
-            <p class="text-xs text-muted-foreground">Se ejecuta cada 30 minutos mientras la app está abierta</p>
+            <p class="text-xs text-muted-foreground">Se ejecuta diariamente a las 7:00 PM mientras la app está abierta</p>
           </div>
           <button
             @click="toggleAuto(!autoState.enabled)"
@@ -350,19 +381,62 @@ onUnmounted(() => {
                 </span>
               </p>
             </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              class="h-7 w-7 p-0 text-red-500 hover:bg-red-50 hover:text-red-600 shrink-0 ml-3"
-              :disabled="deletingId === backup.id"
-              @click="eliminar(backup.id)"
-            >
-              <Loader2 v-if="deletingId === backup.id" class="h-3.5 w-3.5 animate-spin" />
-              <Trash2 v-else class="h-3.5 w-3.5" />
-            </Button>
+            <div class="flex items-center gap-1 shrink-0 ml-3">
+              <Button
+                size="sm"
+                variant="ghost"
+                class="h-7 w-7 p-0 text-amber-600 hover:bg-amber-50 hover:text-amber-700"
+                title="Restaurar desde este backup"
+                :disabled="restoringId === backup.id || deletingId === backup.id"
+                @click="pedirRestaurar(backup)"
+              >
+                <Loader2 v-if="restoringId === backup.id" class="h-3.5 w-3.5 animate-spin" />
+                <RotateCcw v-else class="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="h-7 w-7 p-0 text-red-500 hover:bg-red-50 hover:text-red-600"
+                :disabled="deletingId === backup.id || restoringId === backup.id"
+                @click="eliminar(backup.id)"
+              >
+                <Loader2 v-if="deletingId === backup.id" class="h-3.5 w-3.5 animate-spin" />
+                <Trash2 v-else class="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
         </div>
       </CardContent>
     </Card>
+
+    <!-- Confirm restore dialog -->
+    <AlertDialog v-model:open="restoreOpen">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>¿Restaurar este backup?</AlertDialogTitle>
+          <AlertDialogDescription>
+            <span class="block">
+              Esta acción <strong class="text-red-600">sobrescribirá completamente</strong> la base de datos actual
+              con el contenido de:
+            </span>
+            <code v-if="restoreTarget" class="mt-2 block font-mono text-xs bg-muted px-2 py-1 rounded break-all">
+              {{ restoreTarget.name }}
+            </code>
+            <span class="block mt-2 text-xs">
+              Se borrará el esquema actual (<code class="font-mono">public</code>) y se aplicará el dump. No se puede deshacer.
+            </span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            class="bg-red-600 hover:bg-red-700 text-white"
+            @click="confirmarRestaurar"
+          >
+            Sí, restaurar
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

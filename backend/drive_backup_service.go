@@ -6,7 +6,8 @@
 //
 //   Ejecuta pg_dump, comprime con gzip y sube el archivo a una carpeta
 //   "goFarmacia Backups" en el Google Drive del usuario autenticado.
-//   El backup automático se dispara cada 30 minutos mientras la app está abierta.
+//   El backup automático se dispara una vez al día a las 19:00 (hora local).
+//   Retención circular: se conservan solo los últimos 5 backups.
 //
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUTENTICACIÓN OAUTH2
@@ -27,6 +28,7 @@
 //   EjecutarBackupAhora()                 → (DriveBackupResult, error)
 //   ListarBackups()                       → ([]DriveBackupFile, error)
 //   EliminarBackup(fileID string)         → error
+//   RestaurarBackup(fileID string)        → error
 //   GetAutoBackup()                       → DriveAutoBackupState
 //   SetAutoBackup(enabled bool)
 //
@@ -45,6 +47,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -62,10 +65,11 @@ import (
 )
 
 const (
-	driveCallbackPort   = 8096
-	driveCallbackPath   = "/drive/oauth2/callback"
-	driveBackupInterval = 30 * time.Minute
-	driveBackupFolder   = "goFarmacia Backups"
+	driveCallbackPort = 8096
+	driveCallbackPath = "/drive/oauth2/callback"
+	driveBackupFolder = "goFarmacia Backups"
+	driveBackupHour   = 19 // daily run at 19:00 local time
+	driveBackupKeep   = 5  // circular retention: keep only the N most recent
 )
 
 // ── Types exposed to Wails ────────────────────────────────────────────────────
@@ -108,7 +112,7 @@ type DriveBackupService struct {
 	db         *Db
 	configDir  string
 	mu         sync.Mutex
-	ticker     *time.Ticker
+	timer      *time.Timer
 	done       chan struct{}
 	autoBackup bool
 	lastBackup time.Time
@@ -130,16 +134,21 @@ func NewDriveBackupService(db *Db) *DriveBackupService {
 func (s *DriveBackupService) Startup(_ context.Context) {
 	_ = os.MkdirAll(s.configDir, 0o700)
 	if s.EstadoAuthDrive().Authenticated {
-		s.startTicker()
+		s.scheduleNext()
 	}
 }
 
-// Shutdown stops the background ticker.
+// Shutdown stops the background timer.
 func (s *DriveBackupService) Shutdown() {
-	close(s.done)
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
 	s.mu.Lock()
-	if s.ticker != nil {
-		s.ticker.Stop()
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
 	}
 	s.mu.Unlock()
 }
@@ -169,13 +178,14 @@ func (s *DriveBackupService) IniciarOAuth2Drive() (string, error) {
 	return authURL, nil
 }
 
-// RevocarAuthDrive removes the saved Drive token and stops the ticker.
+// RevocarAuthDrive removes the saved Drive token and stops the scheduler.
 func (s *DriveBackupService) RevocarAuthDrive() error {
 	s.mu.Lock()
-	if s.ticker != nil {
-		s.ticker.Stop()
-		s.ticker = nil
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
 	}
+	s.nextBackup = time.Time{}
 	s.mu.Unlock()
 	return os.Remove(s.tokenPath())
 }
@@ -203,14 +213,15 @@ func (s *DriveBackupService) GetAutoBackup() DriveAutoBackupState {
 func (s *DriveBackupService) SetAutoBackup(enabled bool) {
 	s.mu.Lock()
 	s.autoBackup = enabled
-	if !enabled && s.ticker != nil {
-		s.ticker.Stop()
-		s.ticker = nil
+	if !enabled && s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+		s.nextBackup = time.Time{}
 	}
-	shouldStart := enabled && s.ticker == nil
+	shouldStart := enabled && s.timer == nil
 	s.mu.Unlock()
 	if shouldStart && s.EstadoAuthDrive().Authenticated {
-		s.startTicker()
+		s.scheduleNext()
 	}
 }
 
@@ -270,41 +281,52 @@ func (s *DriveBackupService) credentialsPath() string {
 	return filepath.Join(s.configDir, "credentials.json")
 }
 
-func (s *DriveBackupService) startTicker() {
+// nextBackupTime returns the next 19:00 local time strictly after `now`.
+// If `now` is before today 19:00, returns today 19:00; otherwise tomorrow 19:00.
+func nextBackupTime(now time.Time) time.Time {
+	loc := now.Location()
+	today := time.Date(now.Year(), now.Month(), now.Day(), driveBackupHour, 0, 0, 0, loc)
+	if now.Before(today) {
+		return today
+	}
+	return today.Add(24 * time.Hour)
+}
+
+// scheduleNext arms a one-shot timer for the next 19:00 firing. When it fires
+// it runs the backup and re-arms itself for the following day.
+func (s *DriveBackupService) scheduleNext() {
 	s.mu.Lock()
-	if s.ticker != nil {
-		s.mu.Unlock()
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	next := nextBackupTime(time.Now())
+	s.nextBackup = next
+	s.timer = time.AfterFunc(time.Until(next), s.onTimerFire)
+	s.mu.Unlock()
+}
+
+// onTimerFire runs the scheduled backup and re-arms for the next day.
+// Called by time.AfterFunc on its own goroutine.
+func (s *DriveBackupService) onTimerFire() {
+	select {
+	case <-s.done:
+		return
+	default:
+	}
+	s.mu.Lock()
+	enabled := s.autoBackup
+	s.mu.Unlock()
+	if !enabled {
 		return
 	}
-	s.ticker = time.NewTicker(driveBackupInterval)
-	s.nextBackup = time.Now().Add(driveBackupInterval)
-	s.mu.Unlock()
-
-	go func() {
-		for {
-			select {
-			case <-s.done:
-				return
-			case <-s.ticker.C:
-				s.mu.Lock()
-				enabled := s.autoBackup
-				s.mu.Unlock()
-				if !enabled {
-					continue
-				}
-				result, err := s.runBackup()
-				if err != nil {
-					s.db.Log.Errorf("[DriveBackup] Error en backup automático: %v", err)
-				} else {
-					s.db.Log.Infof("[DriveBackup] Backup OK: %s (%d bytes)", result.FileName, result.SizeBytes)
-					EventBus.Emit("drive:backup:done", result)
-				}
-				s.mu.Lock()
-				s.nextBackup = time.Now().Add(driveBackupInterval)
-				s.mu.Unlock()
-			}
-		}
-	}()
+	result, err := s.runBackup()
+	if err != nil {
+		s.db.Log.Errorf("[DriveBackup] Error en backup automático: %v", err)
+	} else {
+		s.db.Log.Infof("[DriveBackup] Backup OK: %s (%d bytes)", result.FileName, result.SizeBytes)
+		EventBus.Emit("drive:backup:done", result)
+	}
+	s.scheduleNext()
 }
 
 func (s *DriveBackupService) runBackup() (DriveBackupResult, error) {
@@ -401,12 +423,127 @@ func (s *DriveBackupService) runBackup() (DriveBackupResult, error) {
 	s.lastBackup = ts
 	s.mu.Unlock()
 
+	// Circular retention: keep only the N most recent backups. Failures here
+	// are logged but don't fail the backup — the upload already succeeded.
+	if err := s.pruneOldBackups(svc, folderID, driveBackupKeep); err != nil {
+		s.db.Log.Warnf("[DriveBackup] Prune falló (no crítico): %v", err)
+	}
+
 	return DriveBackupResult{
 		FileID:    created.Id,
 		FileName:  fileName,
 		SizeBytes: size,
 		Ts:        ts.Format(time.RFC3339),
 	}, nil
+}
+
+// pruneOldBackups deletes backups beyond the N most recent in the folder.
+func (s *DriveBackupService) pruneOldBackups(svc *drive.Service, folderID string, keep int) error {
+	q := fmt.Sprintf("'%s' in parents and trashed=false", folderID)
+	list, err := svc.Files.List().
+		Q(q).
+		Fields("files(id,name,createdTime)").
+		OrderBy("createdTime desc").
+		PageSize(100).
+		Do()
+	if err != nil {
+		return fmt.Errorf("listar para prune: %w", err)
+	}
+	if len(list.Files) <= keep {
+		return nil
+	}
+	for _, f := range list.Files[keep:] {
+		if err := svc.Files.Delete(f.Id).Do(); err != nil {
+			s.db.Log.Warnf("[DriveBackup] No se pudo eliminar %s: %v", f.Name, err)
+			continue
+		}
+		s.db.Log.Infof("[DriveBackup] Prune: eliminado %s", f.Name)
+	}
+	return nil
+}
+
+// RestaurarBackup downloads the given backup file from Drive, decompresses it,
+// and applies it to the configured Postgres database.
+//
+// Strategy (b): before piping the dump in, reset the target schema with
+// `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` so the restore can
+// succeed against a DB that already contains objects.
+func (s *DriveBackupService) RestaurarBackup(fileID string) error {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		if cfg, ok := LoadDBConfig(); ok {
+			dsn = cfg.DSN
+		}
+	}
+	if dsn == "" {
+		return fmt.Errorf("base de datos no configurada: DSN vacío")
+	}
+
+	// Fast reachability probe (same as runBackup).
+	if hostPort := extractHostPort(dsn); hostPort != "" {
+		conn, err := net.DialTimeout("tcp", hostPort, 3*time.Second)
+		if err != nil {
+			return fmt.Errorf("servidor no disponible en %s: %w", hostPort, err)
+		}
+		conn.Close()
+	}
+
+	// Download the backup from Drive to a temp gzip file.
+	svc, err := s.newDriveSvc()
+	if err != nil {
+		return fmt.Errorf("drive service: %w", err)
+	}
+	resp, err := svc.Files.Get(fileID).Download()
+	if err != nil {
+		return fmt.Errorf("descargar backup: %w", err)
+	}
+	defer resp.Body.Close()
+
+	tmpFile, err := os.CreateTemp("", "gofarmacia-restore-*.sql.gz")
+	if err != nil {
+		return fmt.Errorf("crear archivo temporal: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("escribir backup: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("cerrar archivo temporal: %w", err)
+	}
+
+	// Reset schema, then stream decompressed dump into psql.
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("abrir backup: %w", err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("gzip reader: %w", err)
+	}
+	defer gz.Close()
+
+	resetSQL := "DROP SCHEMA public CASCADE; CREATE SCHEMA public;\n"
+
+	cmd := exec.Command("psql", "--no-password", "--set", "ON_ERROR_STOP=1", "-d", dsn)
+	cmd.Stdin = io.MultiReader(strings.NewReader(resetSQL), gz)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > 500 {
+			msg = msg[:500] + "…"
+		}
+		if msg == "" {
+			return fmt.Errorf("psql falló: %w", err)
+		}
+		return fmt.Errorf("psql falló: %w — %s", err, msg)
+	}
+	s.db.Log.Infof("[DriveBackup] Restore OK desde fileID=%s", fileID)
+	EventBus.Emit("drive:restore:done", map[string]string{"fileId": fileID})
+	return nil
 }
 
 func (s *DriveBackupService) getOrCreateFolder(svc *drive.Service) (string, error) {
@@ -501,7 +638,7 @@ func (s *DriveBackupService) startCallbackServer(cfg *oauth2.Config) {
 			time.Sleep(2 * time.Second)
 			_ = srv.Shutdown(context.Background())
 			if s.EstadoAuthDrive().Authenticated {
-				s.startTicker()
+				s.scheduleNext()
 				EventBus.Emit("drive:auth:ok", nil)
 			}
 		}()

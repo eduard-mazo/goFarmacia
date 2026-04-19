@@ -79,3 +79,12 @@ func DriveEliminarBackup(s *backend.DriveBackupService) echo.HandlerFunc {
 		return c.JSON(http.StatusOK, map[string]string{"ok": "true"})
 	}
 }
+
+func DriveRestaurarBackup(s *backend.DriveBackupService) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if err := s.RestaurarBackup(c.Param("fileID")); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+		return c.JSON(http.StatusOK, map[string]string{"ok": "true"})
+	}
+}

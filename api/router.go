@@ -187,6 +187,7 @@ func NewRouter(
 	priv.POST("/drive/backup", handlers.DriveEjecutarBackupAhora(drive))
 	priv.GET("/drive/backups", handlers.DriveListarBackups(drive))
 	priv.DELETE("/drive/backups/:fileID", handlers.DriveEliminarBackup(drive))
+	priv.POST("/drive/backups/:fileID/restore", handlers.DriveRestaurarBackup(drive))
 
 	// static frontend — embedded SPA (must be last)
 	distFS, _ := fs.Sub(assets, "frontend/dist")
