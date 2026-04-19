@@ -23,6 +23,7 @@ func main() {
 	gmailSvc := backend.NewGmailService(db)
 	bancolombiasSvc := backend.NewBancolombiaService(db)
 	driveSvc := backend.NewDriveBackupService(db)
+	outlookSvc := backend.NewOutlookService(db)
 
 	ctx := context.Background()
 	db.Startup(ctx)
@@ -36,6 +37,7 @@ func main() {
 			gmailSvc.Startup(ctx)
 			bancolombiasSvc.Startup(ctx)
 			driveSvc.Startup(ctx)
+			outlookSvc.Startup(ctx)
 		})
 	}
 
@@ -50,7 +52,7 @@ func main() {
 		startServices()
 	}
 
-	e := api.NewRouter(db, gmailSvc, bancolombiasSvc, driveSvc, assets)
+	e := api.NewRouter(db, gmailSvc, bancolombiasSvc, driveSvc, outlookSvc, assets)
 
 	port := os.Getenv("PORT")
 	if port == "" {

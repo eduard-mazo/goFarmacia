@@ -73,7 +73,8 @@ async function cargarBackups() {
 async function conectar() {
   connecting.value = true;
   try {
-    await IniciarOAuth2Drive();
+    const url = await IniciarOAuth2Drive();
+    if (url) window.open(url, "_blank");
     toast.info("Navegador abierto", {
       description: "Autentica con Google Drive. La app detectará el token automáticamente.",
     });

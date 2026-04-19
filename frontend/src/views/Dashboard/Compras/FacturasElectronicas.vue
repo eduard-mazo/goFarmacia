@@ -26,16 +26,25 @@ import {
   Search, Loader2, CheckCircle2, AlertCircle, FolderOpen,
   CalendarDays, ChevronDown, FileSearch, ArrowUpDown, ArrowUp, ArrowDown, Terminal,
 } from "lucide-vue-next";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "vue-sonner";
 import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
 import { backend } from "@/../wailsjs/go/models";
 import {
-  EstadoAuth, IniciarOAuth2, RevocarAuth,
-  SincronizarConOpciones, EnriquecerDescripciones,
+  EstadoAuth as GmailEstadoAuth, IniciarOAuth2 as GmailIniciarOAuth2,
+  RevocarAuth as GmailRevocarAuth,
+  SincronizarConOpciones as GmailSincronizarConOpciones,
+  EnriquecerDescripciones,
   ObtenerFacturasCompra, ObtenerDetalleFacturaCompra,
   ActualizarEstadoFacturaCompra,
   GetGmailSyncProgress,
 } from "@/../wailsjs/go/backend/GmailService";
+import {
+  EstadoAuth as OutlookEstadoAuth, IniciarOAuth2 as OutlookIniciarOAuth2,
+  RevocarAuth as OutlookRevocarAuth,
+  SincronizarConOpciones as OutlookSincronizarConOpciones,
+  GetOutlookSyncProgress,
+} from "@/../wailsjs/go/backend/OutlookService";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,7 +64,12 @@ const MODO_LABELS: Record<SyncModo, string> = {
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
-const auth = ref<AuthStatus>({ authenticated: false, credPresent: false, configDir: "" });
+type Provider = "gmail" | "outlook";
+const activeProvider = ref<Provider>("gmail");
+
+const authGmail   = ref<AuthStatus>({ authenticated: false, credPresent: false, configDir: "" });
+const authOutlook = ref<AuthStatus>({ authenticated: false, credPresent: false, configDir: "" });
+const auth = computed(() => activeProvider.value === "gmail" ? authGmail.value : authOutlook.value);
 
 // Sync
 const syncing = ref(false);
@@ -75,7 +89,8 @@ let progressPollActive = false;
 async function progressPollLoop() {
   if (!progressPollActive) return;
   try {
-    const p = await GetGmailSyncProgress();
+    const fetcher = activeProvider.value === "gmail" ? GetGmailSyncProgress : GetOutlookSyncProgress;
+    const p = await fetcher();
     if (progressPollActive) {
       syncProgreso.value = p as SyncProgreso;
     }
@@ -123,12 +138,22 @@ const loadingDetailId = ref<string | null>(null);
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 const cargarEstadoAuth = async () => {
-  auth.value = await EstadoAuth() as AuthStatus;
+  const [g, o] = await Promise.all([
+    GmailEstadoAuth().catch(() => ({ authenticated: false, credPresent: false, configDir: "" })),
+    OutlookEstadoAuth().catch(() => ({ authenticated: false, credPresent: false, configDir: "" })),
+  ]);
+  authGmail.value = g as AuthStatus;
+  authOutlook.value = o as AuthStatus;
 };
 
-const conectarGmail = async () => {
+const providerLabel = computed(() => activeProvider.value === "gmail" ? "Gmail" : "Microsoft");
+
+const conectarProveedor = async () => {
   try {
-    await IniciarOAuth2();
+    const url = activeProvider.value === "gmail"
+      ? await GmailIniciarOAuth2()
+      : await OutlookIniciarOAuth2();
+    if (url) window.open(url, "_blank");
     toast.info("Navegador abierto", {
       description: "Autentica en el navegador. La app detectará el token automáticamente.",
     });
@@ -136,7 +161,7 @@ const conectarGmail = async () => {
       await cargarEstadoAuth();
       if (auth.value.authenticated) {
         clearInterval(poll);
-        toast.success("Gmail conectado correctamente");
+        toast.success(`${providerLabel.value} conectado correctamente`);
         cargarFacturas();
       }
     }, 2000);
@@ -146,10 +171,14 @@ const conectarGmail = async () => {
   }
 };
 
-const desconectarGmail = async () => {
-  await RevocarAuth();
+const desconectarProveedor = async () => {
+  if (activeProvider.value === "gmail") {
+    await GmailRevocarAuth();
+  } else {
+    await OutlookRevocarAuth();
+  }
   await cargarEstadoAuth();
-  toast.info("Desconectado de Gmail");
+  toast.info(`Desconectado de ${providerLabel.value}`);
 };
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
@@ -169,8 +198,9 @@ const iniciarSync = () => {
   syncProgreso.value = null;
   // Start polling in-memory progress before the goroutine begins.
   startProgressPoll();
-  // Fire-and-forget: runs in goroutine on backend, result via "gmail:sync:result" event.
-  SincronizarConOpciones({
+  // Fire-and-forget: runs in goroutine on backend, result via SSE event.
+  const sincronizar = activeProvider.value === "gmail" ? GmailSincronizarConOpciones : OutlookSincronizarConOpciones;
+  sincronizar({
     modo: syncModo.value,
     desde: syncModo.value === "rango" ? syncDesde.value : "",
     hasta: syncModo.value === "rango" ? syncHasta.value : "",
@@ -359,36 +389,41 @@ const currentPage = computed({
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
+const handleSyncResult = async (res: { nuevas: number; total: number; duplicadas: number; errores: string[]; log: SyncLogEntry[] }) => {
+  stopProgressPoll();
+  syncing.value = false;
+  if (res.log?.length) {
+    syncLog.value.push(...res.log);
+    scrollLog();
+  }
+  syncProgreso.value = {
+    running: false,
+    fase: "",
+    total: res.total ?? 0,
+    procesados: res.total ?? 0,
+    nuevas: res.nuevas ?? 0,
+    duplicadas: res.duplicadas ?? 0,
+    errores: res.errores?.length ?? 0,
+    ultimoNro: "",
+  };
+  if (res.nuevas > 0) {
+    await cargarFacturas();
+  }
+};
+
 onMounted(async () => {
   await cargarEstadoAuth();
-  if (auth.value.authenticated) cargarFacturas();
+  // Load invoices if any provider is authenticated
+  if (authGmail.value.authenticated || authOutlook.value.authenticated) cargarFacturas();
 
-  EventsOn("gmail:sync:result", async (res: { nuevas: number; total: number; duplicadas: number; errores: string[]; log: SyncLogEntry[] }) => {
-    stopProgressPoll();
-    syncing.value = false;
-    if (res.log?.length) {
-      syncLog.value.push(...res.log);
-      scrollLog();
-    }
-    syncProgreso.value = {
-      running: false,
-      fase: "",
-      total: res.total ?? 0,
-      procesados: res.total ?? 0,
-      nuevas: res.nuevas ?? 0,
-      duplicadas: res.duplicadas ?? 0,
-      errores: res.errores?.length ?? 0,
-      ultimoNro: "",
-    };
-    if (res.nuevas > 0) {
-      await cargarFacturas();
-    }
-  });
+  EventsOn("gmail:sync:result", handleSyncResult);
+  EventsOn("outlook:sync:result", handleSyncResult);
 });
 
 onUnmounted(() => {
   stopProgressPoll();
   EventsOff("gmail:sync:result");
+  EventsOff("outlook:sync:result");
 });
 
 watch(pagination, cargarFacturas, { deep: true });
@@ -514,23 +549,45 @@ watch(busqueda, () => {
           <Mail class="h-4 w-4" />
           Facturas Electrónicas (DIAN)
         </p>
-        <p class="text-xs text-muted-foreground mt-0.5">Facturas de compra importadas desde Gmail</p>
+        <p class="text-xs text-muted-foreground mt-0.5">Importadas desde {{ providerLabel }}</p>
       </div>
       <div class="flex items-center gap-2">
+        <!-- Provider selector -->
+        <div class="flex items-center rounded-md border bg-muted/40 p-0.5">
+          <button
+            type="button"
+            class="px-2.5 h-6 text-xs rounded transition-colors flex items-center gap-1.5"
+            :class="activeProvider === 'gmail' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeProvider = 'gmail'"
+          >
+            Gmail
+            <span v-if="authGmail.authenticated" class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </button>
+          <button
+            type="button"
+            class="px-2.5 h-6 text-xs rounded transition-colors flex items-center gap-1.5"
+            :class="activeProvider === 'outlook' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeProvider = 'outlook'"
+          >
+            Microsoft
+            <span v-if="authOutlook.authenticated" class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </button>
+        </div>
+
         <!-- Auth chip -->
         <span class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border"
           :class="auth.authenticated
             ? 'bg-green-50 text-green-700 border-green-200'
             : 'bg-gray-50 text-gray-500 border-gray-200'">
           <component :is="auth.authenticated ? ShieldCheck : ShieldOff" class="h-3.5 w-3.5" />
-          {{ auth.authenticated ? "Gmail conectado" : "Sin conexión" }}
+          {{ auth.authenticated ? `${providerLabel} conectado` : "Sin conexión" }}
         </span>
 
-        <Button v-if="!auth.authenticated" size="sm" class="h-7 text-xs gap-1.5" @click="conectarGmail">
-          <Mail class="h-3.5 w-3.5" />Conectar Gmail
+        <Button v-if="!auth.authenticated" size="sm" class="h-7 text-xs gap-1.5" @click="conectarProveedor">
+          <Mail class="h-3.5 w-3.5" />Conectar {{ providerLabel }}
         </Button>
 
-        <Button v-else variant="ghost" size="sm" class="h-7 text-xs gap-1" @click="desconectarGmail">
+        <Button v-else variant="ghost" size="sm" class="h-7 text-xs gap-1" @click="desconectarProveedor">
           <ShieldOff class="h-3.5 w-3.5" />Desconectar
         </Button>
 
@@ -585,7 +642,7 @@ watch(busqueda, () => {
               <div v-if="syncModo === 'completo'"
                 class="flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
                 <AlertCircle class="h-3 w-3 shrink-0 mt-px" />
-                Revisará todo el historial de Gmail. Puede tardar varios minutos.
+                Revisará todo el historial de {{ providerLabel }}. Puede tardar varios minutos.
               </div>
 
               <Button class="w-full h-7 text-xs" @click="iniciarSync">
@@ -625,16 +682,33 @@ watch(busqueda, () => {
       </div>
     </div>
 
-    <!-- Credentials alert -->
-    <div v-if="!auth.credPresent" class="shrink-0 m-4">
+    <!-- Credentials alert — Gmail -->
+    <div v-if="activeProvider === 'gmail' && !authGmail.credPresent" class="shrink-0 m-4">
       <Alert>
         <FolderOpen class="h-4 w-4" />
         <AlertTitle>Configura las credenciales de Gmail</AlertTitle>
         <AlertDescription class="text-xs space-y-1">
           <p>Coloca <code class="font-mono bg-muted px-1 rounded">credentials.json</code> en:</p>
-          <p class="font-mono bg-muted px-2 py-1 rounded break-all select-all">{{ auth.configDir }}</p>
+          <p class="font-mono bg-muted px-2 py-1 rounded break-all select-all">{{ authGmail.configDir }}</p>
           <p class="text-muted-foreground">Tipo de app: <strong>Desktop</strong>. URI de redirección:
             <code class="font-mono">http://localhost:8094/gmail/oauth2/callback</code></p>
+        </AlertDescription>
+      </Alert>
+    </div>
+
+    <!-- Credentials alert — Outlook -->
+    <div v-if="activeProvider === 'outlook' && !authOutlook.credPresent" class="shrink-0 m-4">
+      <Alert>
+        <FolderOpen class="h-4 w-4" />
+        <AlertTitle>Configura las credenciales de Microsoft</AlertTitle>
+        <AlertDescription class="text-xs space-y-1">
+          <p>Coloca <code class="font-mono bg-muted px-1 rounded">outlook_credentials.json</code> en:</p>
+          <p class="font-mono bg-muted px-2 py-1 rounded break-all select-all">{{ authOutlook.configDir }}</p>
+          <p class="text-muted-foreground">
+            Registra una app en <strong>Azure AD</strong> (Microsoft Entra) con permisos
+            <code class="font-mono">Mail.Read</code>. URI de redirección:
+            <code class="font-mono">http://localhost:8097/outlook/oauth2/callback</code>
+          </p>
         </AlertDescription>
       </Alert>
     </div>
@@ -750,9 +824,9 @@ watch(busqueda, () => {
           <tr v-else>
             <td :colspan="columns.length + 1"
               class="h-32 text-center text-sm text-muted-foreground">
-              {{ auth.authenticated
+              {{ authGmail.authenticated || authOutlook.authenticated
                 ? "No se encontraron facturas de compra."
-                : "Conecta Gmail para ver las facturas." }}
+                : "Conecta Gmail o Microsoft para ver las facturas." }}
             </td>
           </tr>
         </tbody>

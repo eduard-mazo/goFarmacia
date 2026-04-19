@@ -459,6 +459,26 @@ func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string) (mr
 		return
 	}
 
+	// emit() has been appending to mr.logs via the closure. procesarZipContenido
+	// writes only via emit (never mr.logs directly), so carry our accumulated
+	// logs onto its result — otherwise `return procesarZipContenido(...)` would
+	// overwrite the named-return mr and drop every log line.
+	result := procesarZipContenido(g.db, zipData, "gmail:"+messageID, subject, emit)
+	result.logs = mr.logs
+	return result
+}
+
+// procesarZipContenido processes a ZIP attachment containing DIAN electronic
+// invoices (XML + optional PDF). It unzips, parses, deduplicates, and saves
+// each invoice to the database. Provider-agnostic — used by both Gmail and
+// Outlook sync services.
+func procesarZipContenido(
+	db *Db,
+	zipData []byte,
+	messageID string,
+	subject string,
+	emit func(nivel, msg string),
+) (mr msgProcessResult) {
 	emit("info", fmt.Sprintf("→ ZIP: %s", subject))
 
 	unzipped, err := processor.UnzipInMemoryAll(zipData)
@@ -510,11 +530,11 @@ func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string) (mr
 		emit("info", fmt.Sprintf("  ↳ %s [%s] cufe=%.16s… msg=%.16s…",
 			sample.InvoiceID, tipoLabel, cufe, messageID))
 
-		exists, dupInfo, _ := g.db.ExisteFacturaCompraConDetalle(messageID, cufe)
+		exists, dupInfo, _ := db.ExisteFacturaCompraConDetalle(messageID, cufe)
 		if exists {
 			mr.duplicadas++
 			emit("warn", fmt.Sprintf("  ⚑ duplicado %s — %s", sample.InvoiceID, dupInfo))
-			continue // do NOT return — the ZIP may contain more XMLs (e.g. credit note + original invoice)
+			continue
 		}
 
 		fechaEmision, _ := time.ParseInLocation("2006-01-02", sample.IssueDate, time.Local)
@@ -553,11 +573,11 @@ func (g *GmailService) procesarMensaje(svc *gmail.Service, messageID string) (mr
 		factura.Subtotal = subtotal
 		factura.IVA = totalIVA
 
-		if err := g.db.GuardarFacturaCompra(factura); err != nil {
+		if err := db.GuardarFacturaCompra(factura); err != nil {
 			mr.errMsg = fmt.Sprintf("guardar factura %s: %v", sample.InvoiceID, err)
 			return
 		}
-		_ = g.db.UpsertProveedorPorNIT(sample.SupplierNIT, sample.SupplierName)
+		_ = db.UpsertProveedorPorNIT(sample.SupplierNIT, sample.SupplierName)
 		mr.nuevas++
 		mr.ultimoNro = sample.InvoiceID
 		emit("ok", fmt.Sprintf(

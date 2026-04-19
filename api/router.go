@@ -17,6 +17,7 @@ func NewRouter(
 	gmail *backend.GmailService,
 	bancolombia *backend.BancolombiaService,
 	drive *backend.DriveBackupService,
+	outlook *backend.OutlookService,
 	assets embed.FS,
 ) *echo.Echo {
 	e := echo.New()
@@ -136,6 +137,15 @@ func NewRouter(
 	priv.GET("/gmail/proveedores/:nit/top-productos", handlers.GmailObtenerTopProductosDeProveedor(gmail))
 	priv.GET("/gmail/proveedores/resumen-compras", handlers.GmailObtenerResumenCompras(gmail))
 	priv.POST("/gmail/proveedores/sincronizar", handlers.GmailSincronizarProveedoresDesdeFacturas(gmail))
+
+	// outlook (Microsoft Graph)
+	priv.GET("/outlook/auth", handlers.OutlookEstadoAuth(outlook))
+	priv.POST("/outlook/auth/iniciar", handlers.OutlookIniciarOAuth2(outlook))
+	priv.DELETE("/outlook/auth", handlers.OutlookRevocarAuth(outlook))
+	priv.GET("/outlook/credenciales", handlers.OutlookObtenerCredenciales(outlook))
+	priv.PUT("/outlook/credenciales", handlers.OutlookGuardarCredenciales(outlook))
+	priv.GET("/outlook/sync/progress", handlers.OutlookGetSyncProgress(outlook))
+	priv.POST("/outlook/sync/opciones", handlers.OutlookSincronizarConOpciones(outlook))
 
 	// bancolombia
 	priv.GET("/bancolombia/auth", handlers.BancolombiaEstadoAuth(bancolombia))
