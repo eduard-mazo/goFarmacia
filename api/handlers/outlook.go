@@ -68,3 +68,22 @@ func OutlookSincronizarConOpciones(o *backend.OutlookService) echo.HandlerFunc {
 		return c.JSON(http.StatusAccepted, map[string]string{"status": "iniciado"})
 	}
 }
+
+func OutlookGetAutoSync(o *backend.OutlookService) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		return c.JSON(http.StatusOK, o.GetAutoSync())
+	}
+}
+
+func OutlookSetAutoSync(o *backend.OutlookService) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := c.Bind(&body); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		o.SetAutoSync(body.Enabled)
+		return c.JSON(http.StatusOK, map[string]string{"ok": "true"})
+	}
+}

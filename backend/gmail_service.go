@@ -22,9 +22,11 @@ import (
 )
 
 const (
-	gmailCallbackPort = 8094
-	gmailCallbackPath = "/gmail/oauth2/callback"
-	gmailSyncWorkers  = 5 // concurrent message-processing goroutines
+	gmailCallbackPort    = 8094
+	gmailCallbackPath    = "/gmail/oauth2/callback"
+	gmailSyncWorkers     = 5 // concurrent message-processing goroutines
+	gmailAutoSyncPeriod  = 30 * time.Minute
+	gmailAutoSyncSetting = "gmail.autoSync"
 )
 
 // GmailService handles Gmail OAuth2 auth and DIAN electronic invoice synchronization.
@@ -33,6 +35,23 @@ type GmailService struct {
 	configDir      string
 	syncProgress   GmailSyncProgress
 	syncProgressMu sync.Mutex
+
+	// Auto-sync daemon
+	autoMu     sync.Mutex
+	autoSync   bool
+	ticker     *time.Ticker
+	done       chan struct{}
+	lastSync   time.Time
+	nextSync   time.Time
+}
+
+// GmailAutoSyncState reports the auto-sync daemon state to the frontend.
+type GmailAutoSyncState struct {
+	Enabled       bool   `json:"enabled"`
+	Running       bool   `json:"running"`
+	Authenticated bool   `json:"authenticated"`
+	NextSync      string `json:"nextSync"`
+	LastSync      string `json:"lastSync"`
 }
 
 // GmailAuthStatus reports the current authentication state to the frontend.
@@ -105,6 +124,7 @@ func NewGmailService(db *Db) *GmailService {
 	return &GmailService{
 		db:        db,
 		configDir: filepath.Join(home, ".config", "goFarmacia"),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -122,6 +142,126 @@ func (g *GmailService) Startup(_ context.Context) {
 	// Retroactively populate the proveedors table from any existing invoices.
 	// This is idempotent and runs in the background so it does not block startup.
 	go func() { _, _ = g.db.SincronizarProveedoresDesdeFacturas() }()
+
+	// Restore auto-sync daemon state from persisted setting.
+	if val, err := g.db.GetSetting(gmailAutoSyncSetting); err == nil && val == "true" {
+		g.autoMu.Lock()
+		g.autoSync = true
+		g.autoMu.Unlock()
+		if g.EstadoAuth().Authenticated {
+			g.startAutoTicker()
+		}
+	}
+}
+
+// Shutdown stops the background ticker.
+func (g *GmailService) Shutdown() {
+	g.autoMu.Lock()
+	defer g.autoMu.Unlock()
+	if g.ticker != nil {
+		g.ticker.Stop()
+		g.ticker = nil
+	}
+	select {
+	case <-g.done:
+	default:
+		close(g.done)
+	}
+}
+
+// GetAutoSync returns the current auto-sync daemon state.
+func (g *GmailService) GetAutoSync() GmailAutoSyncState {
+	g.autoMu.Lock()
+	defer g.autoMu.Unlock()
+	state := GmailAutoSyncState{
+		Enabled:       g.autoSync,
+		Running:       g.ticker != nil,
+		Authenticated: g.EstadoAuth().Authenticated,
+	}
+	if !g.nextSync.IsZero() && g.autoSync {
+		state.NextSync = g.nextSync.Format(time.RFC3339)
+	}
+	if !g.lastSync.IsZero() {
+		state.LastSync = g.lastSync.Format(time.RFC3339)
+	}
+	return state
+}
+
+// SetAutoSync enables or disables the background sync ticker and persists it.
+func (g *GmailService) SetAutoSync(enabled bool) {
+	g.autoMu.Lock()
+	g.autoSync = enabled
+	if !enabled && g.ticker != nil {
+		g.ticker.Stop()
+		g.ticker = nil
+		// Signal the running goroutine to exit; otherwise it would block on
+		// ticker.C (which Stop never closes) forever — leaking on every toggle.
+		// startAutoTicker recreates the channel on the next enable.
+		select {
+		case <-g.done:
+		default:
+			close(g.done)
+		}
+	}
+	shouldStart := enabled && g.ticker == nil
+	g.autoMu.Unlock()
+
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	_ = g.db.SetSetting(gmailAutoSyncSetting, val)
+
+	if shouldStart && g.EstadoAuth().Authenticated {
+		g.startAutoTicker()
+	}
+}
+
+// startAutoTicker spins up the periodic sync goroutine. Caller must have
+// verified authentication; runs Modo:"hoy" to keep each tick cheap.
+func (g *GmailService) startAutoTicker() {
+	g.autoMu.Lock()
+	if g.ticker != nil {
+		g.autoMu.Unlock()
+		return
+	}
+	// Ensure the done channel is fresh in case Shutdown() closed it previously.
+	select {
+	case <-g.done:
+		g.done = make(chan struct{})
+	default:
+	}
+	g.ticker = time.NewTicker(gmailAutoSyncPeriod)
+	g.nextSync = time.Now().Add(gmailAutoSyncPeriod)
+	done := g.done
+	ticker := g.ticker
+	g.autoMu.Unlock()
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				g.autoMu.Lock()
+				enabled := g.autoSync
+				g.autoMu.Unlock()
+				if !enabled {
+					continue
+				}
+				if !g.EstadoAuth().Authenticated {
+					continue
+				}
+				// Reuse the existing sync path; keep the window small.
+				result := g.ejecutarSync(SyncOptions{Modo: "hoy"})
+				g.autoMu.Lock()
+				g.lastSync = time.Now()
+				g.nextSync = time.Now().Add(gmailAutoSyncPeriod)
+				g.autoMu.Unlock()
+				EventBus.Emit("gmail:sync:result", result)
+			}
+		}
+	}()
 }
 
 func (g *GmailService) credPath() string  { return filepath.Join(g.configDir, "credentials.json") }
@@ -169,6 +309,17 @@ func (g *GmailService) IniciarOAuth2() (string, error) {
 
 // RevocarAuth deletes the saved token, forcing re-authentication.
 func (g *GmailService) RevocarAuth() error {
+	g.autoMu.Lock()
+	if g.ticker != nil {
+		g.ticker.Stop()
+		g.ticker = nil
+		select {
+		case <-g.done:
+		default:
+			close(g.done)
+		}
+	}
+	g.autoMu.Unlock()
 	return os.Remove(g.tokenPath())
 }
 
@@ -190,6 +341,13 @@ func (g *GmailService) startCallbackServer(cfg *oauth2.Config) {
 		if err := g.saveToken(tok); err != nil {
 			http.Error(w, "Error al guardar el token: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// If auto-sync was enabled before the token existed, start the ticker now.
+		g.autoMu.Lock()
+		shouldStart := g.autoSync && g.ticker == nil
+		g.autoMu.Unlock()
+		if shouldStart {
+			g.startAutoTicker()
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8">

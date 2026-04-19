@@ -18,10 +18,12 @@ import (
 )
 
 const (
-	outlookCallbackPort = 8097
-	outlookCallbackPath = "/outlook/oauth2/callback"
-	outlookSyncWorkers  = 5
-	graphBaseURL        = "https://graph.microsoft.com/v1.0"
+	outlookCallbackPort    = 8097
+	outlookCallbackPath    = "/outlook/oauth2/callback"
+	outlookSyncWorkers     = 5
+	graphBaseURL           = "https://graph.microsoft.com/v1.0"
+	outlookAutoSyncPeriod  = 30 * time.Minute
+	outlookAutoSyncSetting = "outlook.autoSync"
 )
 
 // OutlookService handles Microsoft OAuth2 auth and DIAN electronic invoice
@@ -31,6 +33,14 @@ type OutlookService struct {
 	configDir      string
 	syncProgress   GmailSyncProgress // reuse same progress struct
 	syncProgressMu sync.Mutex
+
+	// Auto-sync daemon
+	autoMu   sync.Mutex
+	autoSync bool
+	ticker   *time.Ticker
+	done     chan struct{}
+	lastSync time.Time
+	nextSync time.Time
 }
 
 // OutlookCredentials holds Azure AD app registration fields.
@@ -55,12 +65,138 @@ func NewOutlookService(db *Db) *OutlookService {
 	return &OutlookService{
 		db:        db,
 		configDir: filepath.Join(home, ".config", "goFarmacia"),
+		done:      make(chan struct{}),
 	}
 }
 
 // Startup initialises the service (idempotent).
 func (o *OutlookService) Startup(_ context.Context) {
 	_ = os.MkdirAll(o.configDir, 0o700)
+
+	// Restore auto-sync daemon state from persisted setting.
+	if val, err := o.db.GetSetting(outlookAutoSyncSetting); err == nil && val == "true" {
+		o.autoMu.Lock()
+		o.autoSync = true
+		o.autoMu.Unlock()
+		if o.EstadoAuth().Authenticated {
+			o.startAutoTicker()
+		}
+	}
+}
+
+// Shutdown stops the background ticker.
+func (o *OutlookService) Shutdown() {
+	o.autoMu.Lock()
+	defer o.autoMu.Unlock()
+	if o.ticker != nil {
+		o.ticker.Stop()
+		o.ticker = nil
+	}
+	select {
+	case <-o.done:
+	default:
+		close(o.done)
+	}
+}
+
+// OutlookAutoSyncState reports the auto-sync daemon state to the frontend.
+type OutlookAutoSyncState struct {
+	Enabled       bool   `json:"enabled"`
+	Running       bool   `json:"running"`
+	Authenticated bool   `json:"authenticated"`
+	NextSync      string `json:"nextSync"`
+	LastSync      string `json:"lastSync"`
+}
+
+// GetAutoSync returns the current auto-sync daemon state.
+func (o *OutlookService) GetAutoSync() OutlookAutoSyncState {
+	o.autoMu.Lock()
+	defer o.autoMu.Unlock()
+	state := OutlookAutoSyncState{
+		Enabled:       o.autoSync,
+		Running:       o.ticker != nil,
+		Authenticated: o.EstadoAuth().Authenticated,
+	}
+	if !o.nextSync.IsZero() && o.autoSync {
+		state.NextSync = o.nextSync.Format(time.RFC3339)
+	}
+	if !o.lastSync.IsZero() {
+		state.LastSync = o.lastSync.Format(time.RFC3339)
+	}
+	return state
+}
+
+// SetAutoSync enables or disables the background sync ticker and persists it.
+func (o *OutlookService) SetAutoSync(enabled bool) {
+	o.autoMu.Lock()
+	o.autoSync = enabled
+	if !enabled && o.ticker != nil {
+		o.ticker.Stop()
+		o.ticker = nil
+		// Signal the running goroutine to exit (see matching comment in
+		// GmailService.SetAutoSync): ticker.Stop does not close ticker.C, so
+		// without this close() the goroutine leaks on every toggle.
+		select {
+		case <-o.done:
+		default:
+			close(o.done)
+		}
+	}
+	shouldStart := enabled && o.ticker == nil
+	o.autoMu.Unlock()
+
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	_ = o.db.SetSetting(outlookAutoSyncSetting, val)
+
+	if shouldStart && o.EstadoAuth().Authenticated {
+		o.startAutoTicker()
+	}
+}
+
+func (o *OutlookService) startAutoTicker() {
+	o.autoMu.Lock()
+	if o.ticker != nil {
+		o.autoMu.Unlock()
+		return
+	}
+	select {
+	case <-o.done:
+		o.done = make(chan struct{})
+	default:
+	}
+	o.ticker = time.NewTicker(outlookAutoSyncPeriod)
+	o.nextSync = time.Now().Add(outlookAutoSyncPeriod)
+	done := o.done
+	ticker := o.ticker
+	o.autoMu.Unlock()
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				o.autoMu.Lock()
+				enabled := o.autoSync
+				o.autoMu.Unlock()
+				if !enabled {
+					continue
+				}
+				if !o.EstadoAuth().Authenticated {
+					continue
+				}
+				result := o.ejecutarSync(SyncOptions{Modo: "hoy"})
+				o.autoMu.Lock()
+				o.lastSync = time.Now()
+				o.nextSync = time.Now().Add(outlookAutoSyncPeriod)
+				o.autoMu.Unlock()
+				EventBus.Emit("outlook:sync:result", result)
+			}
+		}
+	}()
 }
 
 func (o *OutlookService) credPath() string {
@@ -169,6 +305,17 @@ func (o *OutlookService) IniciarOAuth2() (string, error) {
 
 // RevocarAuth deletes the saved token.
 func (o *OutlookService) RevocarAuth() error {
+	o.autoMu.Lock()
+	if o.ticker != nil {
+		o.ticker.Stop()
+		o.ticker = nil
+		select {
+		case <-o.done:
+		default:
+			close(o.done)
+		}
+	}
+	o.autoMu.Unlock()
 	return os.Remove(o.tokenPath())
 }
 
@@ -188,6 +335,13 @@ func (o *OutlookService) startCallbackServer(cfg *oauth2.Config) {
 			return
 		}
 		_ = o.saveToken(tok)
+		// If auto-sync was enabled before token existed, start ticker now.
+		o.autoMu.Lock()
+		shouldStart := o.autoSync && o.ticker == nil
+		o.autoMu.Unlock()
+		if shouldStart {
+			o.startAutoTicker()
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:3rem">
 			<h2>Microsoft autenticado correctamente</h2>

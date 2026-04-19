@@ -137,6 +137,8 @@ func NewRouter(
 	priv.GET("/gmail/proveedores/:nit/top-productos", handlers.GmailObtenerTopProductosDeProveedor(gmail))
 	priv.GET("/gmail/proveedores/resumen-compras", handlers.GmailObtenerResumenCompras(gmail))
 	priv.POST("/gmail/proveedores/sincronizar", handlers.GmailSincronizarProveedoresDesdeFacturas(gmail))
+	priv.GET("/gmail/auto-sync", handlers.GmailGetAutoSync(gmail))
+	priv.PUT("/gmail/auto-sync", handlers.GmailSetAutoSync(gmail))
 
 	// outlook (Microsoft Graph)
 	priv.GET("/outlook/auth", handlers.OutlookEstadoAuth(outlook))
@@ -146,6 +148,12 @@ func NewRouter(
 	priv.PUT("/outlook/credenciales", handlers.OutlookGuardarCredenciales(outlook))
 	priv.GET("/outlook/sync/progress", handlers.OutlookGetSyncProgress(outlook))
 	priv.POST("/outlook/sync/opciones", handlers.OutlookSincronizarConOpciones(outlook))
+	priv.GET("/outlook/auto-sync", handlers.OutlookGetAutoSync(outlook))
+	priv.PUT("/outlook/auto-sync", handlers.OutlookSetAutoSync(outlook))
+
+	// unified sync dashboard
+	priv.GET("/sync/status", handlers.SyncStatus(gmail, outlook, drive, bancolombia))
+	priv.PUT("/sync/:id/enabled", handlers.SetSyncEnabled(gmail, outlook, drive, bancolombia))
 
 	// bancolombia
 	priv.GET("/bancolombia/auth", handlers.BancolombiaEstadoAuth(bancolombia))

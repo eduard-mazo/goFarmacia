@@ -12,7 +12,7 @@ import { toast } from "vue-sonner";
 import {
   Settings, Save, Database, CheckCircle2, XCircle, Loader2,
   Eye, EyeOff, AlertTriangle, Mail, KeyRound, FileJson, FolderKey,
-  ShieldCheck, Trash2, ReceiptText, Landmark,
+  ShieldCheck, Trash2, ReceiptText, Landmark, RefreshCcw, Cloud, Inbox,
 } from "lucide-vue-next";
 import { useDBStore } from "@/stores/dbStore";
 import { useAuthStore } from "@/stores/auth";
@@ -20,6 +20,7 @@ import {
   EstadoAuth, ObtenerCredenciales, GuardarCredenciales,
 } from "@/../wailsjs/go/backend/GmailService";
 import { GetTablas, TruncarTabla } from "@/../wailsjs/go/backend/Db";
+import { GetSyncStatus, SetSyncEnabled } from "@/../wailsjs/go/backend/SyncStatus";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
@@ -173,12 +174,88 @@ async function limpiarTransferencias() {
   }
 }
 
+// ── Sincronizaciones automáticas (daemons) ─────────────────────────────────
+interface SyncRow {
+  id: string;
+  label: string;
+  authenticated: boolean;
+  credPresent: boolean;
+  enabled: boolean;
+  running: boolean;
+  nextRun: string;
+  lastRun: string;
+}
+
+const syncRows = ref<SyncRow[]>([]);
+const syncToggling = ref<Record<string, boolean>>({});
+let syncPollTimer: number | undefined;
+
+const ICONS_BY_ID: Record<string, any> = {
+  drive: Cloud,
+  gmail: Mail,
+  outlook: Inbox,
+  bancolombia: Landmark,
+};
+
+function iconFor(id: string) { return ICONS_BY_ID[id] || RefreshCcw; }
+
+function formatRelative(iso: string): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  const diffMs = t - Date.now();
+  const abs = Math.abs(diffMs);
+  const mins = Math.round(abs / 60000);
+  if (mins < 1) return diffMs < 0 ? "hace <1 min" : "<1 min";
+  if (mins < 60) return diffMs < 0 ? `hace ${mins} min` : `en ${mins} min`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return diffMs < 0 ? `hace ${hrs} h` : `en ${hrs} h`;
+  const days = Math.round(hrs / 24);
+  return diffMs < 0 ? `hace ${days} d` : `en ${days} d`;
+}
+
+async function loadSyncStatus() {
+  try {
+    syncRows.value = await GetSyncStatus();
+  } catch (e) {
+    console.warn("[sync-status] fallo:", e);
+  }
+}
+
+async function toggleSync(row: SyncRow) {
+  if (!row.authenticated) {
+    toast.warning("Sin autenticación", {
+      description: "Conecta el proveedor antes de activar la sincronización automática.",
+    });
+    return;
+  }
+  const next = !row.enabled;
+  syncToggling.value[row.id] = true;
+  try {
+    await SetSyncEnabled(row.id, next);
+    toast.success(next ? "Sincronización activada" : "Sincronización desactivada", {
+      description: row.label,
+    });
+    await loadSyncStatus();
+  } catch (e) {
+    toast.error("No se pudo cambiar el estado", { description: `${e}` });
+  } finally {
+    syncToggling.value[row.id] = false;
+  }
+}
+
 onMounted(async () => {
   loadSettings();
   if (!dsn.value && dbStore.dsnHint) dsn.value = dbStore.dsnHint;
   await loadCreds();
   await cargarConteos();
+  await loadSyncStatus();
+  // Poll periodically so nextRun countdown + running state stay fresh.
+  syncPollTimer = window.setInterval(loadSyncStatus, 15000);
 });
+
+import { onUnmounted } from "vue";
+onUnmounted(() => { if (syncPollTimer) window.clearInterval(syncPollTimer); });
 </script>
 
 <template>
@@ -367,6 +444,98 @@ onMounted(async () => {
         </CardContent>
       </Card>
     </div>
+
+    <!-- ═══ Sincronizaciones automáticas ═══════════════════════════════════ -->
+    <template v-if="!dbStore.setupMode">
+      <Card>
+        <CardHeader class="pb-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <RefreshCcw class="h-4 w-4 text-muted-foreground" />
+              <CardTitle class="text-base font-semibold">Sincronizaciones automáticas</CardTitle>
+            </div>
+            <Button variant="ghost" size="sm" class="h-7 text-xs gap-1.5" @click="loadSyncStatus">
+              <RefreshCcw class="h-3.5 w-3.5" />Refrescar
+            </Button>
+          </div>
+          <CardDescription class="mt-1 text-sm">
+            Activa los daemons en segundo plano para cada proveedor.
+            Se ejecutan periódicamente mientras la aplicación esté abierta.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent class="pt-0">
+          <div v-if="syncRows.length === 0" class="py-8 text-center text-sm text-muted-foreground">
+            <Loader2 class="h-4 w-4 animate-spin inline-block mr-2" />
+            Cargando estado…
+          </div>
+
+          <ul v-else class="divide-y">
+            <li
+              v-for="row in syncRows"
+              :key="row.id"
+              class="flex items-center gap-4 py-3"
+            >
+              <!-- Icon -->
+              <div class="rounded-md bg-muted p-2 shrink-0">
+                <component :is="iconFor(row.id)" class="h-4 w-4 text-muted-foreground" />
+              </div>
+
+              <!-- Label + metadata -->
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium truncate">{{ row.label }}</span>
+
+                  <!-- Auth dot -->
+                  <span
+                    class="h-1.5 w-1.5 rounded-full shrink-0"
+                    :class="row.authenticated ? 'bg-emerald-500' : row.credPresent ? 'bg-amber-500' : 'bg-red-500'"
+                    :title="row.authenticated ? 'Autenticado' : row.credPresent ? 'Credenciales sin token' : 'Sin credenciales'"
+                  />
+
+                  <!-- Running dot -->
+                  <span
+                    v-if="row.enabled && row.running"
+                    class="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600"
+                  >
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    en ejecución
+                  </span>
+                </div>
+
+                <div class="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                  <span v-if="row.lastRun" class="truncate">
+                    Última: {{ formatRelative(row.lastRun) }}
+                  </span>
+                  <span v-if="row.enabled && row.nextRun" class="truncate">
+                    Próxima: {{ formatRelative(row.nextRun) }}
+                  </span>
+                  <span v-if="!row.authenticated" class="text-amber-600 truncate">
+                    Requiere autenticación
+                  </span>
+                </div>
+              </div>
+
+              <!-- Toggle switch -->
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="row.enabled"
+                :disabled="!row.authenticated || !!syncToggling[row.id]"
+                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                :class="row.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/30'"
+                @click="toggleSync(row)"
+              >
+                <span
+                  class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition-transform"
+                  :class="row.enabled ? 'translate-x-4' : 'translate-x-0'"
+                />
+              </button>
+            </li>
+          </ul>
+        </CardContent>
+      </Card>
+    </template>
 
     <!-- ═══ Bottom section (disabled in setup mode) ═════════════════════════ -->
     <template v-if="!dbStore.setupMode">

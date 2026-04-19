@@ -177,3 +177,22 @@ func GmailSincronizarProveedoresDesdeFacturas(g *backend.GmailService) echo.Hand
 		return c.JSON(http.StatusOK, map[string]int{"sincronizados": n})
 	}
 }
+
+func GmailGetAutoSync(g *backend.GmailService) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		return c.JSON(http.StatusOK, g.GetAutoSync())
+	}
+}
+
+func GmailSetAutoSync(g *backend.GmailService) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := c.Bind(&body); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		g.SetAutoSync(body.Enabled)
+		return c.JSON(http.StatusOK, map[string]string{"ok": "true"})
+	}
+}

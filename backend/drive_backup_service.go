@@ -40,14 +40,18 @@
 package backend
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -315,6 +319,17 @@ func (s *DriveBackupService) runBackup() (DriveBackupResult, error) {
 		return DriveBackupResult{}, fmt.Errorf("base de datos no configurada: DSN vacío")
 	}
 
+	// Fast reachability probe: a dead host would otherwise hang pg_dump on the
+	// kernel TCP timeout (~2 min on Linux). Dial the host:port with a 3s budget
+	// and fail immediately if it can't be reached.
+	if hostPort := extractHostPort(dsn); hostPort != "" {
+		conn, err := net.DialTimeout("tcp", hostPort, 3*time.Second)
+		if err != nil {
+			return DriveBackupResult{}, fmt.Errorf("servidor no disponible en %s: %w", hostPort, err)
+		}
+		conn.Close()
+	}
+
 	// Create temp file for the compressed dump
 	tmpFile, err := os.CreateTemp("", "gofarmacia-backup-*.sql.gz")
 	if err != nil {
@@ -327,10 +342,19 @@ func (s *DriveBackupService) runBackup() (DriveBackupResult, error) {
 	gz := gzip.NewWriter(tmpFile)
 	cmd := exec.Command("pg_dump", "--no-password", dsn)
 	cmd.Stdout = gz
-	cmd.Stderr = os.Stderr
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		tmpFile.Close()
-		return DriveBackupResult{}, fmt.Errorf("pg_dump falló: %w", err)
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return DriveBackupResult{}, fmt.Errorf("pg_dump falló: %w", err)
+		}
+		// Truncate very long stderr so the UI toast stays readable.
+		if len(msg) > 500 {
+			msg = msg[:500] + "…"
+		}
+		return DriveBackupResult{}, fmt.Errorf("pg_dump falló: %w — %s", err, msg)
 	}
 	if err := gz.Close(); err != nil {
 		tmpFile.Close()
@@ -483,4 +507,39 @@ func (s *DriveBackupService) startCallbackServer(cfg *oauth2.Config) {
 		}()
 	})
 	_ = srv.ListenAndServe()
+}
+
+// extractHostPort pulls the host:port from a Postgres DSN for a pre-flight
+// TCP probe. Supports both URL form (postgres://…) and libpq key=value form.
+// Returns "" for local/unix-socket DSNs we shouldn't probe or on parse failure
+// (caller proceeds directly to pg_dump in that case).
+func extractHostPort(dsn string) string {
+	host, port := "", "5432"
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil || u.Host == "" {
+			return ""
+		}
+		host = u.Hostname()
+		if p := u.Port(); p != "" {
+			port = p
+		}
+	} else {
+		for _, kv := range strings.Fields(dsn) {
+			parts := strings.SplitN(kv, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			switch parts[0] {
+			case "host":
+				host = parts[1]
+			case "port":
+				port = parts[1]
+			}
+		}
+	}
+	if host == "" || host == "localhost" || strings.HasPrefix(host, "/") {
+		return ""
+	}
+	return net.JoinHostPort(host, port)
 }

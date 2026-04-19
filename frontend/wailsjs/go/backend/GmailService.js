@@ -49,6 +49,8 @@ export function ObtenerResumenCompras(desde, hasta) {
   return api("GET", `/api/gmail/proveedores/resumen-compras?desde=${desde||""}&hasta=${hasta||""}`);
 }
 export function SincronizarProveedoresDesdeFacturas() { return api("POST", "/api/gmail/proveedores/sincronizar"); }
+export function GetAutoSync() { return api("GET", "/api/gmail/auto-sync"); }
+export function SetAutoSync(enabled) { return api("PUT", "/api/gmail/auto-sync", { enabled }); }
 export function EnriquecerDescripciones() { return Promise.resolve({ Success: false, Message: "No implementado" }); }
 export function Startup() { return Promise.resolve(); }
 export function BuscarFacturasVenta(q) {
