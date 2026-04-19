@@ -19,12 +19,11 @@ UNAME := $(shell uname -s)
 ARCH  := $(shell uname -m)
 
 ifeq ($(UNAME), Darwin)
-  HOST_OS       := mac
-  GO_BUILD_TAGS :=
+  HOST_OS := mac
 else
-  HOST_OS       := linux
-  GO_BUILD_TAGS := webkit2_41
+  HOST_OS := linux
 endif
+GO_BUILD_TAGS :=
 
 # ── Variables generales ───────────────────────────────────────────────────────
 APP_NAME   := goFarmacia
