@@ -162,7 +162,7 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 		return PaginatedResult{}, fmt.Errorf("error al contar productos: %w", err)
 	}
 
-	selectQuery := "SELECT uuid, codigo, nombre, precio_venta, stock " + baseQuery + whereClause
+	selectQuery := "SELECT uuid, codigo, nombre, precio_venta, COALESCE(stock, 0) " + baseQuery + whereClause
 
 	if sortBy != "" {
 		order := "ASC"
@@ -201,7 +201,7 @@ func (d *Db) ObtenerProductosPaginado(page, pageSize int, search, sortBy, sortOr
 // ObtenerProductoPorUUID busca un producto por su UUID.
 func (d *Db) ObtenerProductoPorUUID(uuid string) (Producto, error) {
 	var p Producto
-	query := "SELECT uuid, codigo, nombre, precio_venta, stock FROM productos WHERE uuid = $1 AND deleted_at IS NULL"
+	query := "SELECT uuid, codigo, nombre, precio_venta, COALESCE(stock, 0) FROM productos WHERE uuid = $1 AND deleted_at IS NULL"
 
 	err := d.DB.QueryRow(query, uuid).Scan(&p.UUID, &p.Codigo, &p.Nombre, &p.PrecioVenta, &p.Stock)
 	if err != nil {

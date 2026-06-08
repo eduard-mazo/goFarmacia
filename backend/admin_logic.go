@@ -47,7 +47,7 @@ func (d *Db) NormalizarStock() error {
 		}
 	}()
 
-	rows, err := tx.Query(`SELECT uuid, stock FROM productos`)
+	rows, err := tx.Query(`SELECT uuid, COALESCE(stock, 0) FROM productos`)
 	if err != nil {
 		return fmt.Errorf("error leyendo productos: %w", err)
 	}

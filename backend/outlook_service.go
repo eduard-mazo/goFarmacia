@@ -375,7 +375,11 @@ func (o *OutlookService) httpClient() (*http.Client, error) {
 	if err := json.NewDecoder(f).Decode(tok); err != nil {
 		return nil, fmt.Errorf("token inválido: %w", err)
 	}
-	src := &savingTokenSource{inner: cfg.TokenSource(context.Background(), tok), save: o.saveToken}
+	src := &savingTokenSource{
+		inner: cfg.TokenSource(context.Background(), tok),
+		last:  tok.AccessToken,
+		save:  o.saveToken,
+	}
 	return oauth2.NewClient(context.Background(), src), nil
 }
 
@@ -399,19 +403,37 @@ func (o *OutlookService) SincronizarConOpciones(opts SyncOptions) {
 func (o *OutlookService) ejecutarSync(opts SyncOptions) SyncResult {
 	result := SyncResult{Errores: []string{}, Log: []SyncLogEntry{}}
 	var logMu sync.Mutex
+
+	// Reset in-memory progress state.
+	o.syncProgressMu.Lock()
+	o.syncProgress = GmailSyncProgress{
+		Running: true,
+		Fase:    "recolectando",
+		Log:     []SyncLogEntry{}, // Clear logs for the new run
+	}
+	o.syncProgressMu.Unlock()
+
 	log := func(nivel, msg string) {
-		logMu.Lock()
-		result.Log = append(result.Log, SyncLogEntry{
+		entry := SyncLogEntry{
 			Nivel:   nivel,
 			Mensaje: msg,
 			Ts:      time.Now().Format("15:04:05"),
-		})
+		}
+		logMu.Lock()
+		result.Log = append(result.Log, entry)
 		logMu.Unlock()
+
+		o.syncProgressMu.Lock()
+		o.syncProgress.Log = append(o.syncProgress.Log, entry)
+		if len(o.syncProgress.Log) > 200 {
+			o.syncProgress.Log = o.syncProgress.Log[len(o.syncProgress.Log)-200:]
+		}
+		o.syncProgressMu.Unlock()
+
+		// Also emit via EventBus for real-time UI updates
+		EventBus.Emit("outlook:sync:log", entry)
 	}
 
-	o.syncProgressMu.Lock()
-	o.syncProgress = GmailSyncProgress{Running: true, Fase: "recolectando"}
-	o.syncProgressMu.Unlock()
 	defer func() {
 		o.syncProgressMu.Lock()
 		o.syncProgress.Running = false
@@ -680,6 +702,7 @@ func (o *OutlookService) extractZipAttachment(client *http.Client, messageID str
 		return nil, err
 	}
 
+	var lastErr error
 	for _, att := range list.Value {
 		if !strings.HasSuffix(strings.ToLower(att.Name), ".zip") || att.ContentBytes == "" {
 			continue
@@ -688,6 +711,12 @@ func (o *OutlookService) extractZipAttachment(client *http.Client, messageID str
 		if err == nil && len(data) > 0 {
 			return data, nil
 		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("error decodificando ZIP: %w", lastErr)
 	}
 	return nil, fmt.Errorf("no ZIP attachment")
 }

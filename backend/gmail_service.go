@@ -97,14 +97,15 @@ type SyncResult struct {
 // Written from the sync goroutine under syncProgressMu; read via GetGmailSyncProgress
 // (JS→Go call — safe on Linux/WebKit2GTK, does NOT use g_idle_add).
 type GmailSyncProgress struct {
-	Running    bool   `json:"running"`
-	Fase       string `json:"fase"`       // "recolectando" | "procesando" | ""
-	Total      int    `json:"total"`      // total message IDs found so far
-	Procesados int    `json:"procesados"` // messages fully processed
-	Nuevas     int    `json:"nuevas"`
-	Duplicadas int    `json:"duplicadas"`
-	Errores    int    `json:"errores"`
-	UltimoNro  string `json:"ultimoNro"` // last invoice number processed
+	Running    bool           `json:"running"`
+	Fase       string         `json:"fase"`       // "recolectando" | "procesando" | ""
+	Total      int            `json:"total"`      // total message IDs found so far
+	Procesados int            `json:"procesados"` // messages fully processed
+	Nuevas     int            `json:"nuevas"`
+	Duplicadas int            `json:"duplicadas"`
+	Errores    int            `json:"errores"`
+	UltimoNro  string         `json:"ultimoNro"` // last invoice number processed
+	Log        []SyncLogEntry `json:"log"`       // recent log entries for real-time UI
 }
 
 // msgProcessResult is the per-message output of procesarMensaje.
@@ -389,7 +390,11 @@ func (g *GmailService) newGmailSvc() (*gmail.Service, error) {
 	}
 	// savingTokenSource (defined in bancolombia_service.go, same package) persists
 	// refreshed access tokens to disk so subsequent app restarts don't hit 401/invalid_grant.
-	src := &savingTokenSource{inner: cfg.TokenSource(context.Background(), tok), save: g.saveToken}
+	src := &savingTokenSource{
+		inner: cfg.TokenSource(context.Background(), tok),
+		last:  tok.AccessToken,
+		save:  g.saveToken,
+	}
 	client := oauth2.NewClient(context.Background(), src)
 	return gmail.NewService(context.Background(), option.WithHTTPClient(client))
 }
@@ -423,20 +428,38 @@ func (g *GmailService) SincronizarConOpciones(opts SyncOptions) {
 func (g *GmailService) ejecutarSync(opts SyncOptions) SyncResult {
 	result := SyncResult{Errores: []string{}, Log: []SyncLogEntry{}}
 	var logMu sync.Mutex
-	log := func(nivel, msg string) {
-		logMu.Lock()
-		result.Log = append(result.Log, SyncLogEntry{
-			Nivel:   nivel,
-			Mensaje: msg,
-			Ts:      time.Now().Format("15:04:05"),
-		})
-		logMu.Unlock()
-	}
 
 	// Reset in-memory progress state.
 	g.syncProgressMu.Lock()
-	g.syncProgress = GmailSyncProgress{Running: true, Fase: "recolectando"}
+	g.syncProgress = GmailSyncProgress{
+		Running: true,
+		Fase:    "recolectando",
+		Log:     []SyncLogEntry{}, // Clear logs for the new run
+	}
 	g.syncProgressMu.Unlock()
+
+	log := func(nivel, msg string) {
+		entry := SyncLogEntry{
+			Nivel:   nivel,
+			Mensaje: msg,
+			Ts:      time.Now().Format("15:04:05"),
+		}
+		logMu.Lock()
+		result.Log = append(result.Log, entry)
+		logMu.Unlock()
+
+		g.syncProgressMu.Lock()
+		g.syncProgress.Log = append(g.syncProgress.Log, entry)
+		// Keep a reasonable limit for the live log (e.g., last 200 entries)
+		if len(g.syncProgress.Log) > 200 {
+			g.syncProgress.Log = g.syncProgress.Log[len(g.syncProgress.Log)-200:]
+		}
+		g.syncProgressMu.Unlock()
+
+		// Also emit via EventBus for real-time UI updates
+		EventBus.Emit("gmail:sync:log", entry)
+	}
+
 	defer func() {
 		g.syncProgressMu.Lock()
 		g.syncProgress.Running = false
@@ -747,6 +770,7 @@ func procesarZipContenido(
 }
 
 func (g *GmailService) extractZipAttachment(svc *gmail.Service, msg *gmail.Message) ([]byte, error) {
+	var lastErr error
 	for _, part := range msg.Payload.Parts {
 		if !strings.HasSuffix(strings.ToLower(part.Filename), ".zip") || part.Body == nil {
 			continue
@@ -755,6 +779,12 @@ func (g *GmailService) extractZipAttachment(svc *gmail.Service, msg *gmail.Messa
 		if err == nil && len(data) > 0 {
 			return data, nil
 		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("error descargando ZIP: %w", lastErr)
 	}
 	return nil, fmt.Errorf("no ZIP attachment")
 }

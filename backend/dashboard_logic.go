@@ -126,7 +126,7 @@ func (d *Db) ObtenerDatosDashboard(fechaStr string) (DashboardData, error) {
 	}
 
 	// 6. Obtener Top 5 Productos sin stock.
-	querySinStock := "SELECT uuid, codigo, nombre, precio_venta, stock FROM productos WHERE stock <= 0 AND deleted_at IS NULL ORDER BY nombre ASC LIMIT 5"
+	querySinStock := "SELECT uuid, codigo, nombre, precio_venta, COALESCE(stock, 0) FROM productos WHERE COALESCE(stock, 0) <= 0 AND deleted_at IS NULL ORDER BY nombre ASC LIMIT 5"
 	rows, err = d.DB.Query(querySinStock)
 	if err != nil {
 		return data, fmt.Errorf("error al obtener productos sin stock: %w", err)
@@ -209,25 +209,25 @@ func (d *Db) ObtenerResumenInventario() (ResumenInventario, error) {
 	}
 
 	// Low stock (1-10)
-	err = d.DB.QueryRow("SELECT COUNT(*) FROM productos WHERE stock > 0 AND stock <= 10 AND deleted_at IS NULL").Scan(&res.ProductosStockBajo)
+	err = d.DB.QueryRow("SELECT COUNT(*) FROM productos WHERE COALESCE(stock, 0) > 0 AND COALESCE(stock, 0) <= 10 AND deleted_at IS NULL").Scan(&res.ProductosStockBajo)
 	if err != nil {
 		return res, fmt.Errorf("error al contar productos stock bajo: %w", err)
 	}
 
 	// Out of stock
-	err = d.DB.QueryRow("SELECT COUNT(*) FROM productos WHERE stock <= 0 AND deleted_at IS NULL").Scan(&res.ProductosSinStock)
+	err = d.DB.QueryRow("SELECT COUNT(*) FROM productos WHERE COALESCE(stock, 0) <= 0 AND deleted_at IS NULL").Scan(&res.ProductosSinStock)
 	if err != nil {
 		return res, fmt.Errorf("error al contar productos sin stock: %w", err)
 	}
 
 	// Inventory value
-	err = d.DB.QueryRow("SELECT COALESCE(SUM(precio_venta * stock), 0) FROM productos WHERE deleted_at IS NULL AND stock > 0").Scan(&res.ValorInventario)
+	err = d.DB.QueryRow("SELECT COALESCE(SUM(precio_venta * COALESCE(stock, 0)), 0) FROM productos WHERE deleted_at IS NULL AND COALESCE(stock, 0) > 0").Scan(&res.ValorInventario)
 	if err != nil {
 		return res, fmt.Errorf("error al calcular valor inventario: %w", err)
 	}
 
 	// Products needing attention (stock <= 10)
-	rows, err := d.DB.Query("SELECT uuid, nombre, codigo, stock, precio_venta FROM productos WHERE stock <= 10 AND deleted_at IS NULL ORDER BY stock ASC LIMIT 20")
+	rows, err := d.DB.Query("SELECT uuid, nombre, codigo, COALESCE(stock, 0), precio_venta FROM productos WHERE COALESCE(stock, 0) <= 10 AND deleted_at IS NULL ORDER BY COALESCE(stock, 0) ASC LIMIT 20")
 	if err != nil {
 		return res, fmt.Errorf("error al obtener productos alerta: %w", err)
 	}

@@ -245,9 +245,10 @@ type BancolombiaLogEntry struct {
 // goroutine calls g_idle_add() on Linux/GTK — flooding it with hundreds of
 // events causes the "Force Quit or Wait" dialog).
 type BancolombiaProgressState struct {
-	Revisados int `json:"revisados"`
-	Total     int `json:"total"`
-	Nuevas    int `json:"nuevas"`
+	Revisados int                   `json:"revisados"`
+	Total     int                   `json:"total"`
+	Nuevas    int                   `json:"nuevas"`
+	Log       []BancolombiaLogEntry `json:"log"` // recent log entries for real-time UI
 }
 
 // NewBancolombiaService creates the service. Shares configDir with GmailService.
@@ -604,15 +605,41 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 
 	// Only one sync at a time.
 	if !b.syncMu.TryLock() {
-		appendLog(&result, "warn", "Sincronización ya en progreso, omitiendo.")
+		// Log manually here as result.Log is empty
+		result.Log = append(result.Log, BancolombiaLogEntry{
+			Nivel:   "warn",
+			Mensaje: "Sincronización ya en progreso, omitiendo.",
+			Ts:      time.Now().Format("15:04:05"),
+		})
 		return result, nil
 	}
 	defer b.syncMu.Unlock()
 
 	// Reset progress counter so the frontend sees 0/0 at the start of each run.
 	b.syncProgressMu.Lock()
-	b.syncProgress = BancolombiaProgressState{}
+	b.syncProgress = BancolombiaProgressState{
+		Log: []BancolombiaLogEntry{}, // Clear logs for the new run
+	}
 	b.syncProgressMu.Unlock()
+
+	log := func(nivel, msg string) {
+		entry := BancolombiaLogEntry{
+			Nivel:   nivel,
+			Mensaje: msg,
+			Ts:      time.Now().Format("15:04:05"),
+		}
+		result.Log = append(result.Log, entry)
+
+		b.syncProgressMu.Lock()
+		b.syncProgress.Log = append(b.syncProgress.Log, entry)
+		if len(b.syncProgress.Log) > 100 {
+			b.syncProgress.Log = b.syncProgress.Log[len(b.syncProgress.Log)-100:]
+		}
+		b.syncProgressMu.Unlock()
+
+		// Also emit via EventBus for real-time UI updates
+		EventBus.Emit("bancolombia:sync:log", entry)
+	}
 
 	svc, err := b.newGmailSvc()
 	if err != nil {
@@ -686,7 +713,7 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 	}
 
 	total := len(allMessages)
-	appendLog(&result, "info", fmt.Sprintf("Revisando %d mensajes del período…", total))
+	log("info", fmt.Sprintf("Revisando %d mensajes del período…", total))
 
 	// Pre-build the set of already-stored email IDs in ONE batch query instead of
 	// querying the DB individually for each message. This is critical when the ticker
@@ -706,11 +733,9 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		// through g_idle_add() and with 2000+ messages the queue saturates,
 		// causing the "Not Responding" dialog.
 		b.syncProgressMu.Lock()
-		b.syncProgress = BancolombiaProgressState{
-			Revisados: result.Revisados,
-			Total:     total,
-			Nuevas:    result.Nuevas,
-		}
+		b.syncProgress.Revisados = result.Revisados
+		b.syncProgress.Total = total
+		b.syncProgress.Nuevas = result.Nuevas
 		b.syncProgressMu.Unlock()
 
 		if existingIDs[m.Id] {
@@ -723,18 +748,18 @@ func (b *BancolombiaService) sincronizarConPeriodo(opts BancolombiaOpcionesPerio
 		isNew, err := b.db.GuardarTransferencia(*t)
 		if err != nil {
 			result.Errores = append(result.Errores, fmt.Sprintf("msg %s: %v", m.Id, err))
-			appendLog(&result, "error", fmt.Sprintf("Error guardando: %v", err))
+			log("error", fmt.Sprintf("Error guardando: %v", err))
 			continue
 		}
 		if isNew {
 			result.Nuevas++
 			// Log includes the email ID and raw notification text (helps identify QR/yyyy-mm-dd emails).
-			appendLog(&result, "ok", fmt.Sprintf("✓ %s — $%.0f | %s | msgId:%s",
+			log("ok", fmt.Sprintf("✓ %s — $%.0f | %s | msgId:%s",
 				t.Remitente, t.Monto, t.RawSubject, t.EmailID))
 		}
 	}
 
-	appendLog(&result, "info", fmt.Sprintf(
+	log("info", fmt.Sprintf(
 		"Listo — %d revisados · %d nuevas · %d errores",
 		result.Revisados, result.Nuevas, len(result.Errores),
 	))
