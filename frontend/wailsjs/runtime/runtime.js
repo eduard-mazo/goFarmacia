@@ -6,8 +6,11 @@ let _es = null;
 const _listeners = {}; // eventName → Set<{cb, remaining}>
 
 function getEventSource() {
+  if (typeof EventSource === "undefined") return null; // non-browser (SSR/tests)
   if (_es && _es.readyState !== EventSource.CLOSED) return _es;
-  _es = new EventSource("/api/events");
+  const t = localStorage.getItem("authToken");
+  if (!t) return null; // not authenticated — connect after login via resetEventSource()
+  _es = new EventSource("/api/events?token=" + encodeURIComponent(t));
   _es.onmessage = (e) => {
     try {
       const { event, data } = JSON.parse(e.data);
@@ -28,6 +31,18 @@ function getEventSource() {
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+// resetEventSource closes any existing stream and reconnects using the current
+// auth token. Call it after login (to start the authenticated stream) and after
+// logout (drops the stream — no token means no reconnect). Registered listeners
+// survive because they live in the module-level _listeners map.
+export function resetEventSource() {
+  if (_es) {
+    try { _es.close(); } catch {}
+    _es = null;
+  }
+  getEventSource();
+}
 
 export function EventsOnMultiple(eventName, callback, maxCallbacks) {
   getEventSource();

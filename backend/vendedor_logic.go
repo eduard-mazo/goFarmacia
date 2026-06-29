@@ -192,7 +192,8 @@ func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	vendedor.Contrasena = ""
 	response.Vendedor = vendedor
 
-	d.Log.Infof("Fin proceso Login con response: %+v", response)
+	// Do NOT log the response: it contains the signed JWT and user PII.
+	d.Log.Infof("Login OK para %s (MFA requerido: %t)", vendedor.Email, response.MFARequired)
 	return response, nil
 }
 

@@ -162,7 +162,7 @@ func (d *Db) VerificarLoginMFA(tempToken string, code string) (LoginResponse, er
 
 	tkn, err := jwt.ParseWithClaims(tempToken, claims, func(token *jwt.Token) (interface{}, error) {
 		return d.jwtKey, nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil || !tkn.Valid || claims.MFAStep != "pending" {
 		return response, errors.New("token temporal inválido o expirado")
 	}

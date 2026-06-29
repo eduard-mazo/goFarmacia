@@ -22,7 +22,7 @@ func JWTAuth(db *backend.Db) echo.MiddlewareFunc {
 			claims := &backend.Claims{}
 			tkn, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
 				return db.JWTKey(), nil
-			})
+			}, jwt.WithValidMethods([]string{"HS256"}))
 			if err != nil || !tkn.Valid {
 				return echo.NewHTTPError(http.StatusUnauthorized, "Token inválido o expirado")
 			}

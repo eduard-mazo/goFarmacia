@@ -2,14 +2,20 @@ package api
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 	"goFarmacia/api/handlers"
 	apimw "goFarmacia/api/middleware"
 	"goFarmacia/backend"
+
+	"golang.org/x/time/rate"
 )
 
 func NewRouter(
@@ -23,19 +29,64 @@ func NewRouter(
 	e := echo.New()
 	e.HideBanner = true
 
+	// Mask internal (5xx) errors from clients: log the detail server-side and
+	// return a generic message. Intentional 4xx messages (validation, auth) are
+	// preserved so the UI can still show them.
+	e.HTTPErrorHandler = func(err error, c echo.Context) {
+		if c.Response().Committed {
+			return
+		}
+		code := http.StatusInternalServerError
+		msg := "Error interno del servidor"
+		if he, ok := err.(*echo.HTTPError); ok {
+			code = he.Code
+			if code < http.StatusInternalServerError {
+				msg = fmt.Sprintf("%v", he.Message)
+			}
+		}
+		if code >= http.StatusInternalServerError {
+			db.Log.Errorf("[HTTP %d] %s %s — %v", code, c.Request().Method, c.Request().URL.Path, err)
+		}
+		if c.Request().Method == http.MethodHead {
+			_ = c.NoContent(code)
+			return
+		}
+		_ = c.JSON(code, echo.Map{"message": msg})
+	}
+
 	e.Use(echomw.Recover())
-	e.Use(echomw.CORS())
 	e.Use(echomw.GzipWithConfig(echomw.GzipConfig{Level: 5}))
+
+	// CORS is OFF by default: the SPA is served same-origin by this server, so no
+	// CORS headers are needed. Set ALLOWED_ORIGINS (comma-separated) only if the
+	// API must be reached from a different origin (e.g. a separate dev server).
+	if origins := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); origins != "" {
+		e.Use(echomw.CORSWithConfig(echomw.CORSConfig{
+			AllowOrigins: strings.Split(origins, ","),
+			AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+			AllowHeaders: []string{echo.HeaderContentType, echo.HeaderAuthorization},
+		}))
+	}
+
+	// Brute-force throttle for authentication endpoints (per client IP):
+	// ~5 quick attempts, then 1 every 2s.
+	authLimiter := echomw.RateLimiterWithConfig(echomw.RateLimiterConfig{
+		Store: echomw.NewRateLimiterMemoryStoreWithConfig(echomw.RateLimiterMemoryStoreConfig{
+			Rate:      rate.Every(2 * time.Second),
+			Burst:     5,
+			ExpiresIn: 3 * time.Minute,
+		}),
+	})
 
 	api := e.Group("/api")
 
 	// ── public ──────────────────────────────────────────────────────────────
 	pub := api.Group("")
 
-	// auth
-	pub.POST("/auth/login", handlers.Login(db))
-	pub.POST("/auth/verify-mfa", handlers.VerifyMFA(db))
-	pub.POST("/auth/register", handlers.Register(db))
+	// auth (rate-limited to throttle credential/OTP brute-force)
+	pub.POST("/auth/login", handlers.Login(db), authLimiter)
+	pub.POST("/auth/verify-mfa", handlers.VerifyMFA(db), authLimiter)
+	pub.POST("/auth/register", handlers.Register(db), authLimiter)
 
 	// db setup status (pre-login, read-only) — needed to render the setup screen.
 	// The mutating endpoints (configurar-db / test-connection) live in the admin
@@ -44,8 +95,8 @@ func NewRouter(
 	pub.GET("/config/db-status", handlers.GetDBStatus(db))
 	pub.GET("/config/setup-mode", handlers.IsSetupMode(db))
 
-	// SSE (authenticated via query param token handled in handler, or open for simplicity)
-	pub.GET("/events", handlers.SSEHandler())
+	// SSE — authenticated inside the handler via ?token= (EventSource can't set headers)
+	pub.GET("/events", handlers.SSEHandler(db))
 
 	// ── protected (any authenticated user) ────────────────────────────────────
 	priv := api.Group("", apimw.JWTAuth(db))
