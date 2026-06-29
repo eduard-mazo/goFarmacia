@@ -38,12 +38,12 @@ import { valueUpdater } from "@/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import DropdownAction from "@/components/tables/DataTableVendedorDropDown.vue";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import {
   ObtenerVendedoresPaginado,
   EliminarVendedor,
   ActualizarVendedor,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 import { toast } from "vue-sonner";
 import { useAuthStore } from "@/stores/auth";
 import { storeToRefs } from "pinia";

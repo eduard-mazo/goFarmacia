@@ -76,7 +76,7 @@ import {
   TruncarTabla,
   ActualizarFilaTabla,
   EliminarFilaTabla,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TableInfo {

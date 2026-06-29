@@ -1,13 +1,13 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { backend } from "@/../wailsjs/go/models";
+import type { backend } from "@/../bridge/go/models";
 import { useRouter } from "vue-router";
 import {
   LoginVendedor,
   VerificarLoginMFA,
   RegistrarVendedor,
-} from "@/../wailsjs/go/backend/Db";
-import { resetEventSource } from "@/../wailsjs/runtime/runtime";
+} from "@/../bridge/go/backend/Db";
+import { resetEventSource } from "@/../bridge/runtime/runtime";
 
 export const useAuthStore = defineStore("auth", () => {
   const router = useRouter();

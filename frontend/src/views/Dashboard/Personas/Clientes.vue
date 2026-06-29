@@ -39,12 +39,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import DropdownAction from "@/components/tables/DataTableClientDropDown.vue";
 import CrearClienteModal from "@/components/modals/CrearClienteModal.vue";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import {
   ObtenerClientesPaginado,
   EliminarCliente,
   ActualizarCliente,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 import { toast } from "vue-sonner";
 
 interface ObtenerClientePaginadoResponse {

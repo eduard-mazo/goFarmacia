@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Loader2, Eye, EyeOff } from "lucide-vue-next";
 import { useAuthStore } from "@/stores/auth";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 
 const registerPayload = ref<backend.Vendedor>(new backend.Vendedor());
 const error = ref<string | null>(null);

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useAuthStore } from "@/stores/auth";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import { toast } from "vue-sonner";
 import { useRoute } from "vue-router";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import {
   EyeOff,
   Settings,
 } from "lucide-vue-next";
-import { IsSetupMode } from "@/../wailsjs/go/backend/Db";
+import { IsSetupMode } from "@/../bridge/go/backend/Db";
 
 const authStore = useAuthStore();
 const route = useRoute();

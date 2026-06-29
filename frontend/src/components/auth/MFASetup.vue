@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useAuthStore } from "@/stores/auth";
-import { GenerarMFA, HabilitarMFA } from "@/../wailsjs/go/backend/Db";
+import { GenerarMFA, HabilitarMFA } from "@/../bridge/go/backend/Db";
 import { toast } from "vue-sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";

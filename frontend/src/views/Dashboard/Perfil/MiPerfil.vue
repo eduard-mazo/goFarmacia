@@ -2,8 +2,8 @@
 import { ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
-import { ActualizarPerfilVendedor } from "@/../wailsjs/go/backend/Db";
-import { backend } from "@/../wailsjs/go/models";
+import { ActualizarPerfilVendedor } from "@/../bridge/go/backend/Db";
+import { backend } from "@/../bridge/go/models";
 import { toast } from "vue-sonner";
 import {
   Card,

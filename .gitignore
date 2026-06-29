@@ -1,11 +1,7 @@
-# Wails build artifacts
+# Build artifacts
 /build/
 /frontend/dist/
 /frontend/node_modules/
-/frontend/wailsjs
-/wails/
-/wails-build-log.txt
-/wails-dev-server.log
 
 # Compiled binary (never commit the build output)
 /goFarmacia

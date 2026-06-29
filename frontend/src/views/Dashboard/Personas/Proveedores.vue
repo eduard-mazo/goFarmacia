@@ -20,13 +20,13 @@ import {
 } from "lucide-vue-next";
 import CrearProveedorModal from "@/components/modals/CrearProveedorModal.vue";
 import DropdownAction from "@/components/tables/DataTableProveedorDropDown.vue";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import {
   ObtenerProveedoresPaginado, EliminarProveedor, ActualizarProveedor,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 import {
   ObtenerProveedoresConEstadisticas, ObtenerTopProductosDeProveedor,
-} from "@/../wailsjs/go/backend/GmailService";
+} from "@/../bridge/go/backend/GmailService";
 import { toast } from "vue-sonner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────

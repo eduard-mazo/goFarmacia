@@ -28,8 +28,8 @@ import {
 } from "lucide-vue-next";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "vue-sonner";
-import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
-import { backend } from "@/../wailsjs/go/models";
+import { EventsOn, EventsOff } from "@/../bridge/runtime/runtime";
+import { backend } from "@/../bridge/go/models";
 import {
   EstadoAuth as GmailEstadoAuth, IniciarOAuth2 as GmailIniciarOAuth2,
   RevocarAuth as GmailRevocarAuth,
@@ -38,13 +38,13 @@ import {
   ObtenerFacturasCompra, ObtenerDetalleFacturaCompra,
   ActualizarEstadoFacturaCompra,
   GetGmailSyncProgress,
-} from "@/../wailsjs/go/backend/GmailService";
+} from "@/../bridge/go/backend/GmailService";
 import {
   EstadoAuth as OutlookEstadoAuth, IniciarOAuth2 as OutlookIniciarOAuth2,
   RevocarAuth as OutlookRevocarAuth,
   SincronizarConOpciones as OutlookSincronizarConOpciones,
   GetOutlookSyncProgress,
-} from "@/../wailsjs/go/backend/OutlookService";
+} from "@/../bridge/go/backend/OutlookService";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

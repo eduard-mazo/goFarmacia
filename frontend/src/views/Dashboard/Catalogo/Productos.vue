@@ -40,12 +40,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import DropdownAction from "@/components/tables/DataTableProductDropDown.vue";
 import CrearProductoModal from "@/components/modals/CrearProductoModal.vue";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import {
   ObtenerProductosPaginado,
   EliminarProducto,
   ActualizarProducto,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 import { toast } from "vue-sonner";
 
 interface ObtenerProductosPaginadoResponse {
