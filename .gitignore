@@ -15,6 +15,9 @@
 # Custom files
 *.xlsx
 
+# Dev screenshots / sample images (not used by the app or docs)
+/img/
+
 # Environment variables and secrets
 *.env
 credentials.json

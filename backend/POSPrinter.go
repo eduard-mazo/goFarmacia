@@ -16,16 +16,20 @@ package backend
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"image"
+	_ "image/jpeg"
 	"math"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/boombuler/barcode"
 	"github.com/boombuler/barcode/qr"
 	"github.com/google/gousb"
+	"golang.org/x/image/draw"
 	"golang.org/x/text/encoding/charmap"
 )
 
@@ -48,6 +52,122 @@ const (
 	// Printable dot width of 58 mm paper (~384 dots).
 	paperDotsWidth = 384
 )
+
+// ── Embedded logo ────────────────────────────────────────────────────────────
+
+//go:embed assets/logo.jpg
+var logoJPEG []byte
+
+// logoRaster holds the pre-rendered ESC/POS raster bytes for the store logo.
+// Computed once on first use (sync.Once) so the JPEG decode + resize happens
+// only once per process lifetime.
+var (
+	logoRaster     []byte
+	logoRasterOnce sync.Once
+)
+
+// getLogoRaster decodes the embedded JPEG, scales it to fit the paper width
+// while preserving aspect ratio, converts to 1-bit monochrome, and returns
+// the GS v 0 raster command bytes ready to send to the printer.
+func getLogoRaster() []byte {
+	logoRasterOnce.Do(func() {
+		src, _, err := image.Decode(bytes.NewReader(logoJPEG))
+		if err != nil {
+			return
+		}
+		bounds := src.Bounds()
+		srcW := bounds.Dx()
+		srcH := bounds.Dy()
+
+		// Scale to paper width, maintaining aspect ratio.
+		dstW := paperDotsWidth
+		dstH := srcH * dstW / srcW
+
+		dst := image.NewGray(image.Rect(0, 0, dstW, dstH))
+		// Fill white background first (important for JPEG with no alpha).
+		for i := range dst.Pix {
+			dst.Pix[i] = 0xFF
+		}
+		draw.BiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+
+		// Convert to 1-bit raster with Floyd-Steinberg dithering for
+		// better gradient reproduction on the thermal printer.
+		logoRaster = grayscaleToRasterDithered(dst, paperDotsWidth)
+	})
+	return logoRaster
+}
+
+// grayscaleToRasterDithered applies Floyd-Steinberg error-diffusion dithering
+// to a grayscale image and returns ESC/POS GS v 0 raster command bytes.
+// This produces much better results than simple thresholding for images with
+// gradients (like the blue crescent in the logo).
+func grayscaleToRasterDithered(img *image.Gray, paperWidth int) []byte {
+	bounds := img.Bounds()
+	w := bounds.Dx()
+	h := bounds.Dy()
+
+	// Work on a float copy so diffusion errors don't wrap around uint8.
+	buf := make([]float64, w*h)
+	for y := range h {
+		for x := range w {
+			buf[y*w+x] = float64(img.GrayAt(bounds.Min.X+x, bounds.Min.Y+y).Y)
+		}
+	}
+
+	paperBytesPerRow := (paperWidth + 7) / 8
+	imgBytesPerRow := (w + 7) / 8
+	leftPadBytes := (paperBytesPerRow - imgBytesPerRow) / 2
+	if leftPadBytes < 0 {
+		leftPadBytes = 0
+	}
+
+	pixels := make([]byte, paperBytesPerRow*h)
+
+	for y := range h {
+		for x := range w {
+			old := buf[y*w+x]
+			var newVal float64
+			if old < 128 {
+				newVal = 0 // black
+			} else {
+				newVal = 255 // white
+			}
+			buf[y*w+x] = newVal
+			qErr := old - newVal
+
+			// Distribute error to neighbors (Floyd-Steinberg coefficients).
+			if x+1 < w {
+				buf[y*w+x+1] += qErr * 7 / 16
+			}
+			if y+1 < h {
+				if x-1 >= 0 {
+					buf[(y+1)*w+x-1] += qErr * 3 / 16
+				}
+				buf[(y+1)*w+x] += qErr * 5 / 16
+				if x+1 < w {
+					buf[(y+1)*w+x+1] += qErr * 1 / 16
+				}
+			}
+
+			// Black pixel → set bit.
+			if newVal == 0 {
+				byteIdx := y*paperBytesPerRow + leftPadBytes + x/8
+				bitIdx := uint(7 - x%8)
+				pixels[byteIdx] |= 1 << bitIdx
+			}
+		}
+	}
+
+	xL := byte(paperBytesPerRow & 0xFF)
+	xH := byte(paperBytesPerRow >> 8)
+	yL := byte(h & 0xFF)
+	yH := byte(h >> 8)
+
+	var out bytes.Buffer
+	out.Write([]byte{0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH})
+	out.Write(pixels)
+	return out.Bytes()
+}
 
 // ── receipt — buffered ESC/POS builder ───────────────────────────────────────
 
@@ -359,6 +479,57 @@ func (d *Db) ImprimirRecibo(factura Factura) error {
 	return nil
 }
 
+// ImprimirImagen decodes raw image bytes (JPEG or PNG), scales the image to
+// fit the paper width while preserving aspect ratio, dithers to 1-bit, and
+// sends it to the thermal printer. The caller is responsible for reading the
+// file; this method only needs the raw bytes.
+func (d *Db) ImprimirImagen(imgData []byte) error {
+	src, _, err := image.Decode(bytes.NewReader(imgData))
+	if err != nil {
+		return fmt.Errorf("error al decodificar imagen: %w", err)
+	}
+
+	bounds := src.Bounds()
+	srcW, srcH := bounds.Dx(), bounds.Dy()
+	dstW := paperDotsWidth
+	dstH := srcH * dstW / srcW
+
+	dst := image.NewGray(image.Rect(0, 0, dstW, dstH))
+	for i := range dst.Pix {
+		dst.Pix[i] = 0xFF
+	}
+	draw.BiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+
+	rasterBytes := grayscaleToRasterDithered(dst, paperDotsWidth)
+	if len(rasterBytes) == 0 {
+		return fmt.Errorf("error al convertir imagen a raster")
+	}
+
+	ctx, dev, err := openPrinter()
+	if err != nil {
+		return err
+	}
+	defer ctx.Close()
+	defer dev.Close()
+
+	epOut, closeEP, err := getOutEndpoint(dev)
+	if err != nil {
+		return err
+	}
+	defer closeEP()
+
+	r := newReceipt()
+	r.raw(cmdInit()...).raw(cmdCenter()...)
+	r.raw(rasterBytes...)
+	r.raw('\n', '\n', '\n').raw(cmdCut()...)
+
+	if _, err := epOut.Write(r.bytes()); err != nil {
+		return fmt.Errorf("error al enviar imagen a la impresora: %w", err)
+	}
+	d.Log.Info("Imagen enviada correctamente a la impresora.")
+	return nil
+}
+
 // ── Receipt layout ───────────────────────────────────────────────────────────
 
 func buildReceipt(f Factura) *receipt {
@@ -369,13 +540,20 @@ func buildReceipt(f Factura) *receipt {
 	// on printers that default to a Japanese/Asian character set.
 	r.raw(cmdInit()...).raw(cmdCodePage(cpPC850)...).raw(cmdIntlCharSet(0)...)
 
-	// ── Header — Font A, center, bold, double size ────────────────────────────
-	r.raw(cmdCenter()...).
-		raw(cmdBoldOn()...).
-		raw(cmdDblHOn()...).
-		text("DROGUERIA LUNA").ln().
-		raw(cmdDblHOff()...).
-		raw(cmdBoldOff()...)
+	// ── Header — logo bitmap (preferred) or text fallback ─────────────────────
+	if logo := getLogoRaster(); len(logo) > 0 {
+		r.raw(cmdCenter()...)
+		r.raw(logo...)
+		r.raw('\n')
+	} else {
+		// Fallback: text header if logo fails to decode.
+		r.raw(cmdCenter()...).
+			raw(cmdBoldOn()...).
+			raw(cmdDblHOn()...).
+			text("DROGUERIA LUNA").ln().
+			raw(cmdDblHOff()...).
+			raw(cmdBoldOff()...)
+	}
 
 	r.raw(cmdCenter()...).text("NIT: 70.120.237-8").ln()
 	r.raw(cmdCenter()...).text("Calle 94 # 48-33, Medellin").ln()
