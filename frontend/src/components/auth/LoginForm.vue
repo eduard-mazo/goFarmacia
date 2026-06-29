@@ -193,11 +193,6 @@ async function handleVerifyMFA() {
               <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
               {{ isLoading ? "Ingresando…" : "Iniciar Sesión" }}
             </Button>
-
-            <p class="form-footer-text">
-              ¿No tienes una cuenta?
-              <router-link to="/register" class="form-link">Regístrate</router-link>
-            </p>
           </div>
         </form>
 

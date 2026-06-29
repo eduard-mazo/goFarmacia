@@ -31,7 +31,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, Search, ShieldCheck, User } from "lucide-vue-next";
+import { ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, Search, ShieldCheck, User, UserPlus } from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
 import { h, ref, watch, onMounted, computed } from "vue";
 import { valueUpdater } from "@/utils";
@@ -47,7 +47,9 @@ import {
 import { toast } from "vue-sonner";
 import { useAuthStore } from "@/stores/auth";
 import { storeToRefs } from "pinia";
+import { useRouter } from "vue-router";
 
+const router = useRouter();
 const authStore = useAuthStore();
 const { user: authenticatedUser } = storeToRefs(authStore);
 
@@ -240,6 +242,9 @@ watch(busqueda, () => {
         <h1 class="text-sm font-semibold">Vendedores</h1>
         <p class="text-xs text-muted-foreground">Administra el equipo de vendedores</p>
       </div>
+      <Button class="h-7 text-xs gap-1.5" @click="router.push({ name: 'Register' })">
+        <UserPlus class="h-3.5 w-3.5" /> Nuevo Vendedor
+      </Button>
     </div>
 
     <!-- Toolbar -->

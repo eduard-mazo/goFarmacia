@@ -86,7 +86,6 @@ func NewRouter(
 	// auth (rate-limited to throttle credential/OTP brute-force)
 	pub.POST("/auth/login", handlers.Login(db), authLimiter)
 	pub.POST("/auth/verify-mfa", handlers.VerifyMFA(db), authLimiter)
-	pub.POST("/auth/register", handlers.Register(db), authLimiter)
 
 	// db setup status (pre-login, read-only) — needed to render the setup screen.
 	// The mutating endpoints (configurar-db / test-connection) live in the admin
@@ -103,6 +102,11 @@ func NewRouter(
 
 	// ── admin only (authenticated + role "admin") ─────────────────────────────
 	admin := api.Group("", apimw.JWTAuth(db), apimw.RequireRole("admin"))
+
+	// account creation — admin only. The first account is bootstrapped on first
+	// run via the setup-admin token (role "admin"); RegistrarVendedor makes the
+	// very first vendedor an admin and the rest cajeros.
+	admin.POST("/auth/register", handlers.Register(db))
 
 	// db setup mutations — admin only (bootstrap via setup-admin token on first run)
 	admin.POST("/config/configurar-db", handlers.ConfigurarDB(db))
