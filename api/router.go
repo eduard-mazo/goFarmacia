@@ -37,17 +37,25 @@ func NewRouter(
 	pub.POST("/auth/verify-mfa", handlers.VerifyMFA(db))
 	pub.POST("/auth/register", handlers.Register(db))
 
-	// db setup (pre-login)
+	// db setup status (pre-login, read-only) — needed to render the setup screen.
+	// The mutating endpoints (configurar-db / test-connection) live in the admin
+	// group below: during genuine first-run they are reachable via the in-memory
+	// setup-admin token; once configured they require a real admin.
 	pub.GET("/config/db-status", handlers.GetDBStatus(db))
 	pub.GET("/config/setup-mode", handlers.IsSetupMode(db))
-	pub.POST("/config/configurar-db", handlers.ConfigurarDB(db))
-	pub.POST("/config/test-connection", handlers.TestDBConnection(db))
 
 	// SSE (authenticated via query param token handled in handler, or open for simplicity)
 	pub.GET("/events", handlers.SSEHandler())
 
-	// ── protected ───────────────────────────────────────────────────────────
+	// ── protected (any authenticated user) ────────────────────────────────────
 	priv := api.Group("", apimw.JWTAuth(db))
+
+	// ── admin only (authenticated + role "admin") ─────────────────────────────
+	admin := api.Group("", apimw.JWTAuth(db), apimw.RequireRole("admin"))
+
+	// db setup mutations — admin only (bootstrap via setup-admin token on first run)
+	admin.POST("/config/configurar-db", handlers.ConfigurarDB(db))
+	admin.POST("/config/test-connection", handlers.TestDBConnection(db))
 
 	// auth extras
 	priv.POST("/auth/setup-mfa", handlers.SetupMFA(db))
@@ -70,9 +78,9 @@ func NewRouter(
 
 	// vendedores
 	priv.GET("/vendedores", handlers.ObtenerVendedoresPaginado(db))
-	priv.PUT("/vendedores/:uuid", handlers.ActualizarVendedor(db))
-	priv.PUT("/vendedores/:uuid/perfil", handlers.ActualizarPerfilVendedor(db))
-	priv.DELETE("/vendedores/:uuid", handlers.EliminarVendedor(db))
+	priv.PUT("/vendedores/:uuid/perfil", handlers.ActualizarPerfilVendedor(db)) // self profile (any user)
+	admin.PUT("/vendedores/:uuid", handlers.ActualizarVendedor(db))             // changes roles → admin only
+	admin.DELETE("/vendedores/:uuid", handlers.EliminarVendedor(db))            // admin only
 
 	// proveedores
 	priv.GET("/proveedores", handlers.ObtenerProveedoresPaginado(db))
@@ -104,21 +112,21 @@ func NewRouter(
 	priv.GET("/dashboard/resumen-inventario", handlers.ObtenerResumenInventario(db))
 	priv.GET("/dashboard/reporte-ventas", handlers.ObtenerReporteVentasRango(db))
 
-	// admin
-	priv.GET("/admin/tablas", handlers.GetTablas(db))
-	priv.GET("/admin/tablas/:name", handlers.GetDatosTabla(db))
-	priv.GET("/admin/tablas/:name/esquema", handlers.GetEsquemaTabla(db))
-	priv.GET("/admin/tablas/:name/export/csv", handlers.ExportarTablaCSV(db))
-	priv.GET("/admin/tablas/:name/export/sql", handlers.ExportarTablaSQL(db))
-	priv.GET("/admin/export/bd-sql", handlers.ExportarBDSQL(db))
-	priv.POST("/admin/tablas/:name/import/csv", handlers.ImportarTablaCSV(db))
-	priv.PUT("/admin/tablas/:name/rows/:pk", handlers.ActualizarFilaTabla(db))
-	priv.DELETE("/admin/tablas/:name/rows/:pk", handlers.EliminarFilaTabla(db))
-	priv.POST("/admin/tablas/:name/action", handlers.AdminTableAction(db))
-	priv.POST("/admin/reset", handlers.ResetearTodaLaData(db))
-	priv.POST("/admin/normalizar-stock", handlers.NormalizarStock(db))
-	priv.GET("/admin/settings/:key", handlers.GetSetting(db))
-	priv.PUT("/admin/settings/:key", handlers.SetSetting(db))
+	// admin (role "admin" enforced by the admin group)
+	admin.GET("/admin/tablas", handlers.GetTablas(db))
+	admin.GET("/admin/tablas/:name", handlers.GetDatosTabla(db))
+	admin.GET("/admin/tablas/:name/esquema", handlers.GetEsquemaTabla(db))
+	admin.GET("/admin/tablas/:name/export/csv", handlers.ExportarTablaCSV(db))
+	admin.GET("/admin/tablas/:name/export/sql", handlers.ExportarTablaSQL(db))
+	admin.GET("/admin/export/bd-sql", handlers.ExportarBDSQL(db))
+	admin.POST("/admin/tablas/:name/import/csv", handlers.ImportarTablaCSV(db))
+	admin.PUT("/admin/tablas/:name/rows/:pk", handlers.ActualizarFilaTabla(db))
+	admin.DELETE("/admin/tablas/:name/rows/:pk", handlers.EliminarFilaTabla(db))
+	admin.POST("/admin/tablas/:name/action", handlers.AdminTableAction(db))
+	admin.POST("/admin/reset", handlers.ResetearTodaLaData(db))
+	admin.POST("/admin/normalizar-stock", handlers.NormalizarStock(db))
+	admin.GET("/admin/settings/:key", handlers.GetSetting(db))
+	admin.PUT("/admin/settings/:key", handlers.SetSetting(db))
 
 	// gmail
 	priv.GET("/gmail/auth", handlers.GmailEstadoAuth(gmail))
@@ -177,6 +185,7 @@ func NewRouter(
 	// pos (thermal printer — server-side USB access)
 	priv.GET("/pos/verificar", handlers.VerificarImpresora(db))
 	priv.POST("/pos/imprimir", handlers.ImprimirRecibo(db))
+	priv.POST("/pos/imprimir-imagen", handlers.ImprimirImagen(db))
 
 	// drive
 	priv.GET("/drive/auth", handlers.DriveEstadoAuth(drive))

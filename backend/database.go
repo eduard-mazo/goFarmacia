@@ -524,6 +524,32 @@ func (d *Db) IsSetupMode() bool {
 	return d.setupMode
 }
 
+// IsUnconfigured reports whether no PostgreSQL DSN has ever been provided —
+// no DATABASE_URL env var, no persisted db_config.json DSN, and no in-memory
+// DSN captured at startup.
+//
+// This is the ONLY state in which the in-memory "setup admin" login and the
+// bootstrap DB-configuration flow are legitimate. It is deliberately stricter
+// than IsSetupMode(): a database that *was* configured but is momentarily
+// unreachable (e.g. a network blip flips setupMode back to true via the
+// reconnect watcher) must NOT re-enable the setup backdoor. Authentication
+// fails closed in that case.
+func (d *Db) IsUnconfigured() bool {
+	d.mu.RLock()
+	raw := d.rawDSN
+	d.mu.RUnlock()
+	if raw != "" {
+		return false
+	}
+	if os.Getenv("DATABASE_URL") != "" {
+		return false
+	}
+	if _, ok := LoadDBConfig(); ok {
+		return false
+	}
+	return true
+}
+
 // JWTKey returns the JWT signing key for use in HTTP middleware.
 func (d *Db) JWTKey() []byte { return d.jwtKey }
 

@@ -44,3 +44,24 @@ func GetClaims(c echo.Context) *backend.Claims {
 	}
 	return nil
 }
+
+// RequireRole returns middleware that allows the request only if the
+// authenticated user's role matches one of the allowed roles. It MUST be
+// chained after JWTAuth, since it reads the claims that JWTAuth stores on the
+// Echo context. Returns 403 when the role is insufficient.
+func RequireRole(roles ...string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			claims := GetClaims(c)
+			if claims == nil {
+				return echo.NewHTTPError(http.StatusUnauthorized, "No autenticado")
+			}
+			for _, r := range roles {
+				if claims.Role == r {
+					return next(c)
+				}
+			}
+			return echo.NewHTTPError(http.StatusForbidden, "Permisos insuficientes para esta operación")
+		}
+	}
+}

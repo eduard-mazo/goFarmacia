@@ -88,8 +88,11 @@ func (d *Db) RegistrarVendedor(vendedor Vendedor) (Vendedor, error) {
 func (d *Db) LoginVendedor(req LoginRequest) (LoginResponse, error) {
 	d.Log.Infof("Intento log con %s", req.Email)
 
-	// ── Setup mode: allow in-memory admin login when DB is not configured ──
-	if d.IsSetupMode() {
+	// ── First-run setup: allow an in-memory admin login ONLY when no database
+	// has ever been configured. This is gated by IsUnconfigured() (not the
+	// looser IsSetupMode()) so that a configured-but-unreachable database can
+	// never re-open this backdoor — auth fails closed on a runtime DB outage.
+	if d.IsUnconfigured() {
 		setupPass := os.Getenv("SETUP_ADMIN_PASSWORD")
 		if setupPass == "" {
 			setupPass = "admin"
