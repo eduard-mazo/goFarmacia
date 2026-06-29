@@ -117,19 +117,21 @@ func NewRouter(
 	priv.POST("/auth/enable-mfa", handlers.EnableMFA(db))
 
 	// productos
+	// reads for any user; POS can create products inline; edits/deletes/bulk-stock admin-only
 	priv.GET("/productos", handlers.ObtenerProductosPaginado(db))
 	priv.GET("/productos/:uuid", handlers.ObtenerProductoPorUUID(db))
-	priv.POST("/productos", handlers.RegistrarProducto(db))
-	priv.PUT("/productos/:uuid", handlers.ActualizarProducto(db))
-	priv.DELETE("/productos/:uuid", handlers.EliminarProducto(db))
 	priv.GET("/productos/:uuid/historial-stock", handlers.ObtenerHistorialStock(db))
-	priv.PUT("/productos/stock/masivo", handlers.ActualizarStockMasivo(db))
+	priv.POST("/productos", handlers.RegistrarProducto(db)) // POS inline create
+	admin.PUT("/productos/:uuid", handlers.ActualizarProducto(db))
+	admin.DELETE("/productos/:uuid", handlers.EliminarProducto(db))
+	admin.PUT("/productos/stock/masivo", handlers.ActualizarStockMasivo(db))
 
 	// clientes
+	// read for any user (POS selects customers); mutations admin-only
 	priv.GET("/clientes", handlers.ObtenerClientesPaginado(db))
-	priv.POST("/clientes", handlers.RegistrarCliente(db))
-	priv.PUT("/clientes/:uuid", handlers.ActualizarCliente(db))
-	priv.DELETE("/clientes/:uuid", handlers.EliminarCliente(db))
+	admin.POST("/clientes", handlers.RegistrarCliente(db))
+	admin.PUT("/clientes/:uuid", handlers.ActualizarCliente(db))
+	admin.DELETE("/clientes/:uuid", handlers.EliminarCliente(db))
 
 	// vendedores
 	priv.GET("/vendedores", handlers.ObtenerVendedoresPaginado(db))
@@ -138,14 +140,15 @@ func NewRouter(
 	admin.DELETE("/vendedores/:uuid", handlers.EliminarVendedor(db))            // admin only
 
 	// proveedores
+	// reads for any user; mutations admin-only
 	priv.GET("/proveedores", handlers.ObtenerProveedoresPaginado(db))
 	priv.GET("/proveedores/estadisticas", handlers.ObtenerProveedoresConEstadisticas(db))
-	priv.POST("/proveedores", handlers.CrearProveedor(db))
-	priv.PUT("/proveedores/:uuid", handlers.ActualizarProveedor(db))
-	priv.DELETE("/proveedores/:uuid", handlers.EliminarProveedor(db))
 	priv.GET("/proveedores/resumen-compras", handlers.ObtenerResumenCompras(db))
 	priv.GET("/proveedores/:nit/top-productos", handlers.ObtenerTopProductosDeProveedor(db))
-	priv.POST("/proveedores/sincronizar", handlers.SincronizarProveedoresDesdeFacturas(db))
+	admin.POST("/proveedores", handlers.CrearProveedor(db))
+	admin.PUT("/proveedores/:uuid", handlers.ActualizarProveedor(db))
+	admin.DELETE("/proveedores/:uuid", handlers.EliminarProveedor(db))
+	admin.POST("/proveedores/sincronizar", handlers.SincronizarProveedoresDesdeFacturas(db))
 
 	// facturas venta
 	priv.GET("/facturas", handlers.ObtenerFacturasPaginado(db))
