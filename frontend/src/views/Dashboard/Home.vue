@@ -3,11 +3,11 @@ import { shallowRef, onMounted, onUnmounted, watch, computed, ref } from "vue";
 import {
   ObtenerDatosDashboard,
   ObtenerFechasConVentas,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 import {
   ObtenerResumenCompras,
-} from "@/../wailsjs/go/backend/GmailService";
-import { backend } from "@/../wailsjs/go/models";
+} from "@/../bridge/go/backend/GmailService";
+import { backend } from "@/../bridge/go/models";
 import { CalendarDate, today, getLocalTimeZone } from "@internationalized/date";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";

@@ -8,7 +8,7 @@ import {
   WindowUnfullscreen,
   WindowMaximise,
   WindowIsFullscreen,
-} from "@/../wailsjs/runtime";
+} from "@/../bridge/runtime/runtime";
 
 EventsOn("sync:start", (mensaje: string) => {
   console.log(`Sincronizando Factura: ${mensaje}`);

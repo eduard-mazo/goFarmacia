@@ -13,7 +13,7 @@ vi.mock("vue-sonner", () => ({
 }));
 
 // Mock the Wails backend models
-vi.mock("@/../wailsjs/go/models", () => ({
+vi.mock("@/../bridge/go/models", () => ({
   backend: {
     Producto: class Producto {
       UUID = "";
@@ -34,7 +34,7 @@ vi.mock("@/../wailsjs/go/models", () => ({
 }));
 
 // Mock Wails bindings (needed because auth store is imported transitively)
-vi.mock("@/../wailsjs/go/backend/Db", () => ({
+vi.mock("@/../bridge/go/backend/Db", () => ({
   LoginVendedor: vi.fn(),
   VerificarLoginMFA: vi.fn(),
   RegistrarVendedor: vi.fn(),

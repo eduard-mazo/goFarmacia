@@ -10,10 +10,11 @@ const routes = [
     meta: { public: true },
   },
   {
+    // Account creation is admin-only: anonymous → Login, cajero → DashboardHome.
     path: "/Register",
     name: "Register",
     component: () => import("@/views/Register.vue"),
-    meta: { public: true },
+    meta: { requiresAuth: true, role: "admin" },
   },
   {
     path: "/dashboard",

@@ -7,7 +7,7 @@ import { Toaster } from "vue-sonner";
 import { useDBStore } from "@/stores/dbStore";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Database } from "lucide-vue-next";
-import { EventsOn, EventsOff } from "@/../wailsjs/runtime/runtime";
+import { EventsOn, EventsOff } from "@/../bridge/runtime/runtime";
 
 const dbStore = useDBStore();
 const router = useRouter();

@@ -41,8 +41,8 @@ import {
   ObtenerClientesPaginado,
   ObtenerProductosPaginado,
   RegistrarVenta,
-} from "@/../wailsjs/go/backend/Db";
-import { backend } from "@/../wailsjs/go/models";
+} from "@/../bridge/go/backend/Db";
+import { backend } from "@/../bridge/go/models";
 
 interface ObtenerProductosPaginadoResponse {
   Records: backend.Producto[];

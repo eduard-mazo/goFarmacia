@@ -12,8 +12,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "vue-sonner";
-import { CrearProveedor } from "@/../wailsjs/go/backend/Db";
-import { backend } from "@/../wailsjs/go/models";
+import { CrearProveedor } from "@/../bridge/go/backend/Db";
+import { backend } from "@/../bridge/go/models";
 
 const props = defineProps<{
   open: boolean;

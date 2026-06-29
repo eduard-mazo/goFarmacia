@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "vue-sonner";
-import { EventsOn, EventsOff } from "@/../wailsjs/runtime";
+import { EventsOn, EventsOff } from "@/../bridge/runtime/runtime";
 import {
   HardDrive, CloudUpload, Trash2, RefreshCw, Loader2,
   ShieldCheck, ShieldOff, FolderOpen, Clock, CheckCircle2, RotateCcw,
@@ -19,8 +19,8 @@ import {
   EstadoAuthDrive, IniciarOAuth2Drive, RevocarAuthDrive,
   EjecutarBackupAhora, ListarBackups, EliminarBackup, RestaurarBackup,
   GetAutoBackup, SetAutoBackup,
-} from "@/../wailsjs/go/backend/DriveBackupService";
-import type { backend } from "@/../wailsjs/go/models";
+} from "@/../bridge/go/backend/DriveBackupService";
+import type { backend } from "@/../bridge/go/models";
 
 type DriveAuthStatus = backend.DriveAuthStatus;
 type DriveBackupResult = backend.DriveBackupResult;

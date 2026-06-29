@@ -37,8 +37,12 @@ export interface EnvironmentInfo {
 // This will trigger any event listeners.
 export function EventsEmit(eventName: string, ...data: any): void;
 
-// [EventsOn](https://wails.io/docs/reference/runtime/events#eventson) sets up a listener for the given event name.
+// EventsOn sets up a listener for the given event name.
 export function EventsOn(eventName: string, callback: (...data: any) => void): () => void;
+
+// resetEventSource closes and reconnects the SSE stream using the current auth
+// token (call after login/logout). No-op in non-browser contexts.
+export function resetEventSource(): void;
 
 // [EventsOnMultiple](https://wails.io/docs/reference/runtime/events#eventsonmultiple)
 // sets up a listener for the given event name, but will only trigger a given number times.

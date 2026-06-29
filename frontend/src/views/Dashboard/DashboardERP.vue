@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from "vue";
 import {
   ObtenerResumenInventario,
   ObtenerDatosDashboard,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 import {
   Package,
   AlertTriangle,

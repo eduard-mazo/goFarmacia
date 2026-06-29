@@ -4,7 +4,7 @@ import {
   GetDBStatus,
   TestDBConnection,
   ConfigurarDB,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 
 export const useDBStore = defineStore("db", () => {
   const connected = ref(false);

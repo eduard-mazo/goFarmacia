@@ -18,9 +18,9 @@ import { useDBStore } from "@/stores/dbStore";
 import { useAuthStore } from "@/stores/auth";
 import {
   EstadoAuth, ObtenerCredenciales, GuardarCredenciales,
-} from "@/../wailsjs/go/backend/GmailService";
-import { GetTablas, TruncarTabla } from "@/../wailsjs/go/backend/Db";
-import { GetSyncStatus, SetSyncEnabled } from "@/../wailsjs/go/backend/SyncStatus";
+} from "@/../bridge/go/backend/GmailService";
+import { GetTablas, TruncarTabla } from "@/../bridge/go/backend/Db";
+import { GetSyncStatus, SetSyncEnabled } from "@/../bridge/go/backend/SyncStatus";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,

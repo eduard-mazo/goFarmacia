@@ -2,14 +2,20 @@ package api
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 	"goFarmacia/api/handlers"
 	apimw "goFarmacia/api/middleware"
 	"goFarmacia/backend"
+
+	"golang.org/x/time/rate"
 )
 
 func NewRouter(
@@ -23,66 +29,126 @@ func NewRouter(
 	e := echo.New()
 	e.HideBanner = true
 
+	// Mask internal (5xx) errors from clients: log the detail server-side and
+	// return a generic message. Intentional 4xx messages (validation, auth) are
+	// preserved so the UI can still show them.
+	e.HTTPErrorHandler = func(err error, c echo.Context) {
+		if c.Response().Committed {
+			return
+		}
+		code := http.StatusInternalServerError
+		msg := "Error interno del servidor"
+		if he, ok := err.(*echo.HTTPError); ok {
+			code = he.Code
+			if code < http.StatusInternalServerError {
+				msg = fmt.Sprintf("%v", he.Message)
+			}
+		}
+		if code >= http.StatusInternalServerError {
+			db.Log.Errorf("[HTTP %d] %s %s — %v", code, c.Request().Method, c.Request().URL.Path, err)
+		}
+		if c.Request().Method == http.MethodHead {
+			_ = c.NoContent(code)
+			return
+		}
+		_ = c.JSON(code, echo.Map{"message": msg})
+	}
+
 	e.Use(echomw.Recover())
-	e.Use(echomw.CORS())
 	e.Use(echomw.GzipWithConfig(echomw.GzipConfig{Level: 5}))
+
+	// CORS is OFF by default: the SPA is served same-origin by this server, so no
+	// CORS headers are needed. Set ALLOWED_ORIGINS (comma-separated) only if the
+	// API must be reached from a different origin (e.g. a separate dev server).
+	if origins := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); origins != "" {
+		e.Use(echomw.CORSWithConfig(echomw.CORSConfig{
+			AllowOrigins: strings.Split(origins, ","),
+			AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+			AllowHeaders: []string{echo.HeaderContentType, echo.HeaderAuthorization},
+		}))
+	}
+
+	// Brute-force throttle for authentication endpoints (per client IP):
+	// ~5 quick attempts, then 1 every 2s.
+	authLimiter := echomw.RateLimiterWithConfig(echomw.RateLimiterConfig{
+		Store: echomw.NewRateLimiterMemoryStoreWithConfig(echomw.RateLimiterMemoryStoreConfig{
+			Rate:      rate.Every(2 * time.Second),
+			Burst:     5,
+			ExpiresIn: 3 * time.Minute,
+		}),
+	})
 
 	api := e.Group("/api")
 
 	// ── public ──────────────────────────────────────────────────────────────
 	pub := api.Group("")
 
-	// auth
-	pub.POST("/auth/login", handlers.Login(db))
-	pub.POST("/auth/verify-mfa", handlers.VerifyMFA(db))
-	pub.POST("/auth/register", handlers.Register(db))
+	// auth (rate-limited to throttle credential/OTP brute-force)
+	pub.POST("/auth/login", handlers.Login(db), authLimiter)
+	pub.POST("/auth/verify-mfa", handlers.VerifyMFA(db), authLimiter)
 
-	// db setup (pre-login)
+	// db setup status (pre-login, read-only) — needed to render the setup screen.
+	// The mutating endpoints (configurar-db / test-connection) live in the admin
+	// group below: during genuine first-run they are reachable via the in-memory
+	// setup-admin token; once configured they require a real admin.
 	pub.GET("/config/db-status", handlers.GetDBStatus(db))
 	pub.GET("/config/setup-mode", handlers.IsSetupMode(db))
-	pub.POST("/config/configurar-db", handlers.ConfigurarDB(db))
-	pub.POST("/config/test-connection", handlers.TestDBConnection(db))
 
-	// SSE (authenticated via query param token handled in handler, or open for simplicity)
-	pub.GET("/events", handlers.SSEHandler())
+	// SSE — authenticated inside the handler via ?token= (EventSource can't set headers)
+	pub.GET("/events", handlers.SSEHandler(db))
 
-	// ── protected ───────────────────────────────────────────────────────────
+	// ── protected (any authenticated user) ────────────────────────────────────
 	priv := api.Group("", apimw.JWTAuth(db))
+
+	// ── admin only (authenticated + role "admin") ─────────────────────────────
+	admin := api.Group("", apimw.JWTAuth(db), apimw.RequireRole("admin"))
+
+	// account creation — admin only. The first account is bootstrapped on first
+	// run via the setup-admin token (role "admin"); RegistrarVendedor makes the
+	// very first vendedor an admin and the rest cajeros.
+	admin.POST("/auth/register", handlers.Register(db))
+
+	// db setup mutations — admin only (bootstrap via setup-admin token on first run)
+	admin.POST("/config/configurar-db", handlers.ConfigurarDB(db))
+	admin.POST("/config/test-connection", handlers.TestDBConnection(db))
 
 	// auth extras
 	priv.POST("/auth/setup-mfa", handlers.SetupMFA(db))
 	priv.POST("/auth/enable-mfa", handlers.EnableMFA(db))
 
 	// productos
+	// reads for any user; POS can create products inline; edits/deletes/bulk-stock admin-only
 	priv.GET("/productos", handlers.ObtenerProductosPaginado(db))
 	priv.GET("/productos/:uuid", handlers.ObtenerProductoPorUUID(db))
-	priv.POST("/productos", handlers.RegistrarProducto(db))
-	priv.PUT("/productos/:uuid", handlers.ActualizarProducto(db))
-	priv.DELETE("/productos/:uuid", handlers.EliminarProducto(db))
 	priv.GET("/productos/:uuid/historial-stock", handlers.ObtenerHistorialStock(db))
-	priv.PUT("/productos/stock/masivo", handlers.ActualizarStockMasivo(db))
+	priv.POST("/productos", handlers.RegistrarProducto(db)) // POS inline create
+	admin.PUT("/productos/:uuid", handlers.ActualizarProducto(db))
+	admin.DELETE("/productos/:uuid", handlers.EliminarProducto(db))
+	admin.PUT("/productos/stock/masivo", handlers.ActualizarStockMasivo(db))
 
 	// clientes
+	// read for any user (POS selects customers); mutations admin-only
 	priv.GET("/clientes", handlers.ObtenerClientesPaginado(db))
-	priv.POST("/clientes", handlers.RegistrarCliente(db))
-	priv.PUT("/clientes/:uuid", handlers.ActualizarCliente(db))
-	priv.DELETE("/clientes/:uuid", handlers.EliminarCliente(db))
+	admin.POST("/clientes", handlers.RegistrarCliente(db))
+	admin.PUT("/clientes/:uuid", handlers.ActualizarCliente(db))
+	admin.DELETE("/clientes/:uuid", handlers.EliminarCliente(db))
 
 	// vendedores
 	priv.GET("/vendedores", handlers.ObtenerVendedoresPaginado(db))
-	priv.PUT("/vendedores/:uuid", handlers.ActualizarVendedor(db))
-	priv.PUT("/vendedores/:uuid/perfil", handlers.ActualizarPerfilVendedor(db))
-	priv.DELETE("/vendedores/:uuid", handlers.EliminarVendedor(db))
+	priv.PUT("/vendedores/:uuid/perfil", handlers.ActualizarPerfilVendedor(db)) // self profile (any user)
+	admin.PUT("/vendedores/:uuid", handlers.ActualizarVendedor(db))             // changes roles → admin only
+	admin.DELETE("/vendedores/:uuid", handlers.EliminarVendedor(db))            // admin only
 
 	// proveedores
+	// reads for any user; mutations admin-only
 	priv.GET("/proveedores", handlers.ObtenerProveedoresPaginado(db))
 	priv.GET("/proveedores/estadisticas", handlers.ObtenerProveedoresConEstadisticas(db))
-	priv.POST("/proveedores", handlers.CrearProveedor(db))
-	priv.PUT("/proveedores/:uuid", handlers.ActualizarProveedor(db))
-	priv.DELETE("/proveedores/:uuid", handlers.EliminarProveedor(db))
 	priv.GET("/proveedores/resumen-compras", handlers.ObtenerResumenCompras(db))
 	priv.GET("/proveedores/:nit/top-productos", handlers.ObtenerTopProductosDeProveedor(db))
-	priv.POST("/proveedores/sincronizar", handlers.SincronizarProveedoresDesdeFacturas(db))
+	admin.POST("/proveedores", handlers.CrearProveedor(db))
+	admin.PUT("/proveedores/:uuid", handlers.ActualizarProveedor(db))
+	admin.DELETE("/proveedores/:uuid", handlers.EliminarProveedor(db))
+	admin.POST("/proveedores/sincronizar", handlers.SincronizarProveedoresDesdeFacturas(db))
 
 	// facturas venta
 	priv.GET("/facturas", handlers.ObtenerFacturasPaginado(db))
@@ -104,21 +170,21 @@ func NewRouter(
 	priv.GET("/dashboard/resumen-inventario", handlers.ObtenerResumenInventario(db))
 	priv.GET("/dashboard/reporte-ventas", handlers.ObtenerReporteVentasRango(db))
 
-	// admin
-	priv.GET("/admin/tablas", handlers.GetTablas(db))
-	priv.GET("/admin/tablas/:name", handlers.GetDatosTabla(db))
-	priv.GET("/admin/tablas/:name/esquema", handlers.GetEsquemaTabla(db))
-	priv.GET("/admin/tablas/:name/export/csv", handlers.ExportarTablaCSV(db))
-	priv.GET("/admin/tablas/:name/export/sql", handlers.ExportarTablaSQL(db))
-	priv.GET("/admin/export/bd-sql", handlers.ExportarBDSQL(db))
-	priv.POST("/admin/tablas/:name/import/csv", handlers.ImportarTablaCSV(db))
-	priv.PUT("/admin/tablas/:name/rows/:pk", handlers.ActualizarFilaTabla(db))
-	priv.DELETE("/admin/tablas/:name/rows/:pk", handlers.EliminarFilaTabla(db))
-	priv.POST("/admin/tablas/:name/action", handlers.AdminTableAction(db))
-	priv.POST("/admin/reset", handlers.ResetearTodaLaData(db))
-	priv.POST("/admin/normalizar-stock", handlers.NormalizarStock(db))
-	priv.GET("/admin/settings/:key", handlers.GetSetting(db))
-	priv.PUT("/admin/settings/:key", handlers.SetSetting(db))
+	// admin (role "admin" enforced by the admin group)
+	admin.GET("/admin/tablas", handlers.GetTablas(db))
+	admin.GET("/admin/tablas/:name", handlers.GetDatosTabla(db))
+	admin.GET("/admin/tablas/:name/esquema", handlers.GetEsquemaTabla(db))
+	admin.GET("/admin/tablas/:name/export/csv", handlers.ExportarTablaCSV(db))
+	admin.GET("/admin/tablas/:name/export/sql", handlers.ExportarTablaSQL(db))
+	admin.GET("/admin/export/bd-sql", handlers.ExportarBDSQL(db))
+	admin.POST("/admin/tablas/:name/import/csv", handlers.ImportarTablaCSV(db))
+	admin.PUT("/admin/tablas/:name/rows/:pk", handlers.ActualizarFilaTabla(db))
+	admin.DELETE("/admin/tablas/:name/rows/:pk", handlers.EliminarFilaTabla(db))
+	admin.POST("/admin/tablas/:name/action", handlers.AdminTableAction(db))
+	admin.POST("/admin/reset", handlers.ResetearTodaLaData(db))
+	admin.POST("/admin/normalizar-stock", handlers.NormalizarStock(db))
+	admin.GET("/admin/settings/:key", handlers.GetSetting(db))
+	admin.PUT("/admin/settings/:key", handlers.SetSetting(db))
 
 	// gmail
 	priv.GET("/gmail/auth", handlers.GmailEstadoAuth(gmail))
@@ -177,6 +243,7 @@ func NewRouter(
 	// pos (thermal printer — server-side USB access)
 	priv.GET("/pos/verificar", handlers.VerificarImpresora(db))
 	priv.POST("/pos/imprimir", handlers.ImprimirRecibo(db))
+	priv.POST("/pos/imprimir-imagen", handlers.ImprimirImagen(db))
 
 	// drive
 	priv.GET("/drive/auth", handlers.DriveEstadoAuth(drive))

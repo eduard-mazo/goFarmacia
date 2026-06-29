@@ -29,15 +29,15 @@ import {
   Search, Link, Unlink, ArrowUpDown, ArrowUp, ArrowDown, Terminal,
 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import { EventsOn, EventsOff, BrowserOpenURL } from "@/../wailsjs/runtime";
-import { backend } from "@/../wailsjs/go/models";
+import { EventsOn, EventsOff, BrowserOpenURL } from "@/../bridge/runtime/runtime";
+import { backend } from "@/../bridge/go/models";
 import {
   EstadoAuth, IniciarOAuth2, RevocarAuth,
   ObtenerTransferencias, MarcarLeida, EliminarTransferencia, EliminarTransferencias,
   SincronizarConPeriodo, SetAutoPolling, GetAutoPolling,
   MarcarTodasLeidas, VincularFactura, DesvincularFactura, BuscarFacturasVenta,
   GetSyncProgress,
-} from "@/../wailsjs/go/backend/BancolombiaService";
+} from "@/../bridge/go/backend/BancolombiaService";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

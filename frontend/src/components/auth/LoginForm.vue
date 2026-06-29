@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useAuthStore } from "@/stores/auth";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import { toast } from "vue-sonner";
 import { useRoute } from "vue-router";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import {
   EyeOff,
   Settings,
 } from "lucide-vue-next";
-import { IsSetupMode } from "@/../wailsjs/go/backend/Db";
+import { IsSetupMode } from "@/../bridge/go/backend/Db";
 
 const authStore = useAuthStore();
 const route = useRoute();
@@ -193,11 +193,6 @@ async function handleVerifyMFA() {
               <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
               {{ isLoading ? "Ingresando…" : "Iniciar Sesión" }}
             </Button>
-
-            <p class="form-footer-text">
-              ¿No tienes una cuenta?
-              <router-link to="/register" class="form-link">Regístrate</router-link>
-            </p>
           </div>
         </form>
 

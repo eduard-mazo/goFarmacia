@@ -10,8 +10,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Search, Loader2 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import { ObtenerClientesPaginado } from "@/../wailsjs/go/backend/Db";
-import { backend } from "@/../wailsjs/go/models";
+import { ObtenerClientesPaginado } from "@/../bridge/go/backend/Db";
+import { backend } from "@/../bridge/go/models";
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits(["update:open", "cliente-seleccionado"]);

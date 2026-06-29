@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 
-// Mock the Wails backend bindings
+// Mock the backend bindings
 const mockLoginVendedor = vi.fn();
 const mockVerificarLoginMFA = vi.fn();
 const mockRegistrarVendedor = vi.fn();
 
-vi.mock("@/../wailsjs/go/backend/Db", () => ({
+vi.mock("@/../bridge/go/backend/Db", () => ({
   LoginVendedor: (...args: any[]) => mockLoginVendedor(...args),
   VerificarLoginMFA: (...args: any[]) => mockVerificarLoginMFA(...args),
   RegistrarVendedor: (...args: any[]) => mockRegistrarVendedor(...args),

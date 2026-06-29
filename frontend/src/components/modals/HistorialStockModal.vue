@@ -91,8 +91,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-import { ObtenerHistorialStock } from "@/../wailsjs/go/backend/Db";
-import type { backend } from "@/../wailsjs/go/models";
+import { ObtenerHistorialStock } from "@/../bridge/go/backend/Db";
+import type { backend } from "@/../bridge/go/models";
 
 const props = defineProps({
   producto: {

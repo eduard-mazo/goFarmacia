@@ -30,8 +30,8 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { ArrowUpDown, ArrowUp, ArrowDown, SlidersHorizontal, Search, Package } from "lucide-vue-next";
-import { backend } from "@/../wailsjs/go/models";
-import { ObtenerProductosPaginado } from "@/../wailsjs/go/backend/Db";
+import { backend } from "@/../bridge/go/models";
+import { ObtenerProductosPaginado } from "@/../bridge/go/backend/Db";
 import { toast } from "vue-sonner";
 import AjustarStockModal from "@/components/modals/AjustarStockModal.vue";
 

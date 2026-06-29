@@ -1,13 +1,10 @@
-# Wails build artifacts
+# Build artifacts
 /build/
 /frontend/dist/
 /frontend/node_modules/
-/frontend/wailsjs
-/wails/
-/wails-build-log.txt
-/wails-dev-server.log
-/go.mod
-/go.sum
+
+# Compiled binary (never commit the build output)
+/goFarmacia
 
 # Go-specific files
 /vendor/
@@ -20,6 +17,8 @@
 
 # Environment variables and secrets
 *.env
+credentials.json
+db_config.json
 .DS_Store
 .vscode/
 

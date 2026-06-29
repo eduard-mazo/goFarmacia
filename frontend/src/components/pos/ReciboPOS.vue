@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 
 defineProps<{
   factura: backend.Factura | null;

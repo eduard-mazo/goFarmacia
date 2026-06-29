@@ -19,8 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "vue-sonner";
-import { RegistrarCliente } from "@/../wailsjs/go/backend/Db";
-import { backend } from "@/../wailsjs/go/models";
+import { RegistrarCliente } from "@/../bridge/go/backend/Db";
+import { backend } from "@/../bridge/go/models";
 
 const props = defineProps<{
   open: boolean;

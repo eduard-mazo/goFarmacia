@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
-import { ObtenerReporteVentasRango } from "@/../wailsjs/go/backend/Db";
+import { ObtenerReporteVentasRango } from "@/../bridge/go/backend/Db";
 import { format, subDays } from "date-fns";
 import { es } from "date-fns/locale";
 import {

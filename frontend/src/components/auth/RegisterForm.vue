@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Loader2, Eye, EyeOff } from "lucide-vue-next";
 import { useAuthStore } from "@/stores/auth";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
+import { toast } from "vue-sonner";
 
 const registerPayload = ref<backend.Vendedor>(new backend.Vendedor());
 const error = ref<string | null>(null);
@@ -21,7 +22,14 @@ const handleRegister = async () => {
   error.value = "";
   try {
     await authStore.register(registerPayload.value);
-    router.push({ path: "/login", query: { registered: "true" } });
+    // Admin creating a staff account → back to the list. Otherwise (bootstrap
+    // first-run) → the login screen with a success hint.
+    if (authStore.isAuthenticated) {
+      toast.success("Vendedor creado correctamente");
+      router.push({ name: "Vendedores" });
+    } else {
+      router.push({ path: "/login", query: { registered: "true" } });
+    }
   } catch (err: any) {
     error.value = err.message || "Ocurrió un error durante el registro.";
   } finally {

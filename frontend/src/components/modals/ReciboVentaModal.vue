@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import ReciboPOS from "@/components/pos/ReciboPOS.vue";
 import { Printer, Loader2 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
 
-import { VerificarImpresora, ImprimirRecibo } from "@/../wailsjs/go/backend/Db";
+import { VerificarImpresora, ImprimirRecibo } from "@/../bridge/go/backend/Db";
 
 const props = defineProps<{
   factura: backend.Factura | null;

@@ -25,11 +25,11 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Loader2, Search, Receipt, TrendingUp } from "lucide-vue-next";
-import { backend } from "@/../wailsjs/go/models";
+import { backend } from "@/../bridge/go/models";
 import {
   ObtenerFacturasPaginado,
   ObtenerDetalleFactura,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
 import { toast } from "vue-sonner";
 import ReciboVentaModal from "@/components/modals/ReciboVentaModal.vue";
 

@@ -4,7 +4,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 
 // Mock Wails bindings
-vi.mock("@/../wailsjs/go/backend/Db", () => ({
+vi.mock("@/../bridge/go/backend/Db", () => ({
   LoginVendedor: vi.fn(),
   VerificarLoginMFA: vi.fn(),
   RegistrarVendedor: vi.fn(),

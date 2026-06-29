@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import { ObtenerResumenInventario } from "@/../wailsjs/go/backend/Db";
+import { ObtenerResumenInventario } from "@/../bridge/go/backend/Db";
 import {
   Package,
   AlertTriangle,

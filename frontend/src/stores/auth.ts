@@ -1,12 +1,13 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { backend } from "@/../wailsjs/go/models";
+import type { backend } from "@/../bridge/go/models";
 import { useRouter } from "vue-router";
 import {
   LoginVendedor,
   VerificarLoginMFA,
   RegistrarVendedor,
-} from "@/../wailsjs/go/backend/Db";
+} from "@/../bridge/go/backend/Db";
+import { resetEventSource } from "@/../bridge/runtime/runtime";
 
 export const useAuthStore = defineStore("auth", () => {
   const router = useRouter();
@@ -69,6 +70,7 @@ export const useAuthStore = defineStore("auth", () => {
     token.value = finalToken;
     localStorage.setItem("authToken", finalToken);
     localStorage.setItem("authUser", JSON.stringify(vendedorData));
+    resetEventSource(); // (re)connect the SSE stream now that we have a token
   }
 
   function clearAuth() {
@@ -77,6 +79,7 @@ export const useAuthStore = defineStore("auth", () => {
     tempMFAToken.value = null;
     localStorage.removeItem("authToken");
     localStorage.removeItem("authUser");
+    resetEventSource(); // drop the authenticated SSE stream on logout
   }
 
   function logout() {
