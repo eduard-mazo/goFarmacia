@@ -262,11 +262,14 @@ func NewRouter(
 	distFS, _ := fs.Sub(assets, "frontend/dist")
 	fileServer := http.FileServer(http.FS(distFS))
 	// Real static assets (hashed filenames in /assets/) served directly
-	e.GET("/assets/*", echo.WrapHandler(fileServer))
+	// HEAD is registered alongside GET because Echo does not map HEAD to GET
+	// routes automatically (curl -I, uptime checks and link checkers use it).
+	staticMethods := []string{http.MethodGet, http.MethodHead}
+	e.Match(staticMethods, "/assets/*", echo.WrapHandler(fileServer))
 	// All other paths: serve the embedded file when it exists (favicons,
 	// manifest, robots.txt, …); otherwise fall back to index.html so Vue
 	// Router can handle the client-side route.
-	e.GET("/*", func(c echo.Context) error {
+	e.Match(staticMethods, "/*", func(c echo.Context) error {
 		if reqPath := strings.TrimPrefix(c.Request().URL.Path, "/"); reqPath != "" {
 			if f, err := distFS.Open(reqPath); err == nil {
 				info, statErr := f.Stat()
