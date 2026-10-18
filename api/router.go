@@ -243,7 +243,9 @@ func NewRouter(
 	// pos (thermal printer — server-side USB access)
 	priv.GET("/pos/verificar", handlers.VerificarImpresora(db))
 	priv.POST("/pos/imprimir", handlers.ImprimirRecibo(db))
-	priv.POST("/pos/imprimir-imagen", handlers.ImprimirImagen(db))
+	// Cap the upload: a receipt image is tiny, so an 8 MB ceiling is generous
+	// while preventing an unbounded body from being buffered into memory.
+	priv.POST("/pos/imprimir-imagen", handlers.ImprimirImagen(db), echomw.BodyLimit("8M"))
 
 	// drive
 	priv.GET("/drive/auth", handlers.DriveEstadoAuth(drive))
@@ -261,9 +263,20 @@ func NewRouter(
 	fileServer := http.FileServer(http.FS(distFS))
 	// Real static assets (hashed filenames in /assets/) served directly
 	e.GET("/assets/*", echo.WrapHandler(fileServer))
-	e.GET("/favicon.ico", echo.WrapHandler(fileServer))
-	// All other paths → index.html (Vue Router handles client-side routing)
+	// All other paths: serve the embedded file when it exists (favicons,
+	// manifest, robots.txt, …); otherwise fall back to index.html so Vue
+	// Router can handle the client-side route.
 	e.GET("/*", func(c echo.Context) error {
+		if reqPath := strings.TrimPrefix(c.Request().URL.Path, "/"); reqPath != "" {
+			if f, err := distFS.Open(reqPath); err == nil {
+				info, statErr := f.Stat()
+				_ = f.Close()
+				if statErr == nil && !info.IsDir() {
+					fileServer.ServeHTTP(c.Response(), c.Request())
+					return nil
+				}
+			}
+		}
 		idx, err := assets.ReadFile("frontend/dist/index.html")
 		if err != nil {
 			return echo.NewHTTPError(http.StatusNotFound, "frontend not built")

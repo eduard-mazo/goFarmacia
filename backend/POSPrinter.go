@@ -51,6 +51,18 @@ const (
 
 	// Printable dot width of 58 mm paper (~384 dots).
 	paperDotsWidth = 384
+
+	// maxImagePixels caps the decoded source pixel count for ImprimirImagen.
+	// Checked via image.DecodeConfig (header only) BEFORE decoding, so a tiny
+	// but highly-compressed upload cannot explode into a multi-GB allocation
+	// (decompression-bomb guard). 4096×4096 ≈ 16 MP is far larger than any
+	// receipt image needs.
+	maxImagePixels = 4096 * 4096
+
+	// maxRasterHeight caps the rasterized height in dots. The GS v 0 raster
+	// height is a 16-bit field (yL/yH); anything taller would wrap and print
+	// garbage, and would waste buffer memory.
+	maxRasterHeight = 4096
 )
 
 // ── Embedded logo ────────────────────────────────────────────────────────────
@@ -75,26 +87,41 @@ func getLogoRaster() []byte {
 		if err != nil {
 			return
 		}
-		bounds := src.Bounds()
-		srcW := bounds.Dx()
-		srcH := bounds.Dy()
-
-		// Scale to paper width, maintaining aspect ratio.
-		dstW := paperDotsWidth
-		dstH := srcH * dstW / srcW
-
-		dst := image.NewGray(image.Rect(0, 0, dstW, dstH))
-		// Fill white background first (important for JPEG with no alpha).
-		for i := range dst.Pix {
-			dst.Pix[i] = 0xFF
-		}
-		draw.BiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
-
-		// Convert to 1-bit raster with Floyd-Steinberg dithering for
-		// better gradient reproduction on the thermal printer.
-		logoRaster = grayscaleToRasterDithered(dst, paperDotsWidth)
+		logoRaster = rasterizeToPaper(src)
 	})
 	return logoRaster
+}
+
+// rasterizeToPaper scales src to the paper width (preserving aspect ratio),
+// composites it onto a white background, dithers to 1-bit with Floyd-Steinberg
+// error diffusion, and returns the GS v 0 raster command bytes. Returns nil for
+// a degenerate (zero-dimension) image. The rendered height is clamped to
+// maxRasterHeight so the 16-bit GS v 0 height field cannot overflow.
+func rasterizeToPaper(src image.Image) []byte {
+	bounds := src.Bounds()
+	srcW, srcH := bounds.Dx(), bounds.Dy()
+	if srcW <= 0 || srcH <= 0 {
+		return nil
+	}
+
+	// Scale to paper width, maintaining aspect ratio.
+	dstW := paperDotsWidth
+	dstH := srcH * dstW / srcW
+	if dstH <= 0 {
+		return nil
+	}
+	if dstH > maxRasterHeight {
+		dstH = maxRasterHeight
+	}
+
+	dst := image.NewGray(image.Rect(0, 0, dstW, dstH))
+	// Fill white background first (important for images with transparency).
+	for i := range dst.Pix {
+		dst.Pix[i] = 0xFF
+	}
+	draw.BiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+
+	return grayscaleToRasterDithered(dst, paperDotsWidth)
 }
 
 // grayscaleToRasterDithered applies Floyd-Steinberg error-diffusion dithering
@@ -484,23 +511,25 @@ func (d *Db) ImprimirRecibo(factura Factura) error {
 // sends it to the thermal printer. The caller is responsible for reading the
 // file; this method only needs the raw bytes.
 func (d *Db) ImprimirImagen(imgData []byte) error {
+	// Reject oversized images from their header BEFORE decoding, so a tiny but
+	// highly-compressed upload can't explode into a huge pixel allocation.
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(imgData))
+	if err != nil {
+		return fmt.Errorf("error al decodificar imagen: %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return fmt.Errorf("imagen con dimensiones inválidas")
+	}
+	if cfg.Width*cfg.Height > maxImagePixels {
+		return fmt.Errorf("imagen demasiado grande (%dx%d)", cfg.Width, cfg.Height)
+	}
+
 	src, _, err := image.Decode(bytes.NewReader(imgData))
 	if err != nil {
 		return fmt.Errorf("error al decodificar imagen: %w", err)
 	}
 
-	bounds := src.Bounds()
-	srcW, srcH := bounds.Dx(), bounds.Dy()
-	dstW := paperDotsWidth
-	dstH := srcH * dstW / srcW
-
-	dst := image.NewGray(image.Rect(0, 0, dstW, dstH))
-	for i := range dst.Pix {
-		dst.Pix[i] = 0xFF
-	}
-	draw.BiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
-
-	rasterBytes := grayscaleToRasterDithered(dst, paperDotsWidth)
+	rasterBytes := rasterizeToPaper(src)
 	if len(rasterBytes) == 0 {
 		return fmt.Errorf("error al convertir imagen a raster")
 	}
